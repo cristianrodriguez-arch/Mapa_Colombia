@@ -1,0 +1,21 @@
+# Credenciales / secretos
+*.json.key
+sfe-prod-*.json
+*service-account*.json
+*credentials*.json
+
+# Datos sensibles de clientes / puntos de venta (no se suben al repo publico)
+MAESTRO PDV's.xlsx
+MAESTRO PDV's_con_brick.xlsx
+Apps Script/datos_sheets/
+
+# Python
+__pycache__/
+*.pyc
+
+# Claude Code local settings
+.claude/settings.local.json
+
+# OS
+Thumbs.db
+.DS_Store
