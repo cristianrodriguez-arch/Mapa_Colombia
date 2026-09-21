@@ -14,6 +14,9 @@
  *   so_sku_NN.json       SKU × PDV × mes       → distribución de un producto
  *   so_manifiesto.json   metadatos             → diagnóstico
  *
+ * Además lee, directo del Sheet (no del Drive/ETL), la hoja 'Asignacion'
+ * (VM/LAM por PDV) vía getAsignacionesJson().
+ *
  * CONFIGURACIÓN: solo hay que revisar CARPETA_JSON_ID y SPREADSHEET_ID.
  *
  * DESPUÉS DE CADA CORRIDA DEL ETL: ejecutar limpiarCache().
@@ -26,8 +29,9 @@
 var CARPETA_JSON_ID = '1Kg2WPunJtn-KjeNdhsEN4ojT6q00JPhm';
 var SPREADSHEET_ID  = '1fILFlz4cO4mmW-oOnhTuewCicoWJ8bzFUUAN30GaewI';
 
-var NOMBRE_HOJA_PUNTOS = 'CO_Puntos_Maestro clientes';
-var VISOR_HOJA_BRICKS  = 'Bricks';
+var NOMBRE_HOJA_PUNTOS     = 'CO_Puntos_Maestro clientes';
+var VISOR_HOJA_BRICKS      = 'Bricks';
+var NOMBRE_HOJA_ASIGNACION = 'Asignacion';
 
 var CACHE_SEGUNDOS   = 21600;   // 6 horas
 var CACHE_TROZO      = 90000;   // CacheService acepta 100 KB por clave
@@ -366,6 +370,58 @@ function getPuntosJson() {
              conPosId: conPos,
              columnaPosIdDetectada: posIdIdx !== -1 ? String(data[0][posIdIdx]) : '(no encontrada)' }
   });
+}
+
+/* ============================================================
+ * Endpoint — cobertura comercial (Google Sheets)
+ * ============================================================ */
+
+/**
+ * Hoja 'Asignacion': quién (VM o LAM) tiene asignado cada PDV. Cruza por
+ * 'Nº Oficina Farmacia' (mismo POS_ID normalizado que el resto del visor).
+ * Un PDV puede tener más de una fila (p. ej. un VM y un LAM a la vez),
+ * así que devuelve un arreglo de asignaciones por PDV, no una sola.
+ */
+function getAsignacionesJson() {
+  var sheet = abrirHoja_().getSheetByName(NOMBRE_HOJA_ASIGNACION);
+  if (!sheet) {
+    return JSON.stringify({ pdv: {}, aviso: "No se encontró la hoja '" + NOMBRE_HOJA_ASIGNACION + "'." });
+  }
+
+  var data = sheet.getDataRange().getValues();
+  if (data.length < 2) return JSON.stringify({ pdv: {} });
+  var headers = data[0].map(function(h) { return String(h).trim().toLowerCase(); });
+
+  var iPos      = buscarCol_(headers, ['oficina farmacia', 'oficina de farmacia']);
+  var iDelegado = buscarCol_(headers, ['delegado']);
+  var iCuentaId = buscarCol_(headers, ['id cuenta']);
+  var iCuentaNom= buscarCol_(headers, ['nombre de la cuenta']);
+  var iTipo     = buscarCol_(headers, ['tipo de registro']);
+  var iTeam     = buscarCol_(headers, ['team']);
+
+  if (iPos === -1) {
+    throw new Error("No encontré 'Nº Oficina Farmacia' en la hoja '" + NOMBRE_HOJA_ASIGNACION +
+                    "'. Encabezados: " + headers.join(' | '));
+  }
+
+  var pdv = {};
+  for (var i = 1; i < data.length; i++) {
+    var row = data[i];
+    var pos = normalizarPos_(row[iPos]);
+    var delegado = iDelegado !== -1 ? String(row[iDelegado] || '').trim() : '';
+    if (!pos || !delegado) continue;
+    var asignacion = {
+      delegado:     delegado,
+      team:         iTeam      !== -1 ? String(row[iTeam]       || '').trim() : '',
+      tipo:         iTipo      !== -1 ? String(row[iTipo]       || '').trim() : '',
+      cuentaId:     iCuentaId  !== -1 ? String(row[iCuentaId]   || '').trim() : '',
+      cuentaNombre: iCuentaNom !== -1 ? String(row[iCuentaNom]  || '').trim() : ''
+    };
+    if (!pdv[pos]) pdv[pos] = [];
+    pdv[pos].push(asignacion);
+  }
+
+  return JSON.stringify({ pdv: pdv });
 }
 
 /* ============================================================

@@ -36,12 +36,13 @@ header .acc{margin-left:auto;display:flex;gap:8px}
   background:#fff8ec;border:1px solid var(--aviso);color:var(--aviso)}
 .aviso.grave{background:#fdf0f0;border-color:var(--error);color:var(--error)}
 
-.kpis{grid-area:kpis;display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px}
-.kpi{padding:12px 16px}
-.kpi.modo-prod{border-color:var(--producto)}
-.kpi .label{font-size:12px;color:var(--ink-2);margin-bottom:2px}
-.kpi .value{font-size:24px;font-weight:700;line-height:1.15;font-variant-numeric:tabular-nums}
-.kpi .hint{font-size:11.5px;color:var(--muted);margin-top:2px}
+.kpis{grid-area:kpis;display:grid;grid-template-columns:repeat(auto-fit,minmax(128px,1fr));gap:6px}
+.kpi{padding:6px 10px;border-left:3px solid transparent}
+.kpi.modo-prod{border-left-color:var(--producto)}
+.kpi .label{font-size:10.5px;color:var(--ink-2);margin-bottom:1px;
+  text-transform:uppercase;letter-spacing:.02em}
+.kpi .value{font-size:17px;font-weight:700;line-height:1.1;font-variant-numeric:tabular-nums}
+.kpi .hint{font-size:10px;color:var(--muted);margin-top:1px}
 
 .side{grid-area:side;padding:14px;overflow-y:auto}
 .side h2,.charts h2{margin:0 0 8px;font-size:13px;font-weight:700;
@@ -97,10 +98,6 @@ header .acc{margin-left:auto;display:flex;gap:8px}
 .barra-fila.brecha .barra-relleno{background:var(--sem-muybajo)}
 .barra-fila:hover .barra-relleno{background:var(--accent-2)}
 
-.mes-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(40px,1fr));gap:4px;align-items:end;height:70px}
-.mes-col{display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%}
-.mes-bar{width:100%;background:var(--producto);border-radius:3px 3px 0 0;min-height:2px}
-.mes-lbl{font-size:9.5px;color:var(--muted);margin-top:3px}
 
 .overlay{position:fixed;inset:0;z-index:3000;display:flex;align-items:center;justify-content:center;
   background:rgba(249,249,247,.75);font-weight:600;color:var(--ink-2)}
@@ -124,6 +121,7 @@ header .acc{margin-left:auto;display:flex;gap:8px}
 .popup-sellout .grande{font-size:15px;font-weight:700}
 .badge-pot{display:inline-block;padding:1px 7px;border-radius:999px;background:var(--ink);
   color:#fff;font-size:11px;font-weight:700;vertical-align:middle;margin-left:4px}
+.badge-agente{display:inline-block;font-size:11px;vertical-align:middle;margin-left:3px;cursor:default}
 .popup-brick ol{margin:5px 0 0;padding-left:18px}
 .popup-brick li{margin-bottom:3px}
 .mini{color:var(--muted);font-size:11.5px}
@@ -225,6 +223,12 @@ header .acc{margin-left:auto;display:flex;gap:8px}
                oninput="filtrarDropdown('potencial')" onfocus="abrirDropdown('potencial')"/>
         <div id="potencialDropdown" class="smart-dropdown" style="display:none"></div>
       </div>
+      <label>Agente / Delegado</label>
+      <div style="position:relative">
+        <input type="text" id="agenteSearch" placeholder="Buscar VM o LAM..." autocomplete="off"
+               oninput="filtrarDropdown('agente')" onfocus="abrirDropdown('agente')"/>
+        <div id="agenteDropdown" class="smart-dropdown" style="display:none"></div>
+      </div>
       <label>Brick</label>
       <div style="position:relative">
         <input type="text" id="brickSearch" placeholder="Buscar brick..." autocomplete="off"
@@ -265,12 +269,6 @@ header .acc{margin-left:auto;display:flex;gap:8px}
   </main>
 
   <aside class="card charts">
-    <div class="chart-bloque" id="bqTend" style="display:none">
-      <h2>Tendencia mensual del producto</h2>
-      <div class="chart-hint" id="tendHint"></div>
-      <div class="mes-grid" id="tendGrid"></div>
-    </div>
-
     <div class="chart-bloque" id="bqBrecha" style="display:none">
       <h2>Brechas de oportunidad</h2>
       <div class="chart-hint">PDV de alto volumen que NO venden este producto</div>
@@ -321,13 +319,13 @@ function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'
   .replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;')}
 
 /* ═══════════ Estado ═══════════ */
-var puntosG=[],bricksG=[],ventasG={},productosG={};
+var puntosG=[],bricksG=[],ventasG={},productosG={},asignacionesG={};
 var mesesD=[],mesesSel={},idxSel={};
 var busD=[],buSel='TODAS';
 var skuSel='',distSku=null,cargandoSku=false;
 var filtros={grupo:'TODOS',channel:'TODOS',region:'TODOS',poblacion:'TODOS',potencial:'TODOS',
-  brick:'TODOS',pdv:'TODOS'};
-var listo={puntos:false,bricks:false,ventas:false,port:false};
+  brick:'TODOS',pdv:'TODOS',agente:'TODOS'};
+var listo={puntos:false,bricks:false,ventas:false,port:false,asignaciones:false};
 var modoColor='rendimiento',asignado=false;
 var capaBrick={},agBricks={},marcIdx={},pdvIdx={},bbBricks=null;
 
@@ -335,7 +333,7 @@ var map=L.map('map',{preferCanvas:true}).setView([4.5709,-74.2973],6);
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
   {maxZoom:19,attribution:'© OpenStreetMap'}).addTo(map);
 var lienzo=L.canvas({padding:.4});
-var bLayer=L.layerGroup().addTo(map);
+var bLayer=L.featureGroup().addTo(map);
 var pLayer=L.layerGroup().addTo(map);
 
 function avisar(m,g){var c=document.getElementById('avisos');c.style.display='flex';
@@ -353,6 +351,8 @@ if(esGas()){
     .withFailureHandler(function(e){avisar('Sell Out: '+me(e),true);listo.ventas=true;boot()}).getVentasJson();
   google.script.run.withSuccessHandler(function(j){recPort(JSON.parse(j))})
     .withFailureHandler(function(e){avisar('Portafolio: '+me(e));listo.port=true;boot()}).getPortafolioJson();
+  google.script.run.withSuccessHandler(function(j){recAsignaciones(JSON.parse(j))})
+    .withFailureHandler(function(e){avisar('Asignación: '+me(e));listo.asignaciones=true;boot()}).getAsignacionesJson();
 }else{
   setTimeout(function(){
     recPuntos({puntos:[
@@ -371,6 +371,9 @@ if(esGas()){
     recPort({meses:['2026-01','2026-02','2026-03'],productos:{
       '8429420251984':{d:'FP GEL CREAM SPF50 250ML',bu:'FOTO',f:'',s:[[0,54,5127060],[1,57,5300000],[2,18,1600000]]},
       '8470001716125':{d:'FP COMPACT ARENA SPF50+ 10G',bu:'FOTO',f:'',s:[[0,6,428670]]}}});
+    recAsignaciones({pdv:{
+      '11026727_ZO':[{delegado:'Ana Pérez',team:'Eje Cafetero',tipo:'VM',cuentaId:'',cuentaNombre:''}],
+      '11026727_ZC':[{delegado:'Luis Gómez',team:'Bogotá Norte',tipo:'LAM',cuentaId:'',cuentaNombre:''}]}});
   },300);
 }
 
@@ -396,6 +399,7 @@ function recPort(p){
     productosG[k]={d:x.d||x.desc||k,bu:String(x.bu||'').trim().toUpperCase(),
       f:x.f||x.familia||'',s:x.s||x.serie||[]}});
   llenarSku();listo.port=true;boot()}
+function recAsignaciones(p){asignacionesG=p.pdv||{};listo.asignaciones=true;boot()}
 
 function boot(){
   actOverlay();
@@ -408,9 +412,10 @@ function boot(){
 
 function actOverlay(){
   var o=document.getElementById('overlay');
-  if(listo.puntos&&listo.bricks&&listo.ventas&&listo.port){o.style.display='none';return}
+  if(listo.puntos&&listo.bricks&&listo.ventas&&listo.port&&listo.asignaciones){o.style.display='none';return}
   var f=[];if(!listo.puntos)f.push('PDV');if(!listo.bricks)f.push('bricks');
   if(!listo.ventas)f.push('Sell Out');if(!listo.port)f.push('portafolio');
+  if(!listo.asignaciones)f.push('asignación');
   document.getElementById('overlayTexto').innerText='Cargando '+f.join(', ')+'…'}
 
 function abrirDiag(){document.getElementById('modalDiag').style.display='flex';
@@ -468,7 +473,6 @@ function seleccionarSku(sku){
   var banda=document.getElementById('bandaProd');
   if(!sku){distSku=null;banda.style.display='none';
     document.getElementById('skuInfo').innerText='';
-    document.getElementById('bqTend').style.display='none';
     document.getElementById('bqBrecha').style.display='none';
     document.getElementById('bqPort').style.display='block';
     document.getElementById('tituloTop').innerText='Top 10 PDV por Sell Out';
@@ -548,16 +552,26 @@ function ring(x,y,r){var ins=false;
 var DIMS=['grupo','channel','region','poblacion','potencial'];
 function cambiarFiltro(k,v){filtros[k]=v;actualizar();actProducto()}
 function limpiarFiltros(){filtros={grupo:'TODOS',channel:'TODOS',region:'TODOS',
-  poblacion:'TODOS',potencial:'TODOS',brick:'TODOS',pdv:'TODOS'};
+  poblacion:'TODOS',potencial:'TODOS',brick:'TODOS',pdv:'TODOS',agente:'TODOS'};
   document.getElementById('brickSearch').value='';
   document.getElementById('pdvSearch').value='';
   document.getElementById('brickSelInfo').innerText='';
   document.getElementById('pdvSelInfo').innerText='';
   actualizar();actProducto()}
+// Asignaciones (VM/LAM) del PDV — un mismo PDV puede tener más de una fila en la hoja 'Asignacion'.
+function asignacionesDe(p){return(p.posId&&asignacionesG[p.posId])||[]}
+function tieneAgente(p){return asignacionesDe(p).length>0}
+function marcaAgenteTxt(p){return tieneAgente(p)?' 👤':''}
+function marcaAgenteHtml(p){
+  var as=asignacionesDe(p);if(!as.length)return'';
+  var detalle=as.map(function(a){return a.delegado+(a.tipo?' ('+a.tipo+')':'')}).join(', ');
+  return'<span class="badge-agente" title="'+esc(detalle)+'">👤</span>'}
 function pasa(p,ig){for(var i=0;i<DIMS.length;i++){var d=DIMS[i];
   if(ig===d||filtros[d]==='TODOS')continue;if(p[d]!==filtros[d])return false}
   if(ig!=='brick'&&filtros.brick!=='TODOS'&&(p._brick||'')!==filtros.brick)return false;
   if(ig!=='pdv'&&filtros.pdv!=='TODOS'&&p.posId!==filtros.pdv&&p.name!==filtros.pdv)return false;
+  if(ig!=='agente'&&filtros.agente!=='TODOS'&&
+     !asignacionesDe(p).some(function(a){return a.delegado===filtros.agente}))return false;
   return true}
 function cambiarModo(v){modoColor=v;recolorBricks()}
 
@@ -565,7 +579,7 @@ function cambiarModo(v){modoColor=v;recolorBricks()}
 var dropdownAbierto=null;
 var ETIQUETAS_TODOS={grupo:'Todos los grupos',channel:'Todos los canales',region:'Todas las regiones',
   poblacion:'Todas las poblaciones',potencial:'Todos los potenciales',brick:'Todos los bricks',
-  pdv:'Todos los PDV',bu:'Todas las BU',sku:'— Vista general (sin producto) —'};
+  pdv:'Todos los PDV',agente:'Todos los agentes',bu:'Todas las BU',sku:'— Vista general (sin producto) —'};
 var VALOR_TODOS={bu:'TODAS',sku:''};
 function valorTodos(tipo){return VALOR_TODOS.hasOwnProperty(tipo)?VALOR_TODOS[tipo]:'TODOS'}
 function valorSeleccionado(tipo){
@@ -598,6 +612,11 @@ function opcionesDropdown(tipo){
     return puntosG.filter(function(p){return pasa(p,'pdv')})
       .map(function(p){return{valor:p.posId,etiqueta:p.name+' · '+p.posId}})
       .sort(function(a,b){return a.etiqueta<b.etiqueta?-1:a.etiqueta>b.etiqueta?1:0});
+  if(tipo==='agente'){
+    var cnt={};
+    puntosG.forEach(function(p){if(!pasa(p,'agente'))return;
+      asignacionesDe(p).forEach(function(a){cnt[a.delegado]=(cnt[a.delegado]||0)+1})});
+    return Object.keys(cnt).sort().map(function(k){return{valor:k,etiqueta:k,cnt:cnt[k]}})}
   var cnt={};
   puntosG.forEach(function(p){if(pasa(p,tipo))cnt[p[tipo]]=(cnt[p[tipo]]||0)+1});
   return Object.keys(cnt).filter(Boolean).sort().map(function(k){return{valor:k,etiqueta:k,cnt:cnt[k]}})}
@@ -640,12 +659,15 @@ function seleccionarOpcion(tipo,valor,etiqueta){
       info.innerText=(valor!=='TODOS'&&agg)?agg.pdvs.length+' PDV en este brick':''}}
   if(tipo==='pdv'){var pinfo=document.getElementById('pdvSelInfo');if(pinfo)pinfo.innerText=''}}
 
-function filtrarPorBrick(brickId){
+// Filtra el mapa a un solo brick sin tocar el popup (lo usa el clic directo sobre
+// el polígono, que además refresca el contenido del popup ya abierto).
+function aplicarFiltroBrick(brickId){
   cambiarFiltro('brick',brickId);
   var input=document.getElementById('brickSearch');if(input)input.value=brickId;
   var info=document.getElementById('brickSelInfo');
-  if(info){var agg=agBricks[brickId];info.innerText=agg?agg.pdvs.length+' PDV en este brick':''}
-  map.closePopup()}
+  if(info){var agg=agBricks[brickId];info.innerText=agg?agg.pdvs.length+' PDV en este brick':''}}
+// Variante para el botón del popup: además lo cierra, como confirmación de "listo".
+function filtrarPorBrick(brickId){aplicarFiltroBrick(brickId);map.closePopup()}
 
 function cerrarTodosDropdowns(){
   document.querySelectorAll('.smart-dropdown').forEach(function(d){d.style.display='none'});
@@ -662,7 +684,7 @@ document.addEventListener('click',function(e){
 // Reconstruye las opciones de brick/PDV (y sincroniza los inputs de texto de todos los
 // filtros convertidos) con cross-filtering, igual que antes hacía llenarSel con los <select>.
 function llenarDropdowns(){
-  ['grupo','channel','region','poblacion','potencial','brick','pdv'].forEach(function(tipo){
+  ['grupo','channel','region','poblacion','potencial','brick','pdv','agente'].forEach(function(tipo){
     var input=document.getElementById(tipo+'Search');
     if(!input||filtros[tipo]!=='TODOS'||document.activeElement===input)return;
     input.value='';
@@ -685,6 +707,9 @@ function actualizar(){
   if(filtros.brick!=='TODOS'&&!cntBrick[filtros.brick])filtros.brick='TODOS';
   if(filtros.pdv!=='TODOS'&&!puntosG.some(function(p){
     return(p.posId===filtros.pdv||p.name===filtros.pdv)&&pasa(p,'pdv')}))filtros.pdv='TODOS';
+  if(filtros.agente!=='TODOS'&&!puntosG.some(function(p){
+    return pasa(p,'agente')&&asignacionesDe(p).some(function(a){return a.delegado===filtros.agente})}))
+    filtros.agente='TODOS';
 
   var vis=puntosG.filter(function(p){return pasa(p,null)});
   var vv=vis.map(ventaPDV);
@@ -777,7 +802,7 @@ function dibujarTop(vis,vv){
     dat=vis.map(function(p,i){return{p:p,s:ventaSku(p),idx:i}})
       .filter(function(x){return x.s.total>0})
       .sort(function(a,b){return b.s.total-a.s.total}).slice(0,10)
-      .map(function(x){return{clave:x.p.name,n:x.s.total,clase:'prod',
+      .map(function(x){return{clave:x.p.name+marcaAgenteTxt(x.p),n:x.s.total,clase:'prod',
         tit:x.p.name+' · '+fd(x.s.total)+' · '+FMT.format(Math.round(x.s.unidades))+' und.',
         fn:function(){map.setView([x.p.lat,x.p.lng],16);
           var m=marcIdx[x.idx];if(m)m.openPopup()}}});
@@ -785,7 +810,7 @@ function dibujarTop(vis,vv){
     dat=vis.map(function(p,i){return{p:p,v:vv[i],idx:i}})
       .filter(function(x){return x.v.total>0})
       .sort(function(a,b){return b.v.total-a.v.total}).slice(0,10)
-      .map(function(x){return{clave:x.p.name,n:x.v.total,
+      .map(function(x){return{clave:x.p.name+marcaAgenteTxt(x.p),n:x.v.total,
         tit:x.p.name+' · '+fd(x.v.total)+' · Potencial '+x.p.potencial,
         fn:function(){map.setView([x.p.lat,x.p.lng],16);
           var m=marcIdx[x.idx];if(m)m.openPopup();verPortPdv(x.p)}}})}
@@ -809,40 +834,15 @@ function dibujarPort(){
 
 /* ═══════════ Panel de producto: tendencia y brechas ═══════════ */
 function actProducto(){
-  if(!skuSel||!distSku){document.getElementById('bqTend').style.display='none';
-    document.getElementById('bqBrecha').style.display='none';return}
+  if(!skuSel||!distSku){document.getElementById('bqBrecha').style.display='none';return}
   var meta=productosG[skuSel]||{d:skuSel};
   var vis=puntosG.filter(function(p){return pasa(p,null)});
-
-  // Tendencia mensual (unidades por mes del SKU en los PDV visibles)
-  var porMes={};
-  vis.forEach(function(p){
-    var s=distSku[p.posId];if(!s)return;
-    s.forEach(function(t){if(!idxSel[t[0]])return;
-      if(!porMes[t[0]])porMes[t[0]]=[0,0];
-      porMes[t[0]][0]+=t[1];porMes[t[0]][1]+=t[2]})});
-  var idxs=Object.keys(porMes).map(Number).sort(function(a,b){return a-b});
-  var g=document.getElementById('tendGrid');g.innerHTML='';
-  if(idxs.length){
-    var mx=Math.max.apply(null,idxs.map(function(i){return porMes[i][1]}));
-    idxs.forEach(function(i){
-      var col=document.createElement('div');col.className='mes-col';
-      var bar=document.createElement('div');bar.className='mes-bar';
-      bar.style.height=Math.max(2,Math.round(100*porMes[i][1]/mx))+'%';
-      bar.title=em(mesesD[i])+': '+fd(porMes[i][1])+' · '+
-        FMT.format(Math.round(porMes[i][0]))+' und.';
-      var lbl=document.createElement('div');lbl.className='mes-lbl';
-      lbl.innerText=em(mesesD[i]).split(' ')[0];
-      col.appendChild(bar);col.appendChild(lbl);g.appendChild(col)});
-    document.getElementById('tendHint').innerText=esc(meta.d||skuSel);
-    document.getElementById('bqTend').style.display='block';
-  }else document.getElementById('bqTend').style.display='none';
 
   // Brechas: PDV con alto Sell Out total que NO venden este producto
   var brechas=vis.map(function(p){return{p:p,v:ventaPDV(p),s:ventaSku(p)}})
     .filter(function(x){return x.v.total>0&&x.s.total===0})
     .sort(function(a,b){return b.v.total-a.v.total}).slice(0,10)
-    .map(function(x){return{clave:x.p.name,n:x.v.total,clase:'brecha',
+    .map(function(x){return{clave:x.p.name+marcaAgenteTxt(x.p),n:x.v.total,clase:'brecha',
       tit:x.p.name+'\nSell Out total: '+fd(x.v.total)+
         '\nPotencial: '+x.p.potencial+'\nNO vende '+(meta.d||skuSel),
       fn:function(){map.setView([x.p.lat,x.p.lng],16)}}});
@@ -899,6 +899,10 @@ function dibujarBricks(){
     try{var capa=L.geoJSON(b.geometry,{renderer:lienzo,
         style:{color:SEM.sin,weight:2,opacity:.9,fillColor:SEM.sin,fillOpacity:.18}});
       capa.bindPopup(function(){return popupBrick(b)},{maxWidth:320});
+      // Un clic en el brick ya filtra el mapa a sus PDV (antes hacía falta abrir el
+      // popup y pulsar el botón). El popup igual se abre; se refresca con setPopupContent
+      // porque Leaflet ya lo abrió con el contenido de ANTES de filtrar.
+      capa.on('click',function(){aplicarFiltroBrick(b.brickId);capa.setPopupContent(popupBrick(b))});
       capa.addTo(bLayer);capaBrick[b.brickId]=capa;bbBricks.extend(capa.getBounds());n++
     }catch(e){}});
   bLayer.bringToBack()}
@@ -960,13 +964,13 @@ function popupBrick(b){
     if(con){
       h+='<b>Sí venden:</b><ol>';
       conProducto.slice(0,4).forEach(function(x){
-        h+='<li>'+esc(x.p.name)+'<br><span class="mini">'+fd(x.s.total)+'</span></li>'});
+        h+='<li>'+esc(x.p.name)+marcaAgenteHtml(x.p)+'<br><span class="mini">'+fd(x.s.total)+'</span></li>'});
       h+='</ol>';
       if(con>4)h+='<span class="mini">+ '+FMT.format(con-4)+' más</span>'}
     if(sinProducto.length){
       h+='<b>NO venden (brecha):</b><ol>';
       sinProducto.slice(0,4).forEach(function(x){
-        h+='<li>'+esc(x.p.name)+'<br><span class="mini">Sell Out total: '+fd(x.v.total)+'</span></li>'});
+        h+='<li>'+esc(x.p.name)+marcaAgenteHtml(x.p)+'<br><span class="mini">Sell Out total: '+fd(x.v.total)+'</span></li>'});
       h+='</ol>';
       if(sinProducto.length>4)h+='<span class="mini">+ '+FMT.format(sinProducto.length-4)+' más</span>'}
   }else if(!agg||!agg.pdvs.length){
@@ -976,8 +980,8 @@ function popupBrick(b){
       '<span class="mini">Sell Out del período · '+FMT.format(agg.pdvs.length)+' PDV</span></div>'+
       '<b>Top PDV:</b><ol>';
     agg.pdvs.slice(0,5).forEach(function(x){
-      h+='<li>'+esc(x.p.name)+' <span class="badge-pot">'+esc(x.p.potencial)+'</span><br>'+
-        '<span class="mini">'+fd(x.v.total)+'</span></li>'});
+      h+='<li>'+esc(x.p.name)+' <span class="badge-pot">'+esc(x.p.potencial)+'</span>'+
+        marcaAgenteHtml(x.p)+'<br><span class="mini">'+fd(x.v.total)+'</span></li>'});
     h+='</ol>';
     if(agg.pdvs.length>5)h+='<span class="mini">+ '+FMT.format(agg.pdvs.length-5)+' más</span>';
     h+='<button class="btn-portafolio" onclick="verPortBrick(\''+
@@ -1018,7 +1022,7 @@ function dibujarPuntos(vis,vv){
 function popupPdv(p,i){
   var v=ventaPDV(p);var nm=Object.keys(idxSel).length;
   var h='<div class="popup-pdv"><h3>'+esc(p.name)+
-    '<span class="badge-pot">'+esc(p.potencial)+'</span></h3>';
+    '<span class="badge-pot">'+esc(p.potencial)+'</span>'+marcaAgenteHtml(p)+'</h3>';
 
   if(skuSel&&distSku){
     var meta=productosG[skuSel]||{d:skuSel};var s=ventaSku(p);
@@ -1057,6 +1061,8 @@ function popupPdv(p,i){
     '<b>Canal:</b> '+esc(p.channel)+'<br>'+
     '<b>Región:</b> '+esc(p.region)+' · <b>Población:</b> '+esc(p.poblacion)+'<br>'+
     (p._brick?'<b>Brick:</b> '+esc(p._brick)+'<br>':'')+
+    (tieneAgente(p)?'<b>Agente:</b> '+esc(asignacionesDe(p).map(function(a){
+      return a.delegado+(a.tipo?' ('+a.tipo+')':'')}).join(', '))+'<br>':'')+
     '<a class="enlace" href="https://www.google.com/maps?q='+p.lat+','+p.lng+
     '" target="_blank" rel="noopener">Abrir en Google Maps</a></div>';
   return h}
