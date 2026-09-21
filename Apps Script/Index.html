@@ -131,6 +131,15 @@ header .acc{margin-left:auto;display:flex;gap:8px}
   border-radius:6px;background:var(--surface);color:var(--accent);font-size:12.5px;
   font-weight:600;cursor:pointer}
 .btn-portafolio:hover{background:var(--accent);color:#fff}
+.smart-dropdown{position:absolute;top:100%;left:0;right:0;z-index:2000;
+  background:var(--surface);border:1px solid var(--hairline);border-radius:6px;
+  max-height:200px;overflow-y:auto;box-shadow:0 4px 12px rgba(0,0,0,.12)}
+.smart-dropdown .opcion{padding:7px 10px;font-size:12.5px;cursor:pointer;color:var(--ink-2);
+  border-bottom:1px solid var(--hairline)}
+.smart-dropdown .opcion:last-child{border-bottom:none}
+.smart-dropdown .opcion:hover{background:var(--page);color:var(--ink)}
+.smart-dropdown .opcion.seleccionado{background:var(--accent);color:#fff}
+.smart-dropdown .empty{padding:7px 10px;font-size:12px;color:var(--muted)}
 </style>
 </head>
 <body>
@@ -170,21 +179,66 @@ header .acc{margin-left:auto;display:flex;gap:8px}
     <div class="seccion producto">
       <h2>Análisis de producto</h2>
       <label>Unidad de negocio</label>
-      <select id="buFil" onchange="cambiarBu(this.value)"><option value="TODAS">Todas las BU</option></select>
+      <div style="position:relative">
+        <input type="text" id="buSearch" placeholder="Buscar BU..." autocomplete="off"
+               oninput="filtrarDropdown('bu')" onfocus="abrirDropdown('bu')"/>
+        <div id="buDropdown" class="smart-dropdown" style="display:none"></div>
+      </div>
       <label>Producto (SKU)</label>
-      <select id="skuFil" onchange="seleccionarSku(this.value)">
-        <option value="">— Vista general (sin producto) —</option>
-      </select>
+      <div style="position:relative">
+        <input type="text" id="skuSearch" placeholder="Buscar producto..." autocomplete="off"
+               oninput="filtrarDropdown('sku')" onfocus="abrirDropdown('sku')"/>
+        <div id="skuDropdown" class="smart-dropdown" style="display:none"></div>
+      </div>
       <div class="mini" id="skuInfo" style="margin-top:6px"></div>
     </div>
 
     <div class="seccion">
       <h2>Filtros de PDV</h2>
-      <label>Grupo de compras</label><select id="grupoFil" onchange="cambiarFiltro('grupo',this.value)"></select>
-      <label>Canal</label><select id="canalFil" onchange="cambiarFiltro('channel',this.value)"></select>
-      <label>Región</label><select id="regionFil" onchange="cambiarFiltro('region',this.value)"></select>
-      <label>Población</label><select id="pobFil" onchange="cambiarFiltro('poblacion',this.value)"></select>
-      <label>Potencial Cliente</label><select id="potFil" onchange="cambiarFiltro('potencial',this.value)"></select>
+      <label>Grupo de compras</label>
+      <div style="position:relative">
+        <input type="text" id="grupoSearch" placeholder="Buscar grupo..." autocomplete="off"
+               oninput="filtrarDropdown('grupo')" onfocus="abrirDropdown('grupo')"/>
+        <div id="grupoDropdown" class="smart-dropdown" style="display:none"></div>
+      </div>
+      <label>Canal</label>
+      <div style="position:relative">
+        <input type="text" id="channelSearch" placeholder="Buscar canal..." autocomplete="off"
+               oninput="filtrarDropdown('channel')" onfocus="abrirDropdown('channel')"/>
+        <div id="channelDropdown" class="smart-dropdown" style="display:none"></div>
+      </div>
+      <label>Región</label>
+      <div style="position:relative">
+        <input type="text" id="regionSearch" placeholder="Buscar región..." autocomplete="off"
+               oninput="filtrarDropdown('region')" onfocus="abrirDropdown('region')"/>
+        <div id="regionDropdown" class="smart-dropdown" style="display:none"></div>
+      </div>
+      <label>Población</label>
+      <div style="position:relative">
+        <input type="text" id="poblacionSearch" placeholder="Buscar población..." autocomplete="off"
+               oninput="filtrarDropdown('poblacion')" onfocus="abrirDropdown('poblacion')"/>
+        <div id="poblacionDropdown" class="smart-dropdown" style="display:none"></div>
+      </div>
+      <label>Potencial Cliente</label>
+      <div style="position:relative">
+        <input type="text" id="potencialSearch" placeholder="Buscar potencial..." autocomplete="off"
+               oninput="filtrarDropdown('potencial')" onfocus="abrirDropdown('potencial')"/>
+        <div id="potencialDropdown" class="smart-dropdown" style="display:none"></div>
+      </div>
+      <label>Brick</label>
+      <div style="position:relative">
+        <input type="text" id="brickSearch" placeholder="Buscar brick..." autocomplete="off"
+               oninput="filtrarDropdown('brick')" onfocus="abrirDropdown('brick')"/>
+        <div id="brickDropdown" class="smart-dropdown" style="display:none"></div>
+      </div>
+      <div class="mini" id="brickSelInfo" style="margin-top:3px"></div>
+      <label>Punto de Venta (PDV)</label>
+      <div style="position:relative">
+        <input type="text" id="pdvSearch" placeholder="Buscar PDV..." autocomplete="off"
+               oninput="filtrarDropdown('pdv')" onfocus="abrirDropdown('pdv')"/>
+        <div id="pdvDropdown" class="smart-dropdown" style="display:none"></div>
+      </div>
+      <div class="mini" id="pdvSelInfo" style="margin-top:3px"></div>
       <button class="btn-limpiar" onclick="limpiarFiltros()">Limpiar filtros</button>
     </div>
 
@@ -271,7 +325,8 @@ var puntosG=[],bricksG=[],ventasG={},productosG={};
 var mesesD=[],mesesSel={},idxSel={};
 var busD=[],buSel='TODAS';
 var skuSel='',distSku=null,cargandoSku=false;
-var filtros={grupo:'TODOS',channel:'TODOS',region:'TODOS',poblacion:'TODOS',potencial:'TODOS'};
+var filtros={grupo:'TODOS',channel:'TODOS',region:'TODOS',poblacion:'TODOS',potencial:'TODOS',
+  brick:'TODOS',pdv:'TODOS'};
 var listo={puntos:false,bricks:false,ventas:false,port:false};
 var modoColor='rendimiento',asignado=false;
 var capaBrick={},agBricks={},marcIdx={},pdvIdx={},bbBricks=null;
@@ -327,7 +382,7 @@ function recVentas(p){
   mesesD=p.meses||[];var pdv=p.pdv||{};ventasG={};var bs={};
   Object.keys(pdv).forEach(function(pos){var bus=pdv[pos].bu||{};ventasG[pos]=bus;
     Object.keys(bus).forEach(function(b){bs[b]=1})});
-  busD=Object.keys(bs).sort();llenarBu();
+  busD=Object.keys(bs).sort();
   // idxSel debe existir antes de marcar ventas como listas y antes de boot().
   aplicarPreset('TODOS',true);
   // Si el portafolio llegó primero, se reordena el selector con los meses ya definidos.
@@ -389,10 +444,6 @@ function renderChips(){
     s.className='chip'+(mesesSel[m]?' activo':'');s.innerText=em(m);s.title=m;
     s.onclick=function(){alternarMes(m)};c.appendChild(s)})}
 
-function llenarBu(){var s=document.getElementById('buFil');s.innerHTML='';
-  var o=document.createElement('option');o.value='TODAS';o.text='Todas las BU';s.appendChild(o);
-  busD.forEach(function(b){var op=document.createElement('option');op.value=b;op.text=b;s.appendChild(op)});
-  s.value=buSel}
 function cambiarBu(v){buSel=v;llenarSku();actualizar();dibujarPort();refDet();actProducto()}
 
 /* ═══════════ Selector de producto ═══════════ */
@@ -400,26 +451,20 @@ function normBu(b){return String(b||'').trim().toUpperCase()}
 // Suma todos los meses de la serie sin filtrar por idxSel (orden de respaldo).
 function sumarSerieTotal(s){var a=0;(s||[]).forEach(function(t){a+=t[2]});return a}
 
+// Si el SKU seleccionado deja de existir (o de pertenecer a la BU activa) tras
+// recargar ventas/portafolio o cambiar de BU, vuelve a la vista general.
 function llenarSku(){
-  var s=document.getElementById('skuFil');var prev=skuSel;s.innerHTML='';
-  var o=document.createElement('option');o.value='';o.text='— Vista general (sin producto) —';
-  o.selected=true;s.appendChild(o);
-  var sinPeriodo=Object.keys(idxSel).length===0,bs=normBu(buSel);
-  var lista=Object.keys(productosG).map(function(k){
-    var p=productosG[k];
-    return{sku:k,d:p.d||k,bu:p.bu||'',
-      tot:sinPeriodo?sumarSerieTotal(p.s):sumarSerie(p.s).total}})
-    .filter(function(x){return bs==='TODAS'||!x.bu||normBu(x.bu)===bs})
-    .sort(function(a,b){return b.tot-a.tot});
-  lista.forEach(function(x){var op=document.createElement('option');
-    op.value=x.sku;op.text=x.d+(x.bu?' · '+x.bu:'');s.appendChild(op)});
-  s.value=prev;
-  // Si el SKU previo ya no está en la lista, volver explícitamente a la opción vacía
-  // (evita un <select> sin selección, con selectedIndex = -1).
-  if(s.value!==prev||s.selectedIndex<0){skuSel='';s.selectedIndex=0}}
+  var prev=skuSel,bs=normBu(buSel),sigue=!prev;
+  if(prev){var p=productosG[prev];sigue=!!p&&(bs==='TODAS'||!p.bu||normBu(p.bu)===bs)}
+  if(!sigue){
+    skuSel='';
+    var input=document.getElementById('skuSearch');
+    if(input&&document.activeElement!==input)input.value=''}}
 
 function seleccionarSku(sku){
-  skuSel=sku;document.getElementById('skuFil').value=sku;
+  skuSel=sku;
+  var skuInput=document.getElementById('skuSearch');
+  if(skuInput)skuInput.value=sku?((productosG[sku]||{}).d||sku):'';
   var banda=document.getElementById('bandaProd');
   if(!sku){distSku=null;banda.style.display='none';
     document.getElementById('skuInfo').innerText='';
@@ -503,10 +548,129 @@ function ring(x,y,r){var ins=false;
 var DIMS=['grupo','channel','region','poblacion','potencial'];
 function cambiarFiltro(k,v){filtros[k]=v;actualizar();actProducto()}
 function limpiarFiltros(){filtros={grupo:'TODOS',channel:'TODOS',region:'TODOS',
-  poblacion:'TODOS',potencial:'TODOS'};actualizar();actProducto()}
+  poblacion:'TODOS',potencial:'TODOS',brick:'TODOS',pdv:'TODOS'};
+  document.getElementById('brickSearch').value='';
+  document.getElementById('pdvSearch').value='';
+  document.getElementById('brickSelInfo').innerText='';
+  document.getElementById('pdvSelInfo').innerText='';
+  actualizar();actProducto()}
 function pasa(p,ig){for(var i=0;i<DIMS.length;i++){var d=DIMS[i];
-  if(ig===d||filtros[d]==='TODOS')continue;if(p[d]!==filtros[d])return false}return true}
+  if(ig===d||filtros[d]==='TODOS')continue;if(p[d]!==filtros[d])return false}
+  if(ig!=='brick'&&filtros.brick!=='TODOS'&&(p._brick||'')!==filtros.brick)return false;
+  if(ig!=='pdv'&&filtros.pdv!=='TODOS'&&p.posId!==filtros.pdv&&p.name!==filtros.pdv)return false;
+  return true}
 function cambiarModo(v){modoColor=v;recolorBricks()}
+
+/* ═══════════ Dropdowns inteligentes (buscador con cross-filtering) ═══════════ */
+var dropdownAbierto=null;
+var ETIQUETAS_TODOS={grupo:'Todos los grupos',channel:'Todos los canales',region:'Todas las regiones',
+  poblacion:'Todas las poblaciones',potencial:'Todos los potenciales',brick:'Todos los bricks',
+  pdv:'Todos los PDV',bu:'Todas las BU',sku:'— Vista general (sin producto) —'};
+var VALOR_TODOS={bu:'TODAS',sku:''};
+function valorTodos(tipo){return VALOR_TODOS.hasOwnProperty(tipo)?VALOR_TODOS[tipo]:'TODOS'}
+function valorSeleccionado(tipo){
+  if(tipo==='bu')return buSel;if(tipo==='sku')return skuSel;return filtros[tipo]}
+// Sin acentos y en mayúsculas, para que el buscador ignore tildes.
+function normTxt(s){return String(s==null?'':s).toUpperCase()
+  .normalize('NFD').replace(/\p{Diacritic}/gu,'')}
+// Escapa para incrustar en un atributo onclick: primero la comilla JS, luego el HTML
+// (en ese orden — al revés esc() deja la comilla como &#39; y el replace ya no la ve).
+function jsq(s){return esc(String(s==null?'':s).replace(/\\/g,'\\\\').replace(/'/g,"\\'"))}
+
+function opcionesDropdown(tipo){
+  if(tipo==='bu')return busD.map(function(b){return{valor:b,etiqueta:b}});
+  if(tipo==='sku'){
+    var sinPeriodo=Object.keys(idxSel).length===0,bs=normBu(buSel);
+    return Object.keys(productosG).map(function(k){
+        var p=productosG[k];
+        return{valor:k,etiqueta:(p.d||k)+(p.bu?' · '+p.bu:''),bu:p.bu||'',
+          tot:sinPeriodo?sumarSerieTotal(p.s):sumarSerie(p.s).total}})
+      .filter(function(x){return bs==='TODAS'||!x.bu||normBu(x.bu)===bs})
+      .sort(function(a,b){return b.tot-a.tot})}
+  if(tipo==='brick'){
+    var cnt={};
+    puntosG.forEach(function(p){if(!p._brick||!pasa(p,'brick'))return;
+      cnt[p._brick]=(cnt[p._brick]||0)+1});
+    return bricksG.filter(function(b){return cnt[b.brickId]}).map(function(b){
+        return{valor:b.brickId,etiqueta:b.nombreBrick||b.nombre||b.brickId,cnt:cnt[b.brickId]}})
+      .sort(function(a,b){return b.cnt-a.cnt})}
+  if(tipo==='pdv')
+    return puntosG.filter(function(p){return pasa(p,'pdv')})
+      .map(function(p){return{valor:p.posId,etiqueta:p.name+' · '+p.posId}})
+      .sort(function(a,b){return a.etiqueta<b.etiqueta?-1:a.etiqueta>b.etiqueta?1:0});
+  var cnt={};
+  puntosG.forEach(function(p){if(pasa(p,tipo))cnt[p[tipo]]=(cnt[p[tipo]]||0)+1});
+  return Object.keys(cnt).filter(Boolean).sort().map(function(k){return{valor:k,etiqueta:k,cnt:cnt[k]}})}
+
+function renderDropdown(tipo,query){
+  var cont=document.getElementById(tipo+'Dropdown');if(!cont)return;
+  var todas=opcionesDropdown(tipo),q=normTxt(query);
+  var filtradas=q?todas.filter(function(o){return normTxt(o.etiqueta).indexOf(q)!==-1}):todas;
+  var TOPE=tipo==='pdv'?50:filtradas.length;
+  var recortadas=filtradas.slice(0,TOPE),sel=valorSeleccionado(tipo),html='';
+
+  if(!q){
+    var vTodos=valorTodos(tipo),etqTodos=ETIQUETAS_TODOS[tipo]||'Todos';
+    var totTodos=todas.reduce(function(s,o){return s+(o.cnt||0)},0);
+    html+='<div class="opcion'+(sel===vTodos?' seleccionado':'')+'" onclick="seleccionarOpcion(\''+
+      tipo+'\',\''+jsq(vTodos)+'\',\''+jsq(etqTodos)+'\')">'+esc(etqTodos)+
+      (totTodos?' ('+FMT.format(totTodos)+')':'')+'</div>'}
+  if(!recortadas.length){
+    html+='<div class="empty">Sin resultados</div>';
+  }else{
+    recortadas.forEach(function(o){
+      var etqTxt=o.etiqueta+(o.cnt!=null?' ('+FMT.format(o.cnt)+')':'');
+      html+='<div class="opcion'+(o.valor===sel?' seleccionado':'')+'" onclick="seleccionarOpcion(\''+
+        tipo+'\',\''+jsq(o.valor)+'\',\''+jsq(o.etiqueta)+'\')">'+esc(etqTxt)+'</div>'});
+    if(filtradas.length>recortadas.length)
+      html+='<div class="empty">+ '+FMT.format(filtradas.length-recortadas.length)+
+        ' más — sigue escribiendo para refinar</div>'}
+  cont.innerHTML=html}
+
+function seleccionarOpcion(tipo,valor,etiqueta){
+  var input=document.getElementById(tipo+'Search');
+  if(input)input.value=(valor===valorTodos(tipo))?'':etiqueta;
+  cerrarTodosDropdowns();
+  if(tipo==='bu'){cambiarBu(valor);return}
+  if(tipo==='sku'){seleccionarSku(valor);return}
+  cambiarFiltro(tipo,valor);
+  if(tipo==='brick'){
+    var info=document.getElementById('brickSelInfo');
+    if(info){var agg=agBricks[valor];
+      info.innerText=(valor!=='TODOS'&&agg)?agg.pdvs.length+' PDV en este brick':''}}
+  if(tipo==='pdv'){var pinfo=document.getElementById('pdvSelInfo');if(pinfo)pinfo.innerText=''}}
+
+function filtrarPorBrick(brickId){
+  cambiarFiltro('brick',brickId);
+  var input=document.getElementById('brickSearch');if(input)input.value=brickId;
+  var info=document.getElementById('brickSelInfo');
+  if(info){var agg=agBricks[brickId];info.innerText=agg?agg.pdvs.length+' PDV en este brick':''}
+  map.closePopup()}
+
+function cerrarTodosDropdowns(){
+  document.querySelectorAll('.smart-dropdown').forEach(function(d){d.style.display='none'});
+  dropdownAbierto=null}
+function abrirDropdown(tipo){
+  cerrarTodosDropdowns();renderDropdown(tipo,'');
+  document.getElementById(tipo+'Dropdown').style.display='block';dropdownAbierto=tipo}
+function filtrarDropdown(tipo){
+  var q=document.getElementById(tipo+'Search').value;renderDropdown(tipo,q);
+  document.getElementById(tipo+'Dropdown').style.display='block';dropdownAbierto=tipo}
+document.addEventListener('click',function(e){
+  if(!e.target.closest('.smart-dropdown')&&!e.target.matches('[id$="Search"]'))cerrarTodosDropdowns()});
+
+// Reconstruye las opciones de brick/PDV (y sincroniza los inputs de texto de todos los
+// filtros convertidos) con cross-filtering, igual que antes hacía llenarSel con los <select>.
+function llenarDropdowns(){
+  ['grupo','channel','region','poblacion','potencial','brick','pdv'].forEach(function(tipo){
+    var input=document.getElementById(tipo+'Search');
+    if(!input||filtros[tipo]!=='TODOS'||document.activeElement===input)return;
+    input.value='';
+    if(tipo==='brick'){var bi=document.getElementById('brickSelInfo');if(bi)bi.innerText=''}
+    if(tipo==='pdv'){var pi=document.getElementById('pdvSelInfo');if(pi)pi.innerText=''}});
+  if(dropdownAbierto){
+    var si=document.getElementById(dropdownAbierto+'Search');
+    if(si)renderDropdown(dropdownAbierto,si.value)}}
 
 /* ═══════════ Actualización global ═══════════ */
 function actualizar(){
@@ -514,14 +678,18 @@ function actualizar(){
   puntosG.forEach(function(p){DIMS.forEach(function(d){
     if(pasa(p,d))cnt[d][p[d]]=(cnt[d][p[d]]||0)+1})});
   DIMS.forEach(function(d){if(filtros[d]!=='TODOS'&&!cnt[d][filtros[d]])filtros[d]='TODOS'});
+
+  var cntBrick={};
+  puntosG.forEach(function(p){if(!p._brick||!pasa(p,'brick'))return;
+    cntBrick[p._brick]=(cntBrick[p._brick]||0)+1});
+  if(filtros.brick!=='TODOS'&&!cntBrick[filtros.brick])filtros.brick='TODOS';
+  if(filtros.pdv!=='TODOS'&&!puntosG.some(function(p){
+    return(p.posId===filtros.pdv||p.name===filtros.pdv)&&pasa(p,'pdv')}))filtros.pdv='TODOS';
+
   var vis=puntosG.filter(function(p){return pasa(p,null)});
   var vv=vis.map(ventaPDV);
 
-  llenarSel('grupoFil',cnt.grupo,filtros.grupo,'Todos los grupos');
-  llenarSel('canalFil',cnt.channel,filtros.channel,'Todos los canales');
-  llenarSel('regionFil',cnt.region,filtros.region,'Todas las regiones');
-  llenarSel('pobFil',cnt.poblacion,filtros.poblacion,'Todas las poblaciones');
-  llenarSel('potFil',cnt.potencial,filtros.potencial,'Todos los potenciales');
+  llenarDropdowns();
 
   agBricks={};
   vis.forEach(function(p,i){if(!p._brick)return;
@@ -573,17 +741,6 @@ function kpisProducto(vis){
     kpi('Rotación',rot.toFixed(1),'unidades / PDV / mes',true)+
     kpi('Precio promedio',fd(precio),'ponderado por volumen',true)+
     kpi('Unidades',FMT.format(Math.round(uni)),'del período',true)}
-
-/* ═══════════ Selects ═══════════ */
-function llenarSel(id,cnt,sel,txt){
-  var s=document.getElementById(id);s.innerHTML='';
-  var tot=0;Object.keys(cnt).forEach(function(k){tot+=cnt[k]});
-  var o=document.createElement('option');o.value='TODOS';
-  o.text=txt+' ('+FMT.format(tot)+')';s.appendChild(o);
-  Object.keys(cnt).sort().forEach(function(op){if(!op)return;
-    var opt=document.createElement('option');opt.value=op;
-    opt.text=op+' ('+FMT.format(cnt[op])+')';if(op===sel)opt.selected=true;s.appendChild(opt)});
-  s.value=sel;if(s.value!==sel)s.value='TODOS'}
 
 /* ═══════════ Barras ═══════════ */
 function pintarBarras(id,datos,ops){
@@ -787,13 +944,31 @@ function popupBrick(b){
     '<b>Ciudad:</b> '+esc(b.ciudad||'–')+' · <b>Zona:</b> '+esc(b.zona||'–')+'<br>';
   if(skuSel&&distSku){
     var meta=productosG[skuSel]||{d:skuSel};
-    var tot=0,uni=0,con=0,tp=agg?agg.pdvs.length:0;
+    // Separa los PDV del brick en los que sí venden el SKU y los que no (brechas del brick).
+    var conProducto=[],sinProducto=[];
     if(agg)agg.pdvs.forEach(function(x){var s=ventaSku(x.p);
-      if(s.total>0){con++;tot+=s.total;uni+=s.unidades}});
+      if(s.total>0)conProducto.push({p:x.p,s:s});else sinProducto.push({p:x.p,v:x.v})});
+    conProducto.sort(function(a,b){return b.s.total-a.s.total});
+    sinProducto.sort(function(a,b){return b.v.total-a.v.total});
+    var tp=agg?agg.pdvs.length:0,con=conProducto.length;
+    var tot=conProducto.reduce(function(s,x){return s+x.s.total},0);
+    var uni=conProducto.reduce(function(s,x){return s+x.s.unidades},0);
     h+='<div class="popup-sellout prod"><span class="grande">'+fd(tot)+'</span><br>'+
       '<span class="mini">'+esc(meta.d||skuSel)+'</span><br>'+
       '<b>Cobertura:</b> '+con+' de '+tp+' PDV ('+(tp?Math.round(100*con/tp):0)+'%)<br>'+
       '<b>Unidades:</b> '+FMT.format(Math.round(uni))+'</div>';
+    if(con){
+      h+='<b>Sí venden:</b><ol>';
+      conProducto.slice(0,4).forEach(function(x){
+        h+='<li>'+esc(x.p.name)+'<br><span class="mini">'+fd(x.s.total)+'</span></li>'});
+      h+='</ol>';
+      if(con>4)h+='<span class="mini">+ '+FMT.format(con-4)+' más</span>'}
+    if(sinProducto.length){
+      h+='<b>NO venden (brecha):</b><ol>';
+      sinProducto.slice(0,4).forEach(function(x){
+        h+='<li>'+esc(x.p.name)+'<br><span class="mini">Sell Out total: '+fd(x.v.total)+'</span></li>'});
+      h+='</ol>';
+      if(sinProducto.length>4)h+='<span class="mini">+ '+FMT.format(sinProducto.length-4)+' más</span>'}
   }else if(!agg||!agg.pdvs.length){
     h+='<div class="popup-sellout">Sin PDV con Sell Out en los filtros actuales.</div>'
   }else{
@@ -807,6 +982,8 @@ function popupBrick(b){
     if(agg.pdvs.length>5)h+='<span class="mini">+ '+FMT.format(agg.pdvs.length-5)+' más</span>';
     h+='<button class="btn-portafolio" onclick="verPortBrick(\''+
       esc(b.brickId).replace(/'/g,"\\'")+'\')">Ver portafolio del brick</button>'}
+  h+='<button class="btn-portafolio" style="margin-top:6px" onclick="filtrarPorBrick(\''+
+    esc(b.brickId).replace(/'/g,"\\'")+'\')">Ver solo PDV de este brick</button>';
   return h+'</div>'}
 
 function alternarBricks(){
