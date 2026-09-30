@@ -12,6 +12,7 @@ Proyecto de datos geoespaciales: 4 archivos KML con polígonos de zonas ("bricks
 - `brick_id` — código corto estable ≤ 10 caracteres (`BOG-001`, `MED-001`, `CAL-001`, `CTG-001`), pensado para el campo de brick del CRM (limitado a 10 caracteres). El registro `brick_ids.csv` (brick_id → nombre_brick) es la **memoria de los códigos: nunca borrarlo ni editarlo a mano**; un código asignado no cambia jamás, los bricks nuevos reciben el siguiente número libre de su ciudad y los códigos de bricks retirados no se reutilizan.
 - La hoja Bricks del Excel lleva además `lat_centroide`/`lon_centroide`, bounding box (`lat_min`/`lat_max`/`lon_min`/`lon_max`) y `geometria_geojson` (polígono simplificado en GeoJSON compacto), de modo que la tabla sola permite etiquetar puntos de venta desde Apps Script u otros proyectos (filtro por bounding box + punto-en-polígono). Si una geometría no cabe en la celda (límite Excel 32.767 caracteres), se re-simplifica solo esa columna (`geometria_para_celda`).
 - Los placemarks que comparten `nombre_brick` (2 comunas de Medellín partidas en polígonos disjuntos) se fusionan en un solo brick MultiPolygon — por eso 18 placemarks de Medellín dan 16 bricks y el total es 162, no 164. `nombre_brick` es clave única.
+- `construir_preview.py` — arma `preview_visor.html` (una copia standalone del visor de `Apps Script/`, con los `include()` de Apps Script ya resueltos) para revisar la interfaz en el navegador sin desplegar. Ver "Cómo ver el visor sin desplegar" en `Apps Script/CLAUDE.md`.
 - `asignar_bricks.py` — asigna brick a puntos de venta por coordenadas (cruce espacial con los polígonos en precisión completa, no los simplificados; reutiliza `construir_filas()` de `unificar_bricks.py`). Acepta .xlsx/.csv local o URL de Google Sheets compartida por enlace: `python asignar_bricks.py "<archivo o URL>"`. Genera `*_con_brick.xlsx` con `Brick_Asignado`, `Brick_ID` (vacío si no cruzó con un brick real) y `Brick_Metodo` (DENTRO / CERCANO_<m>M hasta 550 m / SIN_COORDENADA / COORDENADA_INVALIDA / FUERA_DE_BRICKS). Tolera coma decimal y detecta columnas lat/lon por nombre.
 - Jerarquía: departamento > ciudad > zona > brick. La `zona` es la localidad solo en Bogotá; en las demás ciudades zona = ciudad. En Cartagena el `nombre` es el nombre comercial de la zona ruta (dict `ZONAS_RUTA_CARTAGENA`, clave = código postal), no el código postal.
 - Normalización de todos los textos: MAYÚSCULAS y sin tildes (la Ñ se conserva) — función `normalizar()`.
@@ -19,6 +20,22 @@ Proyecto de datos geoespaciales: 4 archivos KML con polígonos de zonas ("bricks
 - **Regla de sincronía**: KML y Excel salen del mismo GeoDataFrame — nunca editarlos a mano; ante cualquier cambio, modificar las fuentes o `MAPEOS` y volver a ejecutar el script.
 - El parseo se hace con `xml.etree` + shapely (no con `gpd.read_file`) porque el driver KML de fiona/pyogrio no lee los campos de `ExtendedData` y Medellín tiene bloques duplicados.
 - Python 3.13 con geopandas 1.1.2 ya instalado en la máquina.
+
+## Colaboración en Equipo
+
+Ver [COLABORACION.md](COLABORACION.md) para el flujo completo de trabajo colaborativo:
+
+- **Una rama**: siempre `main`, sin branches feature
+- **Commits pequeños**: cada cambio es un commit descriptivo
+- **PRs en lenguaje natural**: el equipo describe tareas; Claude las implementa
+- **Sin bifurcaciones**: todos sincronizados en el mismo punto
+
+Resumen rápido:
+1. `git pull origin main` (antes de trabajar)
+2. Haz el cambio (tú o pídele a Claude)
+3. `git add .` → `git commit -m "feat: descripción"`
+4. `git push origin main`
+5. Si necesitas review: crea un PR con descripción en lenguaje natural
 
 ## Cómo trabajar con los archivos
 
