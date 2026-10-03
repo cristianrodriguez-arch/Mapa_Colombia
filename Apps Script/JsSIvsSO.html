@@ -1,24 +1,45 @@
 <script>
 /* ══════════ JsSIvsSO · pestaña "SI vs SO" ══════════
    Estado propio (sivsoData = filas YA agregadas por mes×cliente×producto que
-   entrega getSIvsSOJson()) y funciones con prefijo sivso. Todo el cruce por
-   Año/Canal/KAM/BU/Marca/Mercado ocurre en el navegador sobre ese arreglo
+   entrega getSIvsSOJson(), payload v2 con diccionarios que sivsoExpandir_
+   convierte en objetos) y funciones con prefijo sivso. Todo el cruce por
+   Año/Canal/KAM/BU/Marca/Cliente ocurre en el navegador sobre ese arreglo
    (mismo principio que el resto del visor: tocar un filtro nunca vuelve al
    servidor). Depende de FMT, esc, normTxt, esGas y me (JsNucleo) más
-   mtdMoneda/mtdMonedaCorta/mtdPctEntero/mtdPctTxt/mtdSem/mtdCeldaPct/mtdDelta/
-   mtdVacio/mtdDescargarCsv/mtdCsvFecha (JsVentasMtd) — no se duplican.
+   mtdMoneda/mtdMonedaCorta/mtdPctEntero/mtdPctTxt/mtdDeltaV/mtdDeltaImp/mtdTd/
+   mtdTabla/mtdVacio/mtdDescargarCsv/mtdCsvFecha (JsVentasMtd) — no se duplican.
+
+   DEFINICIONES (corregidas en la auditoría; ver DOCUMENTACION_KPIS.md):
+     · CORTE del año elegido = último mes con Sell In o Sell Out. Las variaciones
+       Δ contra el año anterior comparan SOLO los meses hasta ese corte (antes se
+       comparaba un año parcial contra el año anterior COMPLETO: Δ siempre negativo).
+     · INV = inventario al cierre del último mes con foto de inventario (fila
+       Type=INV) del año elegido, SUMADO sobre cliente×producto. Antes se
+       sobrescribía fila a fila (quedaba el INV de un solo cliente) y un mes sin
+       fila de INV pisaba la foto real con 0.
+     · Prom SO = Sell Out de los últimos N meses CALENDARIO hasta el corte del año
+       elegido ÷ N (los meses sin dato cuentan como 0). Antes ignoraba el año
+       elegido y no rellenaba huecos.
 
    DDI ("Días De Inventario") y "Diferencia INV" quedan fuera a propósito: la
    hoja 'DIAS DE INV' de donde saldría esa fórmula está rota (ver CLAUDE.md /
-   Code.js). Sell Through (Type=ST) tampoco se usa en esta pestaña.
+   Code.js). Propuesta pendiente de confirmar: DDI = INV ÷ (Prom SO ÷ 30).
+   Sell Through (Type=ST) tampoco se usa en esta pestaña.
    ═══════════════════════════════════════════════════════════════ */
 
 var sivsoData=null,sivsoCargando=false;
 var SIVSO_MESES=['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
 var sivsoUnidad='$';           // '$' o '#' — mismo toggle que el parámetro "Unidad" de Looker
+var sivsoCortes={};            // año → último mes (1-12) con Sell In o Sell Out
+var sivsoSinAnio=null;         // filas filtradas sin año: se calcula UNA vez por render
 
 /* ── Vista de nivel superior (se integra con mostrarVistaSuperior de JsVentasMtd) ── */
 function sivsoAlEntrar(){
+  if(sivsoData===null&&!sivsoCargando)cargarSIvsSO()}
+
+/* Precarga en segundo plano (la llama iniciarMapa cuando termina): al abrir la
+   pestaña ya está lista y la caché del servidor está caliente. */
+function sivsoPrefetch(){
   if(sivsoData===null&&!sivsoCargando)cargarSIvsSO()}
 
 function cargarSIvsSO(forzar){
@@ -28,7 +49,7 @@ function cargarSIvsSO(forzar){
   document.getElementById('sivsoContenido').style.display='none';
   var est=document.getElementById('sivsoEstado');
   est.style.display='block';
-  est.innerHTML='<span class="mtd-spinner"></span>Cargando datos…';
+  est.innerHTML='<span class="mtd-spinner"></span>'+(forzar?'Releyendo la hoja…':'Cargando datos…');
   if(!esGas()){setTimeout(function(){onSIvsSOCargado(sivsoDatosDemo())},350);return}
   google.script.run
     .withSuccessHandler(function(j){
@@ -38,14 +59,35 @@ function cargarSIvsSO(forzar){
       sivsoCargando=false;
       est.innerHTML='<b>No pude cargar SI vs SO.</b><br>'+esc(me(e))+
         '<br><span class="mini">Revisa la hoja Data del archivo Carga Looker.</span>'})
-    .getSIvsSOJson()}
+    .getSIvsSOJson(forzar===true)}
+
+/* Payload v2 → objetos con los mismos campos de siempre (+ campos derivados que
+   evitan recalcular en cada render: a=año, m=mes, k=índice absoluto de mes, cn=
+   nombre de cliente normalizado para el buscador). */
+function sivsoExpandir_(d){
+  var filas=[];
+  if(d&&d.v===2){
+    var cli=d.clientes||[],pro=d.productos||[];
+    (d.filas||[]).forEach(function(r){
+      var c=cli[r[1]]||[],p=pro[r[2]]||[];
+      filas.push({mes:r[0],sapId:c[0]||'',cliente:c[1]||'',kam:c[2]||'',channel:c[3]||'',
+        productId:p[0]||'',producto:p[1]||'',bu:p[2]||'',brand:p[3]||'',
+        si:r[3],siU:r[4],so:r[5],soU:r[6],inv:r[7],invU:r[8],tieneInv:!!r[9]})})}
+  else filas=(d&&d.filas)||[];
+  filas.forEach(function(f){
+    f.a=Number(f.mes.slice(0,4));f.m=Number(f.mes.slice(5,7));f.k=f.a*12+f.m-1;
+    f.cn=normTxt(f.cliente);f.buK=(f.bu||'').trim().toUpperCase()||'SIN BU'});
+  return filas}
 
 function onSIvsSOCargado(data){
   sivsoCargando=false;
-  sivsoData=data||{filas:[],meta:{}};
+  sivsoData={filas:sivsoExpandir_(data),meta:(data&&data.meta)||{}};
+  sivsoCortes={};
+  sivsoData.filas.forEach(function(f){
+    if((f.si||f.so)&&(!sivsoCortes[f.a]||f.m>sivsoCortes[f.a]))sivsoCortes[f.a]=f.m});
   var meta=sivsoData.meta||{};
   document.getElementById('sivsoActualizado').innerText=
-    meta.actualizadoEn?('Datos: '+new Date(meta.actualizadoEn).toLocaleString('es-CO')):'';
+    meta.actualizadoEn?('Datos leídos de la hoja: '+new Date(meta.actualizadoEn).toLocaleString('es-CO')):'';
   sivsoLlenarSelects();
   document.getElementById('sivsoEstado').style.display='none';
   document.getElementById('sivsoContenido').style.display='block';
@@ -53,24 +95,24 @@ function onSIvsSOCargado(data){
 
 /* ── Filtros ──
    Año: chips de un solo valor (igual que histAnioFil en el histórico). El
-   resto son <select> simples de un solo valor — a propósito no se usa
-   Choices.js multi-selección aquí (esa es la barra del mapa); mismo lenguaje
-   que Canal/KAM de Ventas MTD. */
+   resto son <select> simples de un solo valor. Se aplican al elegir (sin botón
+   "Aplicar" obligatorio; el campo Cliente aplica con Enter o al salir). */
 function sivsoAnios(){
   var vistos={},anios=[];
   (sivsoData.filas||[]).forEach(function(f){
-    var a=Number(f.mes.slice(0,4));
-    if(!vistos[a]){vistos[a]=1;anios.push(a)}});
+    if(!vistos[f.a]){vistos[f.a]=1;anios.push(f.a)}});
   anios.sort(function(a,b){return b-a});
   return anios}
 
 function sivsoLlenarSelects(){
-  var filas=sivsoData.filas||[];
-  document.getElementById('sivsoAnioFil').value=String(sivsoAnios()[0]||'');
+  var filas=sivsoData.filas||[],anios=sivsoAnios();
+  var previo=document.getElementById('sivsoAnioFil').value;
+  document.getElementById('sivsoAnioFil').value=
+    (previo&&anios.indexOf(Number(previo))!==-1)?previo:String(anios[0]||'');
   sivsoPintarChipsAnio();
   [['sivsoChannel','channel','Todos los canales'],
    ['sivsoKam','kam','Todos los KAM'],
-   ['sivsoBu','bu','Todas las BU'],
+   ['sivsoBu','buK','Todas las BU'],
    ['sivsoBrand','brand','Todas las marcas']]
     .forEach(function(cfg){
       var sel=document.getElementById(cfg[0]),prev=sel.value||'TODOS',vals={};
@@ -110,27 +152,26 @@ function sivsoLimpiarFiltros(){
   document.getElementById('sivsoCliente').value='';
   renderSIvsSO()}
 
-/* Filas que pasan TODOS los filtros salvo Año (para el promedio móvil, que
-   mira los últimos N meses del histórico completo, no el año seleccionado). */
+/* Filas que pasan TODOS los filtros salvo Año. Se calcula una vez por render
+   (antes se recalculaba 4 veces, cada una normalizando el nombre de cada fila). */
 function sivsoFilasFiltradasSinAnio(){
+  if(sivsoSinAnio)return sivsoSinAnio;
   var filas=sivsoData.filas||[];
   var channel=document.getElementById('sivsoChannel').value||'TODOS';
   var kam=document.getElementById('sivsoKam').value||'TODOS';
   var bu=document.getElementById('sivsoBu').value||'TODOS';
   var brand=document.getElementById('sivsoBrand').value||'TODOS';
   var q=normTxt(document.getElementById('sivsoCliente').value||'');
-  return filas.filter(function(f){
+  sivsoSinAnio=filas.filter(function(f){
     if(channel!=='TODOS'&&(f.channel||'')!==channel)return false;
     if(kam!=='TODOS'&&(f.kam||'')!==kam)return false;
-    if(bu!=='TODOS'&&(f.bu||'')!==bu)return false;
+    if(bu!=='TODOS'&&f.buK!==bu)return false;
     if(brand!=='TODOS'&&(f.brand||'')!==brand)return false;
-    if(q&&normTxt(f.cliente).indexOf(q)===-1)return false;
-    return true})}
+    if(q&&f.cn.indexOf(q)===-1)return false;
+    return true});
+  return sivsoSinAnio}
 
-function sivsoFilasFiltradas(){
-  var anio=Number(document.getElementById('sivsoAnioFil').value||0);
-  return sivsoFilasFiltradasSinAnio().filter(function(f){
-    return Number(f.mes.slice(0,4))===anio})}
+function sivsoAnioSel(){return Number(document.getElementById('sivsoAnioFil').value||0)}
 
 /* Medida activa según el toggle $/#. */
 function sivsoSi(f){return sivsoUnidad==='#'?(f.siU||0):(f.si||0)}
@@ -139,51 +180,53 @@ function sivsoInv(f){return sivsoUnidad==='#'?(f.invU||0):(f.inv||0)}
 function sivsoFmt(v){return sivsoUnidad==='#'?FMT.format(Math.round(v||0)):mtdMoneda(v)}
 function sivsoFmtCorta(v){return sivsoUnidad==='#'?FMT.format(Math.round(v||0)):mtdMonedaCorta(v)}
 /* % Participación es una cuota, no un cumplimiento: a propósito NO usa el
-   semáforo de mtdCeldaPct (rojo/verde según meta 70-85%) — con varios
-   clientes ninguno se acerca a esos umbrales y todas las filas saldrían en
-   rojo aunque el dato sea normal. Texto plano, igual que cualquier otra celda. */
+   semáforo de mtdCeldaPct (rojo/verde según meta 70-85%). Texto plano. */
 function sivsoCeldaPart(v,th){
   return'<td'+(th?' data-th="'+esc(th)+'"':'')+'>'+mtdPctTxt(v)+'</td>'}
+
+/* Rótulo del corte: "ene–sep 2025" (parcial) o "2025" (año completo). */
+function sivsoEtqCorte(anio,corte){
+  return corte>=12||corte<1?String(anio):SIVSO_MESES[0]+'–'+SIVSO_MESES[corte-1]+' '+anio}
 
 /* ── Render ── */
 function renderSIvsSO(){
   if(!sivsoData)return;
-  var filas=sivsoFilasFiltradas();
-  var anio=Number(document.getElementById('sivsoAnioFil').value||0);
-  var anioAnt=sivsoFilasFiltradasSinAnio().filter(function(f){
-    return Number(f.mes.slice(0,4))===anio-1});
+  sivsoSinAnio=null;
+  var anio=sivsoAnioSel(),corte=sivsoCortes[anio]||0;
+  var base=sivsoFilasFiltradasSinAnio();
+  var filas=base.filter(function(f){return f.a===anio});
+  // Año anterior RECORTADO al mismo corte: ene–sep contra ene–sep.
+  var anioAnt=base.filter(function(f){return f.a===anio-1&&f.m<=corte});
 
-  sivsoRenderKpi(filas,anioAnt,anio);
-  sivsoRenderMensual(filas,anioAnt,anio);
+  sivsoRenderKpi(filas,anioAnt,anio,corte);
+  sivsoRenderMensual(filas,anio);
   sivsoRenderDonutBu(filas);
-  sivsoRenderProductos(filas);
-  sivsoRenderClientes(filas)}
+  var inv=sivsoInventario(filas);
+  sivsoRenderProductos(filas,anioAnt,anio,corte,inv);
+  sivsoRenderClientes(filas,inv)}
 
-function sivsoRenderKpi(filas,anioAnt,anio){
-  var si=filas.reduce(function(a,f){return a+sivsoSi(f)},0);
-  var so=filas.reduce(function(a,f){return a+sivsoSo(f)},0);
-  var siAnt=anioAnt.reduce(function(a,f){return a+sivsoSi(f)},0);
-  var soAnt=anioAnt.reduce(function(a,f){return a+sivsoSo(f)},0);
-  var dSi=siAnt?(si-siAnt)/siAnt:null,dSo=soAnt?(so-soAnt)/soAnt:null;
-  var ratio=si?so/si:null;
+function sivsoRenderKpi(filas,anioAnt,anio,corte){
+  var si=0,so=0,siAnt=0,soAnt=0;
+  filas.forEach(function(f){si+=sivsoSi(f);so+=sivsoSo(f)});
+  anioAnt.forEach(function(f){siAnt+=sivsoSi(f);soAnt+=sivsoSo(f)});
+  var dSi=mtdDeltaV(si,siAnt),dSo=mtdDeltaV(so,soAnt);
+  var ratio=si>0?so/si:null;
+  var etq=sivsoEtqCorte(anio-1,corte);
+  function det(d){return d==null?'Sin base en '+etq:
+    '<span class="'+(d>=0?'sivso-pos">+':'sivso-neg">')+mtdPctTxt(d)+'</span> vs '+etq}
 
   document.getElementById('sivsoKpiSi').innerText=sivsoFmt(si);
-  document.getElementById('sivsoKpiSiDet').innerHTML=
-    (dSi==null?'Sin dato '+(anio-1):(dSi>=0?'<span class="sivso-pos">+':'<span class="sivso-neg">')+
-      mtdPctTxt(dSi)+'</span> vs '+(anio-1));
+  document.getElementById('sivsoKpiSiDet').innerHTML=det(dSi);
   document.getElementById('sivsoKpiSo').innerText=sivsoFmt(so);
-  document.getElementById('sivsoKpiSoDet').innerHTML=
-    (dSo==null?'Sin dato '+(anio-1):(dSo>=0?'<span class="sivso-pos">+':'<span class="sivso-neg">')+
-      mtdPctTxt(dSo)+'</span> vs '+(anio-1));
+  document.getElementById('sivsoKpiSoDet').innerHTML=det(dSo);
   document.getElementById('sivsoKpiRatio').innerText=ratio==null?'–':mtdPctEntero(ratio);
-  document.getElementById('sivsoKpiRatioDet').innerText='Sell Out ÷ Sell In · '+anio}
+  document.getElementById('sivsoKpiRatioDet').innerText='Sell Out ÷ Sell In · '+sivsoEtqCorte(anio,corte)}
 
 /* Gráfico mensual: barras agrupadas SI (oscuro) / SO (rojo de marca) de los
-   12 meses del año seleccionado. Mismo lenguaje visual que hist-chart
-   (JsVentasMtd/Estilos.html) pero con 2 barras por columna en vez de 1. */
-function sivsoRenderMensual(filas,anioAnt,anio){
+   12 meses del año seleccionado. */
+function sivsoRenderMensual(filas,anio){
   var acc={};for(var m=1;m<=12;m++)acc[m]={si:0,so:0};
-  filas.forEach(function(f){var m=Number(f.mes.slice(5,7));acc[m].si+=sivsoSi(f);acc[m].so+=sivsoSo(f)});
+  filas.forEach(function(f){acc[f.m].si+=sivsoSi(f);acc[f.m].so+=sivsoSo(f)});
   var cont=document.getElementById('sivsoGraficoMensual');if(!cont)return;
   var max=0;for(var mm=1;mm<=12;mm++)max=Math.max(max,acc[mm].si,acc[mm].so);
   document.getElementById('sivsoHintMensual').innerText=
@@ -191,27 +234,32 @@ function sivsoRenderMensual(filas,anioAnt,anio){
   if(max<=0){cont.innerHTML='<div class="mtd-vacio">Sin datos para '+anio+'</div>';return}
   var ALTO=170,escala=ALTO/(max*1.15),h='';
   for(var t=1;t<=12;t++){
-    var x=acc[t],siPx=Math.round(x.si*escala),soPx=Math.round(x.so*escala);
+    var x=acc[t],siPx=Math.round(Math.max(0,x.si)*escala),soPx=Math.round(Math.max(0,x.so)*escala);
     h+='<div class="sivso-mescol">'+
       '<div class="sivso-parbar">'+
-        '<div class="sivso-bar si" style="height:'+Math.max(0,siPx)+'px" title="Sell In '+esc(sivsoFmt(x.si))+'"></div>'+
-        '<div class="sivso-bar so" style="height:'+Math.max(0,soPx)+'px" title="Sell Out '+esc(sivsoFmt(x.so))+'"></div>'+
+        '<div class="sivso-bar si" style="height:'+siPx+'px" title="Sell In '+esc(sivsoFmt(x.si))+'"></div>'+
+        '<div class="sivso-bar so" style="height:'+soPx+'px" title="Sell Out '+esc(sivsoFmt(x.so))+'"></div>'+
       '</div>'+
       '<div class="sivso-mescat">'+SIVSO_MESES[t-1]+'</div></div>'}
   cont.innerHTML='<div class="sivso-chart">'+h+'</div>'+
     '<div class="hist-legend"><span class="it"><span class="sw-venta"></span>Sell In</span>'+
     '<span class="it"><span class="sw-so"></span>Sell Out</span></div>'}
 
-/* Donut %Participación de Sell Out por BU — conic-gradient CSS, sin librería. */
+/* Donut %Participación de Sell Out por BU — conic-gradient CSS, sin librería.
+   Solo BU con Sell Out NETO POSITIVO: con devoluciones netas negativas los
+   grados salían negativos y el gráfico se rompía (porcentajes > 100 %). La BU
+   se agrupa sin importar mayúsculas ("Foto" = "FOTO"). */
 var SIVSO_DONUT_COLORES=['#2b2830','#e41f33','#7f77dd','#2a78d6','#008300','#eda100','#8b5cf6','#6b7280'];
 function sivsoRenderDonutBu(filas){
-  var g={};
-  filas.forEach(function(f){var k=(f.bu||'').trim()||'Sin BU';g[k]=(g[k]||0)+sivsoSo(f)});
-  var total=Object.keys(g).reduce(function(a,k){return a+g[k]},0);
+  var g={},nombre={};
+  filas.forEach(function(f){var k=f.buK;g[k]=(g[k]||0)+sivsoSo(f);if(!nombre[k])nombre[k]=(f.bu||'').trim()||'Sin BU'});
   var cont=document.getElementById('sivsoDonutBu');
   if(!cont)return;
+  var neg=Object.keys(g).filter(function(k){return g[k]<0});
+  var lista=Object.keys(g).filter(function(k){return g[k]>0})
+    .map(function(k){return{bu:nombre[k],v:g[k]}}).sort(function(a,b){return b.v-a.v});
+  var total=lista.reduce(function(a,x){return a+x.v},0);
   if(total<=0){cont.innerHTML='<div class="mtd-vacio">Sin datos</div>';return}
-  var lista=Object.keys(g).map(function(k){return{bu:k,v:g[k]}}).sort(function(a,b){return b.v-a.v});
   var acumGrados=0,partes=[];
   lista.forEach(function(x,i){
     var grados=360*(x.v/total),color=SIVSO_DONUT_COLORES[i%SIVSO_DONUT_COLORES.length];
@@ -226,97 +274,120 @@ function sivsoRenderDonutBu(filas){
         '<div class="sivso-donut-hueco"><span>'+sivsoFmtCorta(total)+'</span><span class="et">Sell Out</span></div>'+
       '</div>'+
       '<div class="sivso-donut-leyenda">'+leyenda+'</div>'+
-    '</div>'}
+    '</div>'+
+    (neg.length?'<div class="hint">'+neg.length+' BU con Sell Out neto negativo (devoluciones) no se muestran.</div>':'')}
 
-/* Tabla Productos: nivel producto (no se anida BU>Marca>Producto — ver nota
-   en el chat de la sesión: queda como mejora si se pide). Prom SO = promedio
-   mensual de Sell Out en los últimos N meses del histórico completo (con los
-   demás filtros aplicados, pero SIN el filtro de Año — es una ventana móvil
-   independiente del año seleccionado, con N editable por el usuario). */
-var sivsoVistaProductos=[];
-function sivsoRenderProductos(filas){
-  var g={};
+/* Inventario al cierre del último mes con foto de INV (fila Type=INV) dentro de
+   las filas del año elegido: se SUMA sobre cliente×producto. Devuelve
+   {mes, porProducto, porCliente, total} (mes = 'YYYY-MM' o '' si no hay foto). */
+function sivsoInventario(filas){
+  var mes='';
+  filas.forEach(function(f){if(f.tieneInv&&f.mes>mes)mes=f.mes});
+  var r={mes:mes,porProducto:{},porCliente:{},total:0};
+  if(!mes)return r;
   filas.forEach(function(f){
+    if(!f.tieneInv||f.mes!==mes)return;
+    var v=sivsoInv(f);
+    var kp=f.productId||f.producto,kc=f.sapId||f.cliente;
+    r.porProducto[kp]=(r.porProducto[kp]||0)+v;
+    r.porCliente[kc]=(r.porCliente[kc]||0)+v;
+    r.total+=v});
+  return r}
+
+function sivsoEtqMes(mes){return mes?SIVSO_MESES[Number(mes.slice(5,7))-1]+' '+mes.slice(0,4):''}
+
+/* Ventana del Prom SO: los N meses calendario que terminan en el corte del año elegido. */
+function sivsoVentanaProm(anio,corte,n){
+  if(!corte)return{k0:0,k1:-1,etq:''};
+  var k1=anio*12+corte-1,k0=k1-n+1;
+  function e(k){return SIVSO_MESES[k%12]+' '+Math.floor(k/12)}
+  return{k0:k0,k1:k1,etq:n===1?e(k1):e(k0)+' – '+e(k1)}}
+
+/* Tabla Productos: nivel producto. */
+var sivsoVistaProductos=[];
+function sivsoRenderProductos(filas,anioAntFilas,anio,corte,inv){
+  var g={};
+  function nuevo(f){return{producto:f.producto||'(sin nombre)',bu:f.bu||'',brand:f.brand||'',
+    si:0,so:0,promSo:0,inv:0,dSi:null,dSo:null}}
+  filas.forEach(function(f){var k=f.productId||f.producto;
+    var x=g[k]||(g[k]=nuevo(f));x.si+=sivsoSi(f);x.so+=sivsoSo(f)});
+
+  var ant={},siAntTot=0,soAntTot=0;
+  anioAntFilas.forEach(function(f){var k=f.productId||f.producto;
+    var a=ant[k]||(ant[k]={si:0,so:0});a.si+=sivsoSi(f);a.so+=sivsoSo(f);
+    siAntTot+=sivsoSi(f);soAntTot+=sivsoSo(f)});
+
+  var n=sivsoPromN(),w=sivsoVentanaProm(anio,corte,n);
+  sivsoFilasFiltradasSinAnio().forEach(function(f){
+    if(f.k<w.k0||f.k>w.k1)return;
     var k=f.productId||f.producto;
-    if(!g[k])g[k]={producto:f.producto||'(sin nombre)',bu:f.bu||'',brand:f.brand||'',si:0,so:0,inv:0,mesInv:''};
-    g[k].si+=sivsoSi(f);g[k].so+=sivsoSo(f);
-    if(f.mes>=g[k].mesInv){g[k].mesInv=f.mes;g[k].inv=sivsoInv(f)}});   // INV = último mes con dato, no una suma
+    // Un producto que solo vendió en la ventana (p. ej. en el año anterior) también cuenta.
+    var x=g[k]||(g[k]=nuevo(f));x.promSo+=sivsoSo(f)});
 
-  var anio=Number(document.getElementById('sivsoAnioFil').value||0);
-  var anioAnt={};
-  sivsoFilasFiltradasSinAnio().filter(function(f){return Number(f.mes.slice(0,4))===anio-1})
-    .forEach(function(f){var k=f.productId||f.producto;
-      if(!anioAnt[k])anioAnt[k]={si:0,so:0};
-      anioAnt[k].si+=sivsoSi(f);anioAnt[k].so+=sivsoSo(f)});
-
-  var n=sivsoPromN();
-  var todas=sivsoFilasFiltradasSinAnio();
-  var mesesHist={};todas.forEach(function(f){mesesHist[f.mes]=1});
-  var mesesOrd=Object.keys(mesesHist).sort().slice(-n);
-  var promAcc={};
-  todas.filter(function(f){return mesesOrd.indexOf(f.mes)!==-1}).forEach(function(f){
-    var k=f.productId||f.producto;promAcc[k]=(promAcc[k]||0)+sivsoSo(f)});
-
-  var lista=Object.keys(g).map(function(k){var x=g[k],ant=anioAnt[k]||{si:0,so:0};
-    x.dSi=ant.si?(x.si-ant.si)/ant.si:null;x.dSo=ant.so?(x.so-ant.so)/ant.so:null;
-    x.promSo=mesesOrd.length?(promAcc[k]||0)/mesesOrd.length:0;
-    return x}).sort(function(a,b){return b.so-a.so});
+  var lista=Object.keys(g).map(function(k){var x=g[k],a=ant[k]||{si:0,so:0};
+    x.dSi=mtdDeltaV(x.si,a.si);x.dSo=mtdDeltaV(x.so,a.so);
+    x.promSo=n?x.promSo/n:0;x.inv=inv.porProducto[k]||0;x.siAnt=a.si;x.soAnt=a.so;return x});
 
   document.getElementById('sivsoHintProductos').innerText=
-    lista.length+' productos · '+anio+' · Prom SO sobre los últimos '+mesesOrd.length+' meses con datos';
+    lista.length+' productos · '+anio+(corte&&corte<12?' (corte en '+SIVSO_MESES[corte-1]+')':'')+
+    ' · Δ contra '+sivsoEtqCorte(anio-1,corte)+' · Prom SO = '+(w.etq||'–')+' ÷ '+n+
+    ' · INV al cierre de '+(sivsoEtqMes(inv.mes)||'(sin foto de inventario)')+' · clic en un encabezado para ordenar';
   sivsoVistaProductos=lista;
-  if(!lista.length){mtdVacio('sivsoTablaProductos','Sin productos con los filtros actuales');return}
 
   var tot=lista.reduce(function(a,x){a.si+=x.si;a.so+=x.so;a.prom+=x.promSo;return a},{si:0,so:0,prom:0});
-  var h='<thead><tr><th>Producto</th><th>BU</th><th>Marca</th><th>Sell In</th><th>ΔSI %</th>'+
-        '<th>Sell Out</th><th>ΔSO %</th><th>Prom SO ('+mesesOrd.length+'m)</th><th>INV</th></tr></thead><tbody>';
-  lista.forEach(function(x){
-    h+='<tr><td>'+esc(x.producto)+'</td><td data-th="BU">'+esc(x.bu||'–')+'</td>'+
-       '<td data-th="Marca">'+esc(x.brand||'–')+'</td>'+
-       '<td data-th="Sell In">'+sivsoFmt(x.si)+'</td>'+mtdDelta(x.dSi,'ΔSI %')+
-       '<td data-th="Sell Out">'+sivsoFmt(x.so)+'</td>'+mtdDelta(x.dSo,'ΔSO %')+
-       '<td data-th="Prom SO">'+sivsoFmt(x.promSo)+'</td>'+
-       '<td data-th="INV">'+sivsoFmt(x.inv)+'</td></tr>'});
-  h+='<tr class="total"><td>TOTAL</td><td></td><td></td>'+
-     '<td data-th="Sell In">'+sivsoFmt(tot.si)+'</td><td></td>'+
-     '<td data-th="Sell Out">'+sivsoFmt(tot.so)+'</td><td></td>'+
-     '<td data-th="Prom SO">'+sivsoFmt(tot.prom)+'</td><td></td></tr></tbody>';
-  document.getElementById('sivsoTablaProductos').innerHTML=h}
+  var pn='Prom SO ('+n+'m)';
+  mtdTabla({id:'sivsoTablaProductos',filas:lista,orden:{k:'so',dir:'desc'},
+    vacio:'Sin productos con los filtros actuales',
+    alOrdenar:function(v){sivsoVistaProductos=v},
+    columnas:[
+      {k:'producto',t:'Producto',tipo:'txt',celda:function(x){return'<td>'+esc(x.producto)+'</td>'}},
+      {k:'bu',t:'BU',tipo:'txt',celda:function(x,t){return mtdTd(esc(x.bu||'–'),t)}},
+      {k:'brand',t:'Marca',tipo:'txt',celda:function(x,t){return mtdTd(esc(x.brand||'–'),t)}},
+      {k:'si',t:'Sell In',tipo:'num',celda:function(x,t){return mtdTd(sivsoFmt(x.si),t)}},
+      {k:'dSi',t:'ΔSI %',tipo:'num',celda:function(x,t){return mtdDeltaImp(x.si,x.siAnt,t)}},
+      {k:'so',t:'Sell Out',tipo:'num',celda:function(x,t){return mtdTd(sivsoFmt(x.so),t)}},
+      {k:'dSo',t:'ΔSO %',tipo:'num',celda:function(x,t){return mtdDeltaImp(x.so,x.soAnt,t)}},
+      {k:'promSo',t:pn,tipo:'num',celda:function(x,t){return mtdTd(sivsoFmt(x.promSo),t)}},
+      {k:'inv',t:'INV',tipo:'num',celda:function(x,t){return mtdTd(sivsoFmt(x.inv),t)}}],
+    total:'<tr class="total"><td>TOTAL</td><td></td><td></td>'+
+      mtdTd(sivsoFmt(tot.si),'Sell In')+mtdDeltaImp(tot.si,siAntTot,'ΔSI %')+
+      mtdTd(sivsoFmt(tot.so),'Sell Out')+mtdDeltaImp(tot.so,soAntTot,'ΔSO %')+
+      mtdTd(sivsoFmt(tot.prom),pn)+mtdTd(sivsoFmt(inv.total),'INV')+'</tr>'})}
 
-/* Tabla Clientes e inventario. INV = último mes con dato dentro del año
-   seleccionado (mismo criterio "foto, no suma" que Productos). DDI y
+/* Tabla Clientes e inventario (INV = misma foto que Productos). DDI y
    "Diferencia INV" quedan fuera — ver nota al inicio del archivo. */
 var sivsoVistaClientes=[];
-function sivsoRenderClientes(filas){
+function sivsoRenderClientes(filas,inv){
   var g={};
   filas.forEach(function(f){
     var k=f.sapId||f.cliente;
-    if(!g[k])g[k]={cliente:f.cliente||'(sin nombre)',channel:f.channel||'',kam:f.kam||'',
-      si:0,so:0,inv:0,mesInv:''};
-    g[k].si+=sivsoSi(f);g[k].so+=sivsoSo(f);
-    if(f.mes>=g[k].mesInv){g[k].mesInv=f.mes;g[k].inv=sivsoInv(f)}});
-
-  var lista=Object.keys(g).map(function(k){return g[k]}).sort(function(a,b){return b.so-a.so});
+    var x=g[k]||(g[k]={cliente:f.cliente||'(sin nombre)',channel:f.channel||'',kam:f.kam||'',si:0,so:0,inv:0});
+    x.si+=sivsoSi(f);x.so+=sivsoSo(f)});
+  var lista=Object.keys(g).map(function(k){var x=g[k];x.inv=inv.porCliente[k]||0;return x});
   var tot=lista.reduce(function(a,x){a.si+=x.si;a.so+=x.so;return a},{si:0,so:0});
-  lista.forEach(function(x){x.partSi=tot.si?x.si/tot.si:null;x.partSo=tot.so?x.so/tot.so:null});
+  lista.forEach(function(x){x.partSi=tot.si>0?x.si/tot.si:null;x.partSo=tot.so>0?x.so/tot.so:null});
 
-  document.getElementById('sivsoHintClientes').innerText=lista.length+' clientes en la selección';
+  document.getElementById('sivsoHintClientes').innerText=
+    lista.length+' clientes en la selección · INV al cierre de '+
+    (sivsoEtqMes(inv.mes)||'(sin foto de inventario)')+' (suma de sus productos) · clic en un encabezado para ordenar';
   sivsoVistaClientes=lista;
-  if(!lista.length){mtdVacio('sivsoTablaClientes','Sin clientes con los filtros actuales');return}
 
-  var h='<thead><tr><th>Cliente</th><th>Canal</th><th>KAM</th><th>Sell In</th><th>% Part SI</th>'+
-        '<th>Sell Out</th><th>% Part SO</th><th>INV</th></tr></thead><tbody>';
-  lista.forEach(function(x){
-    h+='<tr><td>'+esc(x.cliente)+'</td><td data-th="Canal">'+esc(x.channel||'–')+'</td>'+
-       '<td data-th="KAM">'+esc(x.kam||'–')+'</td><td data-th="Sell In">'+sivsoFmt(x.si)+'</td>'+
-       sivsoCeldaPart(x.partSi,'% Part SI')+
-       '<td data-th="Sell Out">'+sivsoFmt(x.so)+'</td>'+sivsoCeldaPart(x.partSo,'% Part SO')+
-       '<td data-th="INV">'+sivsoFmt(x.inv)+'</td></tr>'});
-  h+='<tr class="total"><td>TOTAL</td><td></td><td></td>'+
-     '<td data-th="Sell In">'+sivsoFmt(tot.si)+'</td>'+sivsoCeldaPart(1,'% Part SI')+
-     '<td data-th="Sell Out">'+sivsoFmt(tot.so)+'</td>'+sivsoCeldaPart(1,'% Part SO')+
-     '<td data-th="INV">–</td></tr></tbody>';
-  document.getElementById('sivsoTablaClientes').innerHTML=h}
+  mtdTabla({id:'sivsoTablaClientes',filas:lista,orden:{k:'so',dir:'desc'},
+    vacio:'Sin clientes con los filtros actuales',
+    alOrdenar:function(v){sivsoVistaClientes=v},
+    columnas:[
+      {k:'cliente',t:'Cliente',tipo:'txt',celda:function(x){return'<td>'+esc(x.cliente)+'</td>'}},
+      {k:'channel',t:'Canal',tipo:'txt',celda:function(x,t){return mtdTd(esc(x.channel||'–'),t)}},
+      {k:'kam',t:'KAM',tipo:'txt',celda:function(x,t){return mtdTd(esc(x.kam||'–'),t)}},
+      {k:'si',t:'Sell In',tipo:'num',celda:function(x,t){return mtdTd(sivsoFmt(x.si),t)}},
+      {k:'partSi',t:'% Part SI',tipo:'num',celda:function(x,t){return sivsoCeldaPart(x.partSi,t)}},
+      {k:'so',t:'Sell Out',tipo:'num',celda:function(x,t){return mtdTd(sivsoFmt(x.so),t)}},
+      {k:'partSo',t:'% Part SO',tipo:'num',celda:function(x,t){return sivsoCeldaPart(x.partSo,t)}},
+      {k:'inv',t:'INV',tipo:'num',celda:function(x,t){return mtdTd(sivsoFmt(x.inv),t)}}],
+    total:'<tr class="total"><td>TOTAL</td><td></td><td></td>'+
+      mtdTd(sivsoFmt(tot.si),'Sell In')+sivsoCeldaPart(tot.si>0?1:null,'% Part SI')+
+      mtdTd(sivsoFmt(tot.so),'Sell Out')+sivsoCeldaPart(tot.so>0?1:null,'% Part SO')+
+      mtdTd(sivsoFmt(inv.total),'INV')+'</tr>'})}
 
 /* ── CSV ── */
 function sivsoCsvProductos(){
@@ -336,8 +407,8 @@ function sivsoCsvClientes(){
     'si_vs_so_clientes_'+mtdCsvFecha()+'.csv')}
 
 /* ── Datos de ejemplo para abrir el HTML fuera de Apps Script ──
-   Genera directamente filas YA agregadas (mismo shape que sivsoLeerDatos_
-   en Code.js), con LCG determinista igual que cargarMock() de JsNucleo. */
+   Genera filas YA agregadas (forma objeto, sin diccionarios: sivsoExpandir_ las
+   deja pasar), con LCG determinista igual que cargarMock() de JsNucleo. */
 function sivsoDatosDemo(){
   var sem=7;function rnd(){sem=(sem*1103515245+12345)%2147483648;return sem/2147483648}
   var CLIENTES=[
@@ -379,9 +450,8 @@ function sivsoDatosDemo(){
         var invU=Math.round(siU*(1.4+rnd()*1.2));
         filas.push({mes:mes,sapId:cl.sap,productId:pr.id,
           cliente:cl.n,kam:cl.kam,channel:cl.ch,producto:pr.n,bu:pr.bu,brand:pr.br,
-          lanzamiento:'',mercadoEstrategico:'01. '+pr.bu,mercadoTactico:'01.01 '+pr.br,
           si:Math.round(siU*precio),siU:siU,so:Math.round(soU*precio),soU:soU,
-          inv:Math.round(invU*precio),invU:invU})})})});
+          inv:Math.round(invU*precio),invU:invU,tieneInv:true})})})});
 
   return{filas:filas,meta:{actualizadoEn:new Date().toISOString(),totalFilas:filas.length}}}
 </script>

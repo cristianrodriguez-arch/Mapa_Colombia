@@ -417,7 +417,7 @@
       <div class="campo">
         <label for="sivsoCliente">Cliente</label>
         <input type="text" id="sivsoCliente" placeholder="Buscar cliente…" autocomplete="off"
-               onkeydown="if(event.key==='Enter')renderSIvsSO()">
+               onkeydown="if(event.key==='Enter')renderSIvsSO()" onchange="renderSIvsSO()">
       </div>
       <div class="acciones">
         <button class="mtd-btn" onclick="renderSIvsSO()">Aplicar Filtros</button>
