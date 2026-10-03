@@ -1,4 +1,4 @@
-# Guía de Colaboración del Equipo
+**# Guía de Colaboración del Equipo
 
 ## Principios Fundamentales
 

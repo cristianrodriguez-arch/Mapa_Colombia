@@ -8,10 +8,10 @@ Proyecto de Google Apps Script (clasp) vinculado a la hoja de cálculo **"MAESTR
 
 **Contiene DOS proyectos lógicos en el mismo contenedor de script; no mezclarlos:**
 
-1. **Web app "Visor PDV + Bricks"** — `Code.js` + `Index.html`. Dashboard para un **Gerente de Zona** (equipo de visitadores / merch), no un explorador de datos genérico: las decisiones que debe soportar son de cobertura y priorización de PDV. Leaflet sin frameworks sobre base CARTO Voyager (sobria, con calles y nombres de ciudad, sin depender de la API de pago de Google). Layout de 3 columnas: filtros · mapa · panel de análisis con pestañas, más una franja de KPIs en el header.
-   - **Regla de layout que NO se debe romper**: el dashboard mide `100vh` y **cada panel hace scroll por dentro** (`min-height:0` en los hijos del grid + `overflow-y:auto` en el panel). Nada de contenido apilado en el flujo de la página. Antes la lista de PDV y la tabla resumen se apilaban debajo del mapa y la página llegaba a 2.400px de alto, con el resumen fuera de pantalla — inservible como dashboard. Si se agrega una sección nueva, va **dentro** de un panel existente (o como pestaña), nunca al final del `<body>`.
+1. **Web app "Visor PDV + Bricks"** — `Code.js` + `Index.html` + los módulos que este inyecta (`Estilos.html`, `JsNucleo.html`, `JsFiltros.html`, `JsMapa.html`, `JsPaneles.html`). Dashboard para un **Gerente de Zona** (equipo de visitadores / merch), no un explorador de datos genérico: las decisiones que debe soportar son de cobertura y priorización de PDV. Leaflet sin frameworks sobre teselas de OpenStreetMap. Layout tipo Power BI (rediseño 2026-09-22): **cabecera** con la marca a la izquierda, la barra de filtros multi-selección al centro y "Limpiar filtros" a la derecha; **área central** con el mapa; **panel derecho** con las tarjetas de KPI arriba y, debajo, un panel con pestañas Tabla · Análisis · Brick.
+   - **Regla de layout que NO se debe romper**: el dashboard mide `100vh` y **cada panel hace scroll por dentro** (`min-height:0` en los hijos del grid + `overflow-y:auto` en el panel). Nada de contenido apilado en el flujo de la página. Antes la lista de PDV y la tabla resumen se apilaban debajo del mapa y la página llegaba a 2.400px de alto, con el resumen fuera de pantalla — inservible como dashboard. Si se agrega una sección nueva, va **dentro** de un panel existente (o como pestaña), nunca al final del `<body>`. Detalles del grid que sostienen la regla: `.app` es `grid-template-rows:auto auto minmax(0,1fr)` y `.cuerpo` lleva `grid-template-rows:minmax(0,1fr)` — sin esa fila explícita la altura la fija el contenido del panel derecho y el mapa se encoge cuando hay poco que mostrar. `.topbar` tiene `max-height:45vh` como tope de seguridad.
    - **Traducción de términos**: el CRM es de Salesforce (Europa) y usa palabras que no son las que se usan en Colombia. Las etiquetas visibles ya están traducidas (dato interno sin tocar, solo la etiqueta): "Región" → **Departamento**, "Población" → **Ciudad**, "Grupo de compras" → **Cliente**, "NIF/CIF" → **NIT**. Si aparece un campo nuevo del CRM, revisar si necesita el mismo tratamiento antes de mostrarlo tal cual.
-   - **`Conectados`** es un supuesto sin confirmar: cuenta PDV con `ID Cliente SAP` diligenciado (no hay un campo "conectado" explícito en el CRM). **`Visitados`** cuenta PDV con `Delegado` (columna "Delegado Name") asignado — no hay fecha de última visita en los datos, así que es la única señal de cobertura disponible. Ajustar en `dibujarTabla()` y `actualizarKpis()` (Index.html) si el significado de negocio real es otro.
+   - **`Conectados`** es un supuesto sin confirmar: cuenta PDV con `ID Cliente SAP` diligenciado (no hay un campo "conectado" explícito en el CRM). **`Visitados`** cuenta PDV con `Delegado` (columna "Delegado Name") asignado — no hay fecha de última visita en los datos, así que es la única señal de cobertura disponible. Ajustar en `kpisGeneral()`/`renderTablaRail()` (JsPaneles.html) si el significado de negocio real es otro.
 2. **Herramientas de menú de la hoja** — `Menú Principal.js`, `Módulo Cruce de Datos.js`, `Módulo Geocodificación.js`, `Módulo Centros Médicos.js`. Proyecto aparte (menú "🛠️ Herramientas Datos": geocodificación, cruce CRM vs Sell Out, buscador de centros médicos). **No modificarlos al trabajar en el visor**; solo cuidar que no haya colisiones de nombres de funciones globales (todo comparte el mismo scope global de GAS).
 
 ## Geocodificación: cómo se obtiene el Código Postal
@@ -61,47 +61,115 @@ Pruebas locales de la lógica pura (sin GAS): se carga el archivo en un contexto
 ## Deploy
 
 - El usuario ejecuta `clasp push` **manualmente** — no pushear desde Claude.
+- **Un `clasp push` a medias rompe el visor de forma engañosa**: si falta alguno de los seis archivos (`Index`, `Estilos`, `JsNucleo`, `JsFiltros`, `JsMapa`, `JsPaneles`) o el `Code.js` con `include()`, la plantilla de `Index.html` falla al evaluarse y Apps Script reporta el error **colgado de otro archivo, en la línea 1** (visto: `ReferenceError: x is not defined (línea 1, archivo "Módulo Cruce de Datos")`). No buscar el bug en el archivo que menciona: verificar primero que los seis estén en el editor y repetir el push.
 - Tras un push, la URL de producción de la web app **sigue sirviendo la versión desplegada anterior**: hay que crear una nueva versión del deployment (Implementar → Administrar implementaciones → editar → nueva versión) o probar con la URL `/dev` (implementación de prueba), que siempre sirve el código más reciente. Si "no se ve nada" tras un cambio, revisar esto primero.
 - `appsscript.json`: web app con `executeAs: USER_DEPLOYING`, `access: DOMAIN`, V8.
 
 ## Arquitectura del visor
 
-**Esta sección se reescribió el 2026-09-21 porque describía una versión anterior del visor (pre-migración a JSON de Drive) que ya no existe en el código — verificar siempre contra `Code.js`/`Index.html` antes de confiar en identificadores citados aquí; si algo no aparece con `grep`, esta sección quedó desactualizada de nuevo.**
+**Esta sección se reescribió el 2026-09-22 con el rediseño a layout Power BI + filtros multi-selección. Verificar siempre contra los archivos antes de confiar en un identificador citado aquí; si algo no aparece con `grep`, esta sección quedó desactualizada.**
 
-- `doGet()` sirve `Index.html`. El frontend hace **cinco llamadas paralelas** por `google.script.run`: `getPuntosJson()`, `getBricksJson()`, `getVentasJson()`, `getPortafolioJson()` y `getAsignacionesJson()`. Cada una marca su propio flag en `listo{}` (Index.html) y `boot()`/`actOverlay()` esperan a que las cinco terminen.
+### Cómo se arma la página
+
+- `doGet()` sirve `Index.html` **como plantilla** (`createTemplateFromFile(...).evaluate()`), porque `Index.html` es solo la estructura y trae los demás archivos con los scriptlets `<?!= include('X') ?>`. `include()` vive en `Code.js`. Si alguien vuelve a `createHtmlOutputFromFile`, los scriptlets salen como texto y la página queda en blanco.
+- Reparto de responsabilidades (un archivo = una responsabilidad; no mezclar):
+
+  | Archivo | Qué contiene |
+  |---|---|
+  | `Index.html` | Solo estructura HTML + los `include` + `iniciarUI(); cargarDatos();` al final |
+  | `Estilos.html` | Todo el CSS (variables de color, grid, tarjetas, tablas, overrides de Choices) |
+  | `JsNucleo.html` | Formatos, estado global, carga de los 5 endpoints, `boot()`, datos mock |
+  | `JsFiltros.html` | Modelo de filtros, `pasa()`, medidas (`ventaPDV`/`ventaSku`), `Selector`, `iniciarUI()` |
+  | `JsMapa.html` | Leaflet: bricks, PDV, escalas de color, leyenda, popups |
+  | `JsPaneles.html` | `actualizar()`, KPIs, tabla, gráficas de barras, panel de brick, modal |
+
+- **Orden de arranque (no invertir)**: `iniciarUI()` llama `iniciarSelectores()` **antes** de `crearMapa()`. Mientras los filtros son `<select multiple>` nativos la cabecera mide cientos de píxeles y al mapa le quedan ~5 px; Leaflet cachea ese tamaño al construirse y después calcula un zoom absurdo. Además `observarTamano()` (JsMapa) vigila `.mapa-wrap` con un `ResizeObserver` y llama `map.invalidateSize()` + `reencuadrar()` en **cada** cambio real de tamaño: hace falta también porque el CSS de Choices llega por CDN y el layout vuelve a cambiar cuando aterriza.
+- **Teselas**: OpenStreetMap. **No cambiar a CARTO** (Voyager/Positron): desde 2024 sus teselas raster exigen API key y devuelven la imagen con "API KEY REQUIRED" estampada encima; no fallan, así que ni siquiera se puede detectar con `tileerror`.
+
+### Datos
+
+- El frontend hace **cinco llamadas paralelas** por `google.script.run`: `getPuntosJson()`, `getBricksJson()`, `getVentasJson()`, `getPortafolioJson()` y `getAsignacionesJson()`. Cada una marca su flag en `listo{}` y `boot()`/`actOverlay()` esperan a las cinco. Bajo demanda: `getDistribucionSkuJson(sku)`, `getDetallePdvJson`, `getDetalleAgregadoJson`, `getConteoSkuJson`.
 - **Todos los endpoints devuelven strings JSON (`JSON.stringify`), nunca objetos**: la serialización de objetos grandes/anidados de `google.script.run` es lenta y falla en silencio. El cliente hace `JSON.parse`. Mantener este patrón al agregar un endpoint nuevo.
-- Las columnas se localizan por fragmento de encabezado en minúsculas (`buscarCol_`), no por índice fijo — las hojas son export de Salesforce y los nombres pueden variar levemente o traer un prefijo tipo `"Cuenta: Nombre de la cuenta"`.
-- `parseNum_()` tolera números nativos, coma decimal ("4,7447"), separadores de miles y espacios; descarta NaN. `normalizarPos_()` es la función de normalización de POS_ID (mayúsculas, sin espacios, `:`→`_`) — es la clave de cruce entre PDV, ventas (Drive) y asignaciones (hoja `Asignacion`).
-- Colores de bricks por ciudad (paleta categórica validada, orden fijo — no reordenar ni agregar tonos inventados): BOGOTA `#2a78d6`, MEDELLIN `#008300`, CALI `#e87ba4`, CARTAGENA `#eda100`, BARRANQUILLA `#8b5cf6`. Ciudad nueva → siguiente slot de la paleta del skill dataviz.
-- `Index.html` funciona también fuera de GAS (abre con datos mock si `google.script` no existe) — **así se revisa el layout sin desplegar**: ver "Cómo ver el visor" abajo.
-- Filtros cruzados: `filtros{}` es un objeto plano (no array — un solo valor por dimensión, `'TODOS'` = sin filtro), evaluado por `pasa(p,ig)` (`ig` es la dimensión a ignorar, para que cada dropdown cuente opciones sin excluirse a sí mismo). Cada filtro de PDV (grupo, canal, región, población, potencial, brick, PDV, agente, BU, SKU) es un `<input type="text">` + `<div class="smart-dropdown">` — buscador con cross-filtering, sin acentos (`normTxt`), motor centralizado en `opcionesDropdown()`/`renderDropdown()`/`seleccionarOpcion()`. Agregar un filtro nuevo: sumar su caso a `pasa()`, a `opcionesDropdown()`, al arreglo de `llenarDropdowns()` y su bloque HTML (mismo patrón que `brick`/`agente`). No hay `<select>` salvo el período (`preset`) y "Colorear por" (`modoColor`), fuera de este patrón a propósito.
-- **Tamaño de los puntos**: el radio es ∝ **raíz** de la venta (`Math.sqrt`) para que el *área*, no el radio, represente la magnitud — sin eso los círculos grandes dominan visualmente de más. No hay reescalado por zoom todavía (los markers se recrean en cada `actualizar()`).
-- Clic en un brick del mapa: además de abrir el popup (`popupBrick()`), el `click` del layer llama `aplicarFiltroBrick(brickId)` — filtra el mapa a ese brick **inmediatamente**, sin que haga falta abrir el popup y pulsar un botón. Como Leaflet ya generó el popup con el contenido de *antes* de filtrar (su propio listener de `bindPopup` corre primero), el handler lo refresca con `capa.setPopupContent(popupBrick(b))` justo después de filtrar. El botón "Ver portafolio del brick" dentro del popup sigue existiendo para abrir el detalle; el botón "Ver solo PDV de este brick" (`filtrarPorBrick`, variante que además cierra el popup) queda como confirmación redundante-pero-inofensiva para cuando el filtro ya se aplicó solo con el clic.
-- `brickCrm` (texto libre que trae el CRM en `Ubicación: Brick`) **no se normaliza** contra la hoja `Bricks` en el backend actual — se usa tal cual llega. El brick real de cada PDV para filtros/agregados es el geométrico (`p._brick`, calculado en el cliente con punto-en-polígono, ver `asignarBricks()`/`pip()` en Index.html), no `brickCrm`.
-- La hoja **`Asignacion`** (columnas: `Delegado: Delegado Name`, `Cuenta: Id cuenta 18`, `Cuenta: Nombre de la cuenta`, `Cuenta: Tipo de registro de cuenta`, `Team`, `Nº Oficina Farmacia`) asigna un VM o un LAM a cada PDV. `getAsignacionesJson()` (Code.js) la cruza por `Nº Oficina Farmacia` normalizado y devuelve `{pdv: {POS_ID: [{delegado,team,tipo,cuentaId,cuentaNombre}, ...]}}` — **arreglo**, no un solo objeto, porque un mismo PDV puede tener más de una fila (p. ej. un VM y un LAM a la vez). En el cliente, `asignacionesG` + `asignacionesDe(p)`/`tieneAgente(p)`/`marcaAgenteTxt(p)`/`marcaAgenteHtml(p)` (Index.html) alimentan el ícono 👤 junto al nombre del PDV (popups y listas) y el filtro "Agente / Delegado" (`filtros.agente`, mismo patrón que `brick`/`pdv` en `pasa()`).
+- **Tocar un filtro nunca vuelve al servidor**: todo el cruce ocurre en memoria sobre `puntosG`/`ventasG`/`asignacionesG`. Lo único que dispara una llamada durante la sesión es elegir un SKU (distribución), pedir un portafolio o abrir la tabla ampliada (#SKUs).
+- Las columnas se localizan por fragmento de encabezado en minúsculas (`buscarCol_`), no por índice fijo: las hojas son export de Salesforce y los nombres pueden variar o traer un prefijo tipo `"Cuenta: Nombre de la cuenta"`.
+- `parseNum_()` tolera números nativos, coma decimal ("4,7447"), separadores de miles y espacios. `normalizarPos_()` normaliza POS_ID (mayúsculas, sin espacios, `:` → `_`): es la clave de cruce entre PDV, ventas (Drive) y asignaciones (hoja `Asignacion`).
+- `brickCrm` (texto libre del CRM en `Ubicación: Brick`) **no se normaliza** contra la hoja `Bricks`. El brick real de cada PDV para filtros y agregados es el geométrico (`p._brick`, punto-en-polígono en el cliente: `asignarBricks()`/`pip()` en JsMapa.html).
+
+### Filtros multi-selección (el cambio grande de 2026-09-22)
+
+- `filtros` es `{dim: [valores]}` — **arreglo, no un valor suelto**. Arreglo vacío = dimensión sin filtrar (antes era el string `'TODOS'`). Dimensiones: `grupo, channel, region, poblacion, potencial, agente, brick, pdv, bu, mes`. `skuSel` sigue aparte y es **uno solo**, porque dispara una consulta de distribución al servidor.
+- `fset[dim]` es el espejo del arreglo como mapa, para que `pasa(p, ig)` sea O(1) por dimensión. **Siempre cambiar los filtros con `setFiltro(dim, arr)`**, que mantiene los dos en sync; escribir `filtros.x` a mano deja `fset` viejo y el filtro deja de aplicar.
+- Semántica: **OR dentro de una dimensión, AND entre dimensiones**. `pasa(p, ig)` recibe la dimensión a ignorar para que cada desplegable calcule sus opciones sin excluirse a sí mismo (cascada).
+- `filtros.mes` vacío = todos los meses; `recalcIdx()` traduce la selección a `idxSel` (índices de `mesesD`). El `<select id="fPreset">` (Todos / U3 / U6 / Año / Personalizado) escribe en `filtros.mes`; elegir meses a mano deja el preset en "Personalizado".
+- **Agregar una dimensión nueva**: sumar su caso a `pasa()`, a `opcionesDe()`, una entrada a `CFG_SELECTORES` y su bloque `<label class="filtro">` con el `<select multiple>` en `Index.html`. El resto (cascada, conteos, chips, contador de "Limpiar filtros") sale solo.
+
+### Choices.js y la clase `Selector`
+
+- Los filtros son `<select multiple>` nativos **mejorados** con Choices.js 10.2.0 por CDN (jsDelivr). Si el CDN está bloqueado, `CHOICES_OK` queda en `false`, se avisa al usuario y los `<select>` nativos siguen funcionando: toda la lógica lee y escribe contra `filtros`, nunca contra el DOM de Choices.
+- `Selector` (JsFiltros.html) encapsula cada control: `refrescar()` recalcula opciones y **solo repinta si cambió la firma** (opciones + conteos + selección); `pintar()` arma el payload y se lo entrega a Choices; `fijar()` fuerza el repintado cuando el cambio vino de fuera (clic en el mapa, en una barra, "Limpiar filtros").
+- Decisiones que parecen raras pero tienen motivo:
+  - `searchChoices:false` — la búsqueda la resuelve `pintar()` con `normTxt` (sin acentos). La búsqueda interna de Choices no ignora tildes: escribir "bogota" no encontraría "Bogotá".
+  - `tope` por selector (250 en PDV, 300 en SKU, 400 en brick): a Choices solo se le entregan esas opciones, pero la búsqueda corre sobre la lista completa (`this.todas`). Sin el tope, cada repintado construiría 3.000+ opciones.
+  - Al repintar se hace `removeActiveItems()` + `setChoices(..., replace)` con los elegidos marcados `selected`, para que no queden chips duplicados. Excepción: si **solo** cambió el texto de búsqueda (`firmaSel` igual), no se tocan los chips, para no perder el foco mientras se escribe.
+  - Los conteos `(n)` van en la etiqueta de la lista pero se recortan del chip (`recortarChips()`): en un control de 140 px un chip "BELLA PIEL (23)" no cabe.
+  - El CSS de Choices trae `.choices__list[aria-expanded]{width:100%}`; para darle ancho propio al desplegable hay que **ganar por especificidad** (`.filtros .choices .choices__list--dropdown`), no basta con `.choices__list--dropdown`.
+
+### Paneles, mapa y tabla
+
+- El panel derecho tiene las tarjetas de KPI arriba (`kpisGeneral()` / `kpisProducto()`) y debajo un panel con pestañas (`verVista('tabla'|'analisis'|'brick')`):
+  - **Tabla** — `renderTablaRail()`: los PDV del universo filtrado ordenados por Sell Out, tope de `TOPE_TABLA_RAIL` (100) filas; clic en una fila la ubica en el mapa; "ampliar" abre el modal.
+  - **Análisis** — brechas del producto, detalle de portafolio, Top 10 PDV, portafolio, y Sell Out por canal / cliente / departamento. Clic en una barra **añade o quita** ese valor del filtro (`alternarFiltro`), no lo reemplaza.
+  - **Brick** — solo existe cuando hay **exactamente un** brick seleccionado (`brickUnico()`); si no, la pestaña se oculta.
+- Clic en un polígono del mapa llama `aplicarFiltroBrick(id)`: aísla ese brick (y al repetir clic lo suelta) y abre la pestaña Brick. No hay popup de brick: el detalle se lee en el panel.
+- Modal `#modalTabla` (`abrirTabla()`): columnas Brick/PDV/Sell Out $/Sell Out und./Asignado/#SKUs con fila TOTAL, tope `TOPE_TABLA_MODAL` (500) filas. El `<select id="tablaDim">` cambia el alcance entre "Selección actual", "Brick" y "Ciudad del brick" (las dos últimas se habilitan solo con un brick único). La columna #SKUs la pide en lote `getConteoSkuJson()` y se cachea en `conteoSkuG` (conteo histórico, no filtrado por período).
+- Colores de bricks por ciudad (paleta categórica validada, orden fijo; no reordenar ni inventar tonos): BOGOTA `#2a78d6`, MEDELLIN `#008300`, CALI `#e87ba4`, CARTAGENA `#eda100`, BARRANQUILLA `#8b5cf6`. Ciudad nueva: siguiente slot de la paleta del skill dataviz.
+- **Capas de bricks** (`<select id="modoColor">` → `cambiarModo()`/`recolorBricks()`): `rendimiento` (Sell Out), `conectado` (Sell Out solo de PDV con `idSap`), `asignado` (% de PDV con agente) y `ciudad`. Las cuatro comparten cuartiles (`crearEscala()`) y semáforo (`SEM`); `agBricks`/`agConectado`/`agAsignPorBrick` se recalculan en cada `actualizar()`. La **selección** de un brick se marca con grosor de línea y atenuando los demás, no con otro color.
+- **Tamaño de los puntos**: el radio es ∝ **raíz** de la venta (`Math.sqrt`) para que el *área* represente la magnitud. No hay reescalado por zoom (los markers se recrean en cada `actualizar()`).
+- La hoja **`Asignacion`** (columnas: `Delegado: Delegado Name`, `Cuenta: Id cuenta 18`, `Cuenta: Nombre de la cuenta`, `Cuenta: Tipo de registro de cuenta`, `Team`, `Nº Oficina Farmacia`) asigna un VM o un LAM a cada PDV. `getAsignacionesJson()` cruza por `Nº Oficina Farmacia` normalizado y devuelve `{pdv: {POS_ID: [{delegado,team,tipo,...}, ...]}}` — **arreglo**, porque un PDV puede tener un VM y un LAM a la vez. En el cliente, `asignacionesDe(p)`/`tieneAgente(p)`/`marcaAgenteHtml(p)` alimentan el ícono 👤 y el filtro "Agente"; `tagTipo(tipo)` pinta VM/LAM con `--ink`/`--ink-2`, sin colores nuevos.
 
 ## Estilo visual: emular Zebra BI (regla general)
 
 Toda métrica o visual nuevo en este dashboard (tarjetas KPI, gráficas de barras, badges) debe seguir el lenguaje visual de **Zebra BI** (add-in de Power BI/Excel, estilo IBCS): alta densidad de información, cero elementos decorativos.
 - Etiquetas de valor **directas** sobre la barra/punto, nunca depender de un eje o leyenda aparte (`pintarBarras()` ya sigue esto — mantenerlo al agregar gráficas).
-- Tarjetas KPI **compactas**: poco padding, tipografía pequeña, sin sombras ni bordes gruesos; un acento de color va como franja lateral fina (`border-left`), no como recoloreo de toda la tarjeta (ver `.kpi`/`.kpi.modo-prod`).
+- Tarjetas KPI **compactas**: poco padding, etiqueta pequeña en mayúsculas y el número grande. Desde el rediseño Power BI (2026-09-22, a pedido explícito del usuario) van centradas, sobre fondo blanco y con una sombra **muy** sutil (`--sombra`, 1-3 px de blur y 6 % de opacidad) — no es la sombra pesada de una tarjeta de material design, y sigue sin haber gradientes ni bordes gruesos. El acento de color va como franja lateral fina (`border-left`, solo en modo producto), nunca recoloreando la tarjeta entera (ver `.kpi`/`.kpi.modo-prod`).
 - Color **con significado**, nunca decorativo: la paleta semáforo (`SEM`) ya existe para esto — no introducir colores nuevos que no codifiquen alto/medio/bajo/brecha/selección.
 - Tipografía sans-serif chica, números con `font-variant-numeric:tabular-nums` (alineación de dígitos).
 - Nada de 3D, gradientes ni iconografía decorativa — el único ícono admitido hoy es 👤 (`badge-agente`) para cobertura de agente, con significado, no decoración.
 
 ## Cómo ver el visor sin desplegar (revisión visual)
 
-`Index.html` se abre directo en el navegador: si no existe `google.script`, entra en modo mock y se puede evaluar el layout completo. **Revisar en el navegador antes de dar por bueno un cambio de UI** — problemas como el solapamiento de puntos o el layout que crece a 2.400px no se ven leyendo el código.
+El visor ya no es un solo archivo: `Index.html` trae los scriptlets `<?!= include('X') ?>`, que solo entiende Apps Script. Para revisarlo en el navegador hay que resolverlos antes, desde el directorio padre:
 
-En esta máquina el **depurador remoto de Chrome está bloqueado por política corporativa** ("DevTools remote debugging is disallowed by the system admin"), así que Puppeteer/Playwright **no funcionan** (fallan con "browser is already running", incluso con `userDataDir` propio). Lo que sí funciona es el modo screenshot nativo:
+```bash
+python construir_preview.py      # genera ../preview_visor.html
+```
+
+Ese archivo se abre directo en el navegador: si no existe `google.script`, `cargarDatos()` entra en modo mock (`cargarMock()` en JsNucleo.html genera 360 PDV deterministas repartidos en Bogotá, Medellín, Cali y Cartagena, con bricks, ventas y asignaciones) y se puede evaluar el layout completo, los filtros y el mapa. **Revisar en el navegador antes de dar por bueno un cambio de UI** — problemas como el mapa de 5 px de alto, el solapamiento de puntos o el layout que crece a 2.400 px no se ven leyendo el código.
+
+`preview_visor.html` se genera **fuera** de `Apps Script/` a propósito: cualquier `.html` dentro de esa carpeta lo subiría `clasp push` al proyecto real. Está en `.gitignore`; regenerarlo tras cada cambio (no editarlo a mano: se sobrescribe).
+
+En esta máquina el **depurador remoto de Chrome está bloqueado por política corporativa** ("DevTools remote debugging is disallowed by the system admin"), así que Puppeteer/Playwright **no funcionan**. Lo que sí funciona es el modo screenshot nativo:
 
 ```bash
 "/c/Program Files/Google/Chrome/Application/chrome.exe" --headless=new --disable-gpu \
-  --no-sandbox --hide-scrollbars --window-size=1440,900 --virtual-time-budget=6000 \
-  --screenshot="salida.png" "file:///c:/ruta/a/Index.html"
+  --no-sandbox --hide-scrollbars --window-size=1440,900 --virtual-time-budget=14000 \
+  --screenshot="C:\ruta\absoluta\salida.png" "file:///c:/ruta/a/preview_visor.html"
 ```
 
-Limitación: captura solo el viewport y **no permite interactuar**. Para ver un estado que requiere clic (pestaña, filtro desplegado, zoom), copiar el HTML a un scratch y parchear el arranque (p. ej. cambiar la llamada final a `cambiarVista('pdv')`, o `toggleMs('grupo')` con un `setTimeout`) — nunca tocar el archivo real. Para probar densidad, inyectar un mock grande (~500 PDV agrupados en centros urbanos reales, no uniformes: la distribución importa para juzgar el solapamiento).
+Detalles que cuesta redescubrir:
+- El `--screenshot` necesita **ruta absoluta de Windows**; con ruta relativa falla con "Access is denied".
+- El viewport real es más bajo que `--window-size` (con 1600x950 el `innerHeight` es 852): el margen blanco al pie de la captura no es un bug de layout.
+- Captura solo el viewport y **no permite interactuar**. Para ver un estado que requiere clic (una pestaña, un filtro desplegado, el modal), copiar `preview_visor.html` al scratchpad y parchear el arranque envolviendo el último `rec*` del mock — nunca tocar el archivo real:
+
+```js
+var _rec=recAsignaciones;
+recAsignaciones=function(p){_rec(p);setTimeout(function(){
+  setFiltro('poblacion',['BOGOTA','MEDELLIN']);SELECTORES.poblacion.fijar();
+  actualizar();verVista('analisis');
+},400)};
+```
+
+- Para inspeccionar valores en tiempo de ejecución (sin DevTools): escribirlos en `document.title` desde ese mismo parche y leerlos con `--dump-dom | grep -o "<title>[^<]*</title>"`. Los `setTimeout` largos pueden no dispararse dentro del presupuesto de tiempo virtual si hay red pendiente; envolver una función que ya se ejecuta (como `actualizar`) es más fiable que un temporizador suelto.
 
 ## Hojas relevantes del spreadsheet
 

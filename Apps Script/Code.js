@@ -41,8 +41,22 @@ var CACHE_MAX_TROZOS = 60;      // ~5.4 MB máximo por archivo
  * Entrada de la Web App
  * ============================================================ */
 
-function doGet() {
-  return HtmlService.createHtmlOutputFromFile('Index')
+function doGet(e) {
+  // Ruteo opcional por ?accion=... para consumir los endpoints como API REST.
+  // Sin parámetro (el caso normal de la web app) sigue devolviendo el HTML.
+  var accion = (e && e.parameter && e.parameter.accion) || '';
+  if (accion === 'getVentasMtdJson') {
+    return ContentService.createTextOutput(getVentasMtdJson())
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+  if (accion === 'getSIvsSOJson') {
+    return ContentService.createTextOutput(getSIvsSOJson())
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+
+  // createTemplateFromFile + evaluate(): obligatorio para que se procesen los
+  // <?!= include('...') ?> con los que Index.html ensambla Estilos y los Js*.
+  return HtmlService.createTemplateFromFile('Index').evaluate()
     .setTitle('Cobertura Estratégica · ISDIN Colombia')
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL)
     .addMetaTag('viewport', 'width=device-width, initial-scale=1');
@@ -234,6 +248,43 @@ function getDetalleAgregadoJson(posIdsCsv) {
  *
  * Devuelve: { sku, pdv: { 'POS_ID': [[iMes, units, amount], ...] } }
  */
+/**
+ * Cantidad de SKUs distintos vendidos (histórico, no filtrado por período) por cada
+ * PDV de la lista. Usado por la tabla ampliada del panel de brick (columna "#SKUs"):
+ * mismo agrupamiento por fragmento que getDetalleAgregadoJson(), pero devuelve un
+ * conteo por PDV en vez de sumar todo junto.
+ */
+function getConteoSkuJson(posIdsCsv) {
+  var lista = (posIdsCsv || '').split(',').map(normalizarPos_).filter(Boolean);
+  if (!lista.length) return JSON.stringify({ conteo: {} });
+
+  var vistos = {}, unicos = [];
+  lista.forEach(function(p) { if (!vistos[p]) { vistos[p] = 1; unicos.push(p); } });
+
+  var indice  = JSON.parse(leerArchivoDrive_('so_indice.json'));
+  var porFrag = {};
+  unicos.forEach(function(pos) {
+    var entrada = indice.pdv ? indice.pdv[pos] : undefined;
+    if (entrada === undefined) return;
+    var f = fragDePdv_(entrada);
+    if (isNaN(f)) return;
+    if (!porFrag[f]) porFrag[f] = [];
+    porFrag[f].push(pos);
+  });
+
+  var conteo = {};
+  Object.keys(porFrag).forEach(function(f) {
+    var datos = pdvsDeFragmento_(JSON.parse(
+      leerArchivoDrive_(nombreFrag_('so_detalle_', parseInt(f, 10)))));
+    porFrag[f].forEach(function(pos) {
+      var skus = datos[pos];
+      conteo[pos] = skus ? Object.keys(skus).length : 0;
+    });
+  });
+
+  return JSON.stringify({ conteo: conteo });
+}
+
 function getDistribucionSkuJson(sku) {
   var s = (sku || '').toString().trim();
   if (!s) return JSON.stringify({ sku: '', pdv: {} });
@@ -498,6 +549,11 @@ function probarConexion() {
 
 function verDiagnostico() { Logger.log(getDiagnosticoJson()); }
 
+/** Inserta otro archivo del proyecto en la plantilla: <?!= include('JsMapa') ?>. */
+function include(nombre) {
+  return HtmlService.createHtmlOutputFromFile(nombre).getContent();
+}
+
 /* ============================================================
  * Utilidades
  * ============================================================ */
@@ -556,4 +612,619 @@ function normalizarGeometria_(obj) {
 
 function listarPestanas_() {
   return abrirHoja_().getSheets().map(function(s) { return s.getName(); });
+}
+
+/* ============================================================
+ * VENTAS MTD — pestaña 2 del dashboard
+ * ============================================================
+ * Lee DOS hojas del MISMO archivo (SPREADSHEET_ID_MTD):
+ *   'CUMPLIMIENTO' → tarjeta KPI, tabla de clientes y tabla de KAM
+ *   'PLANTILLA'    → tabla de productos
+ *
+ * Los encabezados se buscan por fragmentos (no por posición), así que
+ * aguanta que muevan o renombren columnas. Los de PLANTILLA se escriben
+ * en Logger.log() en cada lectura real para poder verificarlos.
+ *
+ * Caché: 'ventas_mtd' por 30 min. Si cambian las hojas y se quiere ver
+ * el dato fresco antes, ejecutar limpiarCacheMtd().
+ */
+
+var SPREADSHEET_ID_MTD = '1hViwAW2zhLky4bg8uOsmlmeHa9AnLm5KtcWRvSrzoGw';
+
+var HOJA_MTD_CUMPLIMIENTO = 'CUMPLIMIENTO';
+var HOJA_MTD_PLANTILLA    = 'PLANTILLA';
+
+var HOJA_MTD_HISTORICO    = 'Historico de ventas';
+
+var CACHE_MTD_CLAVE    = 'ventas_mtd';
+var CACHE_MTD_HIST     = 'ventas_mtd_historico';
+var CACHE_MTD_SEGUNDOS = 1800;   // 30 min
+
+/** Minúsculas, sin tildes y con espacios colapsados, para comparar encabezados. */
+function mtdNorm_(v) {
+  var s = String(v == null ? '' : v).trim().toLowerCase().replace(/\s+/g, ' ');
+  try { s = s.normalize('NFD').replace(/[̀-ͯ]/g, ''); } catch (err) { /* sin normalize */ }
+  return s;
+}
+
+/**
+ * Índice del primer encabezado que contiene TODOS los fragmentos de `incluye`
+ * y ninguno de `excluye`. Devuelve null si no hay ninguno (nunca lanza error).
+ * Más estricto que buscarCol_: distingue 'Real (LOCAL)' de 'Real -1 (LOCAL)'.
+ */
+function mtdCol_(headers, incluye, excluye) {
+  excluye = excluye || [];
+  for (var i = 0; i < headers.length; i++) {
+    var h = headers[i];
+    if (!h) continue;
+    var ok = true;
+    for (var a = 0; a < incluye.length; a++) {
+      if (h.indexOf(mtdNorm_(incluye[a])) === -1) { ok = false; break; }
+    }
+    if (!ok) continue;
+    for (var b = 0; b < excluye.length; b++) {
+      if (h.indexOf(mtdNorm_(excluye[b])) !== -1) { ok = false; break; }
+    }
+    if (ok) return i;
+  }
+  return null;
+}
+
+/** Primera alternativa de columna que exista: mtdColAlt_(h, [[inc, exc], ...]). */
+function mtdColAlt_(headers, alternativas) {
+  for (var i = 0; i < alternativas.length; i++) {
+    var idx = mtdCol_(headers, alternativas[i][0], alternativas[i][1]);
+    if (idx !== null) return idx;
+  }
+  return null;
+}
+
+/**
+ * Valor numérico de una celda (0 si no es número). Usa parseNum_ existente,
+ * salvo en un caso que parseNum_ no cubre: importes en texto con puntos de
+ * miles al estilo colombiano ("3.100.000.000" o "1.234.567,89"), donde
+ * parseFloat leería 3,1. El patrón exige grupos de exactamente 3 dígitos,
+ * así que un decimal normal como "3.1" sigue yendo por parseNum_.
+ */
+function mtdNum_(row, idx) {
+  if (idx === null || idx === undefined) return 0;
+  var v = row[idx];
+  if (typeof v === 'string') {
+    var s = v.replace(/[$\s]/g, '');
+    if (/^-?\d{1,3}(\.\d{3})+(,\d+)?$/.test(s)) {
+      var n2 = parseFloat(s.replace(/\./g, '').replace(',', '.'));
+      return isNaN(n2) ? 0 : n2;
+    }
+  }
+  var n = parseNum_(v);
+  return isNaN(n) ? 0 : n;
+}
+
+function mtdTexto_(row, idx) {
+  if (idx === null || idx === undefined) return '';
+  return String(row[idx] == null ? '' : row[idx]).trim();
+}
+
+/**
+ * Porcentaje de cumplimiento: "62%" (string) → 0.62; 0.62 (número) → 0.62.
+ * Devuelve null si la celda está vacía o no es interpretable.
+ */
+function mtdPct_(valor) {
+  if (valor === null || valor === undefined || valor === '') return null;
+  if (typeof valor === 'string' && valor.indexOf('%') !== -1) {
+    var p = parseNum_(valor.replace(/%/g, ''));
+    return isNaN(p) ? null : p / 100;
+  }
+  var d = parseNum_(valor);
+  return isNaN(d) ? null : d;
+}
+
+/** Las filas de totales de la hoja se ignoran: el total se recalcula aquí. */
+function mtdEsFilaTotal_(texto) {
+  var t = mtdNorm_(texto);
+  return t === '' ? false : (t.indexOf('total') === 0 || t.indexOf('gran total') === 0);
+}
+
+/* ---------- Caché por trozos (CacheService acepta 100 KB por clave) ---------- */
+
+function mtdCacheLeer_(clave) {
+  var cache = CacheService.getScriptCache();
+  var meta  = cache.get('meta::' + clave);
+  if (!meta) return null;
+  var n = Number(meta), claves = [];
+  for (var i = 0; i < n; i++) claves.push('t::' + clave + '::' + i);
+  var trozos = cache.getAll(claves), partes = [];
+  for (var j = 0; j < n; j++) {
+    var t = trozos['t::' + clave + '::' + j];
+    if (!t) return null;   // trozo vencido: se vuelve a leer la hoja
+    partes.push(t);
+  }
+  return partes.join('');
+}
+
+function mtdCacheGuardar_(clave, texto, segundos) {
+  var total = Math.ceil(texto.length / CACHE_TROZO);
+  if (total > CACHE_MAX_TROZOS) return;
+  var mapa = {};
+  for (var i = 0; i < total; i++) {
+    mapa['t::' + clave + '::' + i] = texto.substr(i * CACHE_TROZO, CACHE_TROZO);
+  }
+  mapa['meta::' + clave] = String(total);
+  try { CacheService.getScriptCache().putAll(mapa, segundos); } catch (e) { /* caché llena */ }
+}
+
+/** Borra la caché de Ventas MTD (útil tras actualizar las hojas). */
+function limpiarCacheMtd() {
+  var cache = CacheService.getScriptCache(), claves = [];
+  [CACHE_MTD_CLAVE, CACHE_MTD_HIST].forEach(function(clave) {
+    claves.push('meta::' + clave);
+    var meta = cache.get('meta::' + clave);
+    if (meta) {
+      for (var i = 0; i < Number(meta); i++) claves.push('t::' + clave + '::' + i);
+    }
+  });
+  cache.removeAll(claves);
+  Logger.log('Caché de Ventas MTD limpiada (incluye el histórico).');
+  return 'OK';
+}
+
+/* ---------- Lectura de cada hoja ---------- */
+
+function mtdLeerCumplimiento_(libro) {
+  var hoja = libro.getSheetByName(HOJA_MTD_CUMPLIMIENTO);
+  if (!hoja) {
+    throw new Error("No se encontró la hoja '" + HOJA_MTD_CUMPLIMIENTO + "' en el archivo de Ventas MTD. " +
+                    'Hojas disponibles: ' + libro.getSheets().map(function(s) { return s.getName(); }).join(' | '));
+  }
+
+  var data = hoja.getDataRange().getValues();
+  if (data.length < 2) return { filas: [], totales: null };
+
+  var headers = data[0].map(mtdNorm_);
+  var col = {
+    sapId:    mtdColAlt_(headers, [[['sap id'], []], [['sap'], []]]),
+    cliente:  mtdCol_(headers, ['cliente'], []),
+    kam:      mtdCol_(headers, ['kam'], []),
+    canal:    mtdCol_(headers, ['canal'], []),
+    // 'Real -1 (LOCAL)' se busca ANTES que 'Real (LOCAL)' y se excluye de esta.
+    realAnt:  mtdColAlt_(headers, [[['real', '-1'], ['plan']], [['anterior'], ['plan']]]),
+    realMes:  mtdCol_(headers, ['real'], ['-1', 'anterior', 'plan', 'ano', 'anio']),
+    planMes:  mtdCol_(headers, ['plan'], ['ano', 'anio']),
+    cumpl:    mtdCol_(headers, ['cumpl'], []),
+    realAnio: mtdColAlt_(headers, [[['real', 'ano'], ['plan']], [['real', 'anio'], ['plan']]]),
+    planAnio: mtdColAlt_(headers, [[['plan', 'ano'], []], [['plan', 'anio'], []]])
+  };
+
+  var filas = [], tot = { realMes: 0, planMes: 0, realAnio: 0, planAnio: 0 }, ignoradas = 0;
+  for (var i = 1; i < data.length; i++) {
+    var row = data[i];
+    var cliente = mtdTexto_(row, col.cliente);
+    var sapId   = mtdTexto_(row, col.sapId);
+    if (!cliente && !sapId) continue;
+    if (mtdEsFilaTotal_(cliente)) { ignoradas++; continue; }
+
+    var realMes = mtdNum_(row, col.realMes);
+    var planMes = mtdNum_(row, col.planMes);
+    var pct = col.cumpl !== null ? mtdPct_(row[col.cumpl]) : null;
+    if (pct === null) pct = planMes !== 0 ? realMes / planMes : null;   // respaldo calculado
+
+    filas.push({
+      sapId:           sapId,
+      cliente:         cliente,
+      kam:             mtdTexto_(row, col.kam),
+      canal:           mtdTexto_(row, col.canal),
+      realMes:         realMes,
+      realMesAnterior: mtdNum_(row, col.realAnt),
+      planMes:         planMes,
+      cumplPct:        pct,
+      realAnio:        mtdNum_(row, col.realAnio),
+      planAnio:        mtdNum_(row, col.planAnio)
+    });
+
+    tot.realMes  += realMes;
+    tot.planMes  += planMes;
+    tot.realAnio += mtdNum_(row, col.realAnio);
+    tot.planAnio += mtdNum_(row, col.planAnio);
+  }
+
+  return {
+    filas: filas,
+    totales: {
+      realMes:  tot.realMes,
+      planMes:  tot.planMes,
+      cumplPct: tot.planMes !== 0 ? tot.realMes / tot.planMes : null,
+      realAnio: tot.realAnio,
+      planAnio: tot.planAnio
+    },
+    columnas: col,
+    filasTotalIgnoradas: ignoradas
+  };
+}
+
+function mtdLeerProductos_(libro) {
+  var hoja = libro.getSheetByName(HOJA_MTD_PLANTILLA);
+  if (!hoja) {
+    Logger.log("AVISO: no existe la hoja '" + HOJA_MTD_PLANTILLA + "'; la tabla de productos irá vacía.");
+    return { productos: [], columnas: null };
+  }
+
+  var data = hoja.getDataRange().getValues();
+  if (data.length < 2) return { productos: [], columnas: null };
+
+  // Encabezados reales de la fila 1, para verificar el mapeo desde el editor.
+  Logger.log("Encabezados de '" + HOJA_MTD_PLANTILLA + "' (fila 1): " +
+             data[0].map(function(h, i) { return (i + 1) + '=' + h; }).join(' | '));
+
+  var headers = data[0].map(mtdNorm_);
+  var col = {
+    nombre:   mtdColAlt_(headers, [[['product'], []], [['nombre'], []], [['descripci'], []]]),
+    ventaAnt: mtdColAlt_(headers, [[['real', '-1'], ['plan']], [['anterior'], ['plan']]]),
+    // 'Real' es el importe original; 'Real (LOCAL)' y 'Real #' también contienen "real",
+    // así que primero se exige coincidencia exacta y solo después se cae al parcial.
+    ventaMes: (function() {
+      for (var i = 0; i < headers.length; i++) {
+        if (headers[i] === 'real') return i;
+      }
+      return mtdCol_(headers, ['real'],
+        ['-1', 'anterior', 'plan', 'ano', 'anio', 'local', '#']);
+    })(),
+    unidades: mtdColAlt_(headers, [[['unidad'], []], [['unit'], []],
+                                    [['real', '#'], ['-1', 'plan', 'ano', 'anio']]])
+  };
+  Logger.log('Mapeo PLANTILLA → nombre=' + col.nombre + ' ventaMes=' + col.ventaMes +
+             ' ventaMesAnterior=' + col.ventaAnt + ' unidades=' + col.unidades +
+             ' (null = columna no encontrada)');
+
+  var productos = [];
+  for (var i = 1; i < data.length; i++) {
+    var row = data[i];
+    var nombre = mtdTexto_(row, col.nombre);
+    if (mtdEsFilaTotal_(nombre)) continue;
+
+    var ventaMes = mtdNum_(row, col.ventaMes);
+    var ventaAnt = mtdNum_(row, col.ventaAnt);
+    var unidades = mtdNum_(row, col.unidades);
+    if (!nombre && !ventaMes && !ventaAnt && !unidades) continue;
+
+    productos.push({
+      nombre:                nombre,
+      ventaMes:              ventaMes,
+      ventaMesAnterior:      ventaAnt,
+      unidades:              unidades,
+      deltaVsPctMesAnterior: ventaAnt !== 0 ? (ventaMes - ventaAnt) / ventaAnt : null
+    });
+  }
+
+  // La hoja está a nivel cliente x producto (73 clientes x ~102 productos), no es un
+  // catálogo: se consolida por nombre para que la tabla muestre una fila por producto.
+  var agrupado = {};
+  productos.forEach(function(p) {
+    var k = p.nombre || '(sin nombre)';
+    if (!agrupado[k]) {
+      agrupado[k] = { nombre: k, ventaMes: 0, ventaMesAnterior: 0, unidades: 0 };
+    }
+    agrupado[k].ventaMes += p.ventaMes || 0;
+    agrupado[k].ventaMesAnterior += p.ventaMesAnterior || 0;
+    agrupado[k].unidades += p.unidades || 0;
+  });
+  var productosAgrupados = Object.keys(agrupado).map(function(k) {
+    var x = agrupado[k];
+    x.deltaVsPctMesAnterior = x.ventaMesAnterior !== 0
+      ? (x.ventaMes - x.ventaMesAnterior) / x.ventaMesAnterior : null;
+    return x;
+  });
+
+  Logger.log('Productos antes de agrupar: ' + productos.length +
+             ' · después de agrupar: ' + productosAgrupados.length);
+
+  return { productos: productosAgrupados, columnas: col };
+}
+
+/**
+ * Datos del informe de Ventas MTD (cumplimiento por cliente y por KAM, más
+ * productos). Devuelve un STRING JSON, igual que el resto de endpoints.
+ */
+/* ---------- Histórico de ventas (serie mensual por cliente desde 2022) ---------- */
+
+/**
+ * {anio, mes} de la celda de fecha. Sheets suele devolver un Date; si la columna
+ * está como texto se asume d/m/aaaa, que es el formato de la hoja ("1/01/2022").
+ */
+function mtdFecha_(valor) {
+  if (valor instanceof Date) {
+    return { anio: valor.getFullYear(), mes: valor.getMonth() + 1 };
+  }
+  var s = (valor || '').toString().trim();
+  var partes = s.split('/');
+  if (partes.length === 3) {
+    var anio = parseInt(partes[2], 10), mes = parseInt(partes[1], 10);
+    if (isNaN(anio) || isNaN(mes) || mes < 1 || mes > 12) return null;
+    return { anio: anio, mes: mes };
+  }
+  return null;
+}
+
+function mtdLeerHistorico_(libro) {
+  var hoja = libro.getSheetByName(HOJA_MTD_HISTORICO);
+  if (!hoja) {
+    Logger.log("AVISO: no existe la hoja '" + HOJA_MTD_HISTORICO + "'; el histórico irá vacío.");
+    return { filas: [], columnas: null };
+  }
+
+  var data = hoja.getDataRange().getValues();
+  if (data.length < 2) return { filas: [], columnas: null };
+
+  Logger.log("Encabezados de '" + HOJA_MTD_HISTORICO + "' (fila 1): " +
+             data[0].map(function(h, i) { return (i + 1) + '=' + h; }).join(' | '));
+
+  var headers = data[0].map(mtdNorm_);
+  var col = {
+    fecha:   mtdColAlt_(headers, [[['fecha'], []], [['date'], []]]),
+    cliente: mtdColAlt_(headers, [[['cliente'], []], [['customer'], []]]),
+    kam:     mtdCol_(headers, ['kam'], []),
+    canal:   mtdColAlt_(headers, [[['canal'], []], [['channel'], []]]),
+    real:    mtdCol_(headers, ['real'], ['plan', 'sell']),
+    plan:    mtdCol_(headers, ['plan'], ['sell'])
+  };
+  Logger.log('Mapeo HISTORICO → fecha=' + col.fecha + ' cliente=' + col.cliente +
+             ' kam=' + col.kam + ' canal=' + col.canal +
+             ' real=' + col.real + ' plan=' + col.plan + ' (null = columna no encontrada)');
+
+  var filas = [], sinFecha = 0, sinCliente = 0;
+  var anioMin = null, anioMax = null, porMes = {};
+  for (var i = 1; i < data.length; i++) {
+    var row = data[i];
+    var f = mtdFecha_(col.fecha === null ? null : row[col.fecha]);
+    if (!f) { sinFecha++; continue; }
+    var cliente = mtdTexto_(row, col.cliente);
+    if (!cliente || mtdEsFilaTotal_(cliente)) { sinCliente++; continue; }
+
+    filas.push({
+      anio:    f.anio,
+      mes:     f.mes,
+      cliente: cliente,
+      kam:     mtdTexto_(row, col.kam),
+      canal:   mtdTexto_(row, col.canal),
+      real:    mtdNum_(row, col.real),
+      plan:    mtdNum_(row, col.plan)
+    });
+    if (anioMin === null || f.anio < anioMin) anioMin = f.anio;
+    if (anioMax === null || f.anio > anioMax) anioMax = f.anio;
+    porMes[f.mes] = (porMes[f.mes] || 0) + 1;
+  }
+
+  // El reparto por mes delata un d/m invertido: con una serie mensual completa
+  // los 12 meses deben aparecer, no concentrarse en uno solo.
+  Logger.log('HISTORICO: ' + filas.length + ' filas útiles de ' + (data.length - 1) +
+             ' (sin fecha: ' + sinFecha + ', sin cliente/total: ' + sinCliente + ')' +
+             ' · años ' + anioMin + '–' + anioMax +
+             ' · meses distintos: ' + Object.keys(porMes).length +
+             ' · filas por mes: ' + JSON.stringify(porMes));
+
+  return { filas: filas, columnas: col, anioMin: anioMin, anioMax: anioMax };
+}
+
+/**
+ * Histórico completo. Son miles de filas, pero mtdCacheGuardar_ ya trocea en
+ * bloques de CACHE_TROZO (90 KB) hasta CACHE_MAX_TROZOS, así que no hace falta
+ * un mecanismo aparte: soporta ~5.4 MB.
+ */
+function getHistoricoVentasJson() {
+  var enCache = mtdCacheLeer_(CACHE_MTD_HIST);
+  if (enCache) return enCache;
+
+  var libro = SpreadsheetApp.openById(SPREADSHEET_ID_MTD);
+  var hist  = mtdLeerHistorico_(libro);
+
+  var texto = JSON.stringify({
+    filas: hist.filas,
+    meta: {
+      actualizadoEn: new Date().toISOString(),
+      totalFilas:    hist.filas.length,
+      anioMin:       hist.anioMin || null,
+      anioMax:       hist.anioMax || null,
+      hoja:          HOJA_MTD_HISTORICO,
+      columnas:      hist.columnas
+    }
+  });
+
+  var kb = Math.round(texto.length / 1024);
+  Logger.log('HISTORICO: JSON de ' + kb + ' KB → ' +
+             Math.ceil(texto.length / CACHE_TROZO) + ' trozo(s) de caché (tope ' +
+             CACHE_MAX_TROZOS + ')');
+  mtdCacheGuardar_(CACHE_MTD_HIST, texto, CACHE_MTD_SEGUNDOS);
+  return texto;
+}
+
+/** Diagnóstico manual desde el editor, análogo a verVentasMtd(). */
+function verHistoricoVentas() {
+  var d = JSON.parse(getHistoricoVentasJson());
+  Logger.log('Total de filas: ' + d.meta.totalFilas +
+             ' · años ' + d.meta.anioMin + '–' + d.meta.anioMax);
+  Logger.log('Primera fila: ' + JSON.stringify(d.filas[0]));
+  Logger.log('Última fila: ' + JSON.stringify(d.filas[d.filas.length - 1]));
+}
+
+function getVentasMtdJson() {
+  var enCache = mtdCacheLeer_(CACHE_MTD_CLAVE);
+  if (enCache) return enCache;
+
+  var libro = SpreadsheetApp.openById(SPREADSHEET_ID_MTD);   // una sola apertura para las dos hojas
+  var cumpl = mtdLeerCumplimiento_(libro);
+  var prod  = mtdLeerProductos_(libro);
+
+  var salida = {
+    cumplimiento: {
+      filas: cumpl.filas,
+      totales: cumpl.totales || { realMes: 0, planMes: 0, cumplPct: null, realAnio: 0, planAnio: 0 }
+    },
+    productos: prod.productos,
+    meta: {
+      actualizadoEn:        new Date().toISOString(),
+      totalFilasClientes:   cumpl.filas.length,
+      totalFilasProductos:  prod.productos.length,
+      hojaCumplimiento:     HOJA_MTD_CUMPLIMIENTO,
+      hojaProductos:        HOJA_MTD_PLANTILLA,
+      columnasProductos:    prod.columnas,
+      filasTotalIgnoradas:  cumpl.filasTotalIgnoradas || 0
+    }
+  };
+
+  var texto = JSON.stringify(salida);
+  mtdCacheGuardar_(CACHE_MTD_CLAVE, texto, CACHE_MTD_SEGUNDOS);
+  return texto;
+}
+
+/** Diagnóstico manual desde el editor: encabezados y primeras filas leídas. */
+function verVentasMtd() {
+  var d = JSON.parse(getVentasMtdJson());
+  Logger.log('Clientes: ' + d.meta.totalFilasClientes + ' · Productos: ' + d.meta.totalFilasProductos);
+  Logger.log('Totales: ' + JSON.stringify(d.cumplimiento.totales));
+  Logger.log('Primera fila cliente: ' + JSON.stringify(d.cumplimiento.filas[0]));
+  Logger.log('Primer producto: ' + JSON.stringify(d.productos[0]));
+}
+
+/* ============================================================
+ * SI vs SO — pestaña 3 del dashboard
+ * ============================================================
+ * Lee la hoja 'Data' del archivo "Carga Looker" (SPREADSHEET_ID_LOOKER):
+ * una tabla de hechos plana con columna Type = SI / SO / ST / INV (mismo
+ * patrón que usan los 4 campos calculados del Looker original — "Sell In
+ * final", "Sell Out final", etc. — que solo resuelven el toggle $/# y dejan
+ * el filtro real por Type a cada gráfico/tabla de Looker).
+ *
+ * Se agrega en el servidor por (mes × cliente × producto) — el grano más
+ * fino que necesita esta pestaña — y el cruce por Canal/KAM/BU/Marca/
+ * Mercado ocurre en el navegador sobre ese arreglo, igual que el resto del
+ * visor ("tocar un filtro nunca vuelve al servidor").
+ *
+ * Fuera de alcance a propósito: Sell Through (Type=ST, no se usa en esta
+ * pestaña) y DDI/"Diferencia INV" — la hoja 'DIAS DE INV' de donde saldría
+ * esa fórmula está rota (A1 = texto congelado "#¡REF!"); se agrega cuando
+ * se confirme el cálculo real con el equipo.
+ */
+
+var SPREADSHEET_ID_LOOKER = '1_eW3f95MgTcwPUH5oyTo1qQbgt-45sf6EgsDYSbylzE';
+var HOJA_LOOKER_DATA       = 'Data';
+var CACHE_SIVSO_CLAVE      = 'si_vs_so';
+var CACHE_SIVSO_SEGUNDOS   = 1800;   // 30 min, igual que Ventas MTD
+
+/** Serial de fecha de Sheets, o Date ya convertido por Apps Script, → 'YYYY-MM'. */
+function sivsoMes_(valor) {
+  var d;
+  if (valor instanceof Date) d = valor;
+  else if (typeof valor === 'number') d = new Date(Math.round((valor - 25569) * 86400 * 1000));
+  else return null;
+  if (isNaN(d.getTime())) return null;
+  var m = d.getUTCMonth() + 1;
+  return d.getUTCFullYear() + '-' + (m < 10 ? '0' + m : m);
+}
+
+function sivsoLeerDatos_() {
+  var libro = SpreadsheetApp.openById(SPREADSHEET_ID_LOOKER);
+  var hoja  = libro.getSheetByName(HOJA_LOOKER_DATA);
+  if (!hoja) {
+    throw new Error("No se encontró la hoja '" + HOJA_LOOKER_DATA + "' en el archivo Carga Looker. " +
+                    'Hojas disponibles: ' + libro.getSheets().map(function(s) { return s.getName(); }).join(' | '));
+  }
+
+  var data = hoja.getDataRange().getValues();
+  if (data.length < 2) return { filas: [], meta: { totalFilasOrigen: 0 } };
+
+  var headers = data[0].map(mtdNorm_);
+  var col = {
+    fecha:   mtdCol_(headers, ['fecha'], []),
+    sapId:   mtdCol_(headers, ['sap id'], []),
+    // 'Product ID' se busca ANTES que 'Product' (nombre) y se excluye de esta.
+    prodId:  mtdCol_(headers, ['product id'], []),
+    prodNom: mtdCol_(headers, ['product'], ['id']),
+    realN:   mtdCol_(headers, ['real #'], []),
+    tipo:    mtdCol_(headers, ['type'], []),
+    cliente: mtdCol_(headers, ['cliente'], []),
+    kam:     mtdCol_(headers, ['kam'], []),
+    channel: mtdCol_(headers, ['channel'], []),
+    bu:      mtdCol_(headers, ['bu'], []),
+    brand:   mtdCol_(headers, ['brand'], []),
+    lanz:    mtdCol_(headers, ['lanzamientos'], []),
+    stratM:  mtdCol_(headers, ['strategic market'], []),
+    tactM:   mtdCol_(headers, ['tactic market'], [])
+  };
+  col.real = mtdCol_(headers, ['real', 'local']);   // exige AMBOS fragmentos: distingue 'Real (LOCAL)' de 'Real #'
+
+  var acc = {}, filasOrigen = 0, sinFecha = 0, sinTipo = 0;
+  for (var i = 1; i < data.length; i++) {
+    var row = data[i];
+    var mes  = sivsoMes_(row[col.fecha]);
+    var tipo = mtdTexto_(row, col.tipo).toUpperCase();
+    if (!mes) { sinFecha++; continue; }
+    // Sell Through (Type=ST) se ignora a propósito: esta pestaña no lo usa.
+    if (tipo !== 'SI' && tipo !== 'SO' && tipo !== 'INV') { sinTipo++; continue; }
+    filasOrigen++;
+
+    var sapId = mtdTexto_(row, col.sapId), prodId = mtdTexto_(row, col.prodId);
+    var key = mes + '|' + sapId + '|' + prodId;
+    var f = acc[key];
+    if (!f) {
+      f = acc[key] = {
+        mes: mes, sapId: sapId, productId: prodId,
+        cliente: mtdTexto_(row, col.cliente), kam: mtdTexto_(row, col.kam),
+        channel: mtdTexto_(row, col.channel), producto: mtdTexto_(row, col.prodNom),
+        bu: mtdTexto_(row, col.bu), brand: mtdTexto_(row, col.brand),
+        lanzamiento: mtdTexto_(row, col.lanz),
+        mercadoEstrategico: mtdTexto_(row, col.stratM), mercadoTactico: mtdTexto_(row, col.tactM),
+        si: 0, siU: 0, so: 0, soU: 0, inv: 0, invU: 0
+      };
+    }
+    var peso = mtdNum_(row, col.real), unidades = mtdNum_(row, col.realN);
+    if (tipo === 'SI') { f.si += peso; f.siU += unidades; }
+    else if (tipo === 'SO') { f.so += peso; f.soU += unidades; }
+    else { f.inv += peso; f.invU += unidades; }
+  }
+
+  return {
+    filas: Object.keys(acc).map(function(k) { return acc[k]; }),
+    meta: { totalFilasOrigen: filasOrigen, filasSinFecha: sinFecha, filasTipoIgnorado: sinTipo }
+  };
+}
+
+/**
+ * Datos agregados de SI vs SO (mes × cliente × producto). Devuelve un STRING
+ * JSON, igual que el resto de endpoints. Caché de 30 min vía las mismas
+ * utilidades por trozos que usa Ventas MTD (genéricas, no específicas de esa
+ * pestaña pese al prefijo mtd).
+ */
+function getSIvsSOJson() {
+  var enCache = mtdCacheLeer_(CACHE_SIVSO_CLAVE);
+  if (enCache) return enCache;
+
+  var leido = sivsoLeerDatos_();
+  var texto = JSON.stringify({
+    filas: leido.filas,
+    meta: {
+      actualizadoEn: new Date().toISOString(),
+      totalFilas:    leido.filas.length,
+      hoja:          HOJA_LOOKER_DATA,
+      archivo:       SPREADSHEET_ID_LOOKER,
+      origen:        leido.meta
+    }
+  });
+  mtdCacheGuardar_(CACHE_SIVSO_CLAVE, texto, CACHE_SIVSO_SEGUNDOS);
+  return texto;
+}
+
+/** Borra la caché de SI vs SO (útil tras actualizar la hoja Data). */
+function limpiarCacheSIvsSO() {
+  var cache = CacheService.getScriptCache(), claves = ['meta::' + CACHE_SIVSO_CLAVE];
+  var meta = cache.get('meta::' + CACHE_SIVSO_CLAVE);
+  if (meta) for (var i = 0; i < Number(meta); i++) claves.push('t::' + CACHE_SIVSO_CLAVE + '::' + i);
+  cache.removeAll(claves);
+  Logger.log('Caché de SI vs SO limpiada.');
+  return 'OK';
+}
+
+/** Diagnóstico manual desde el editor. */
+function verSIvsSO() {
+  var d = JSON.parse(getSIvsSOJson());
+  Logger.log('Filas agregadas: ' + d.meta.totalFilas + ' · origen: ' + JSON.stringify(d.meta.origen));
+  Logger.log('Primera fila: ' + JSON.stringify(d.filas[0]));
 }

@@ -19,3 +19,9 @@ __pycache__/
 # OS
 Thumbs.db
 .DS_Store
+
+# Vista previa generada del visor (se regenera con construir_preview.py)
+preview_visor.html
+
+# Capturas temporales de revision visual
+_*.png

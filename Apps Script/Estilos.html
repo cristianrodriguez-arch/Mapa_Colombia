@@ -1,0 +1,552 @@
+<style>
+/* ══════════════════════════════════════════════════════════════════════
+   Visor PDV + Bricks · hoja de estilos
+   Lenguaje visual: lienzo gris claro + tarjetas blancas (Power BI) con la
+   densidad de información de Zebra BI (IBCS): tipografía chica, números
+   tabulares, color solo cuando significa algo (semáforo), cero adornos.
+   ══════════════════════════════════════════════════════════════════════ */
+
+:root{
+  /* Superficies */
+  --lienzo:#f3f4f6;  --surface:#ffffff;  --surface-2:#fafafa;
+  /* Texto */
+  --ink:#2b2830;     --ink-2:#4b5563;    --muted:#6b7280;
+  /* Líneas */
+  --borde:#e5e7eb;   --borde-2:#d1d5db;
+  /* Acento corporativo — colores de marca ISDIN (brandcolorcode.com/isdin;
+     no confirmado contra el manual de marca oficial, ver CLAUDE.md) */
+  --accent:#e41f33;  --accent-2:#b3172a; --accent-suave:#fbe6e7;
+  /* Estados. --error se unifica con --accent: mismo rojo para "requiere
+     atención" en cualquier parte de la app (aviso grave, semáforo muy bajo,
+     % Cumplimiento por debajo de meta) — antes eran tres rojos distintos. */
+  --desel:#d1d5db;   --error:#e41f33;    --aviso:#b06a00;  --producto:#7f77dd;
+  /* Semáforo de rendimiento del mapa (único uso legítimo del color fuera de
+     marca: alto/medio/bajo/brecha). No se reutiliza para % Cumplimiento de
+     Ventas MTD — esa escala vive en JsVentasMtd.html (MTD_SEM) con sus
+     propios tonos para que el mismo naranja no signifique dos cosas. */
+  --sem-alto:#1e8e3e; --sem-medio:#f2b600; --sem-bajo:#ef7d00;
+  --sem-muybajo:#e41f33; --sem-sin:#9ca3af;
+  /* Forma */
+  --radio:6px; --radio-lg:8px;
+  --sombra:0 1px 2px rgba(17,24,39,.06), 0 1px 3px rgba(17,24,39,.04);
+}
+
+*{box-sizing:border-box}
+html,body{margin:0;padding:0;height:100%;background:var(--lienzo);color:var(--ink);
+  font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;font-size:14px}
+
+/* ── Rejilla general: cabecera / avisos / cuerpo. 100vh, scroll interno ── */
+.app{display:grid;grid-template-rows:auto auto minmax(0,1fr);gap:10px;height:100vh;padding:10px}
+.cuerpo{display:grid;grid-template-columns:minmax(0,1fr) 400px;
+  grid-template-rows:minmax(0,1fr);gap:10px;min-height:0}
+.card{background:var(--surface);border:1px solid var(--borde);border-radius:var(--radio-lg);
+  box-shadow:var(--sombra)}
+
+/* ── Cabecera: marca · filtros · acciones ───────────────────────────── */
+/* Flex, no grid: con `grid-template-columns:auto minmax(0,1fr) auto` la
+   columna de filtros reservaba TODO el ancho sobrante aunque solo hubiera
+   dos controles (Período/Meses), empujando "Centrar/Diagnóstico" al borde
+   derecho y dejando un vacío enorme en medio en pantallas anchas. Con flex
+   y sin flex-grow en ningún hijo, marca+filtros+acciones se agrupan a la
+   izquierda y el sobrante de ancho queda como margen normal a la derecha,
+   no como un hueco entre los controles. */
+.topbar{position:relative;z-index:1200;display:flex;flex-wrap:wrap;gap:10px 18px;
+  padding:8px 12px;align-items:flex-start;
+  max-height:45vh}   /* tope: si el CSS de Choices tarda, la cabecera no ahoga al mapa */
+.topbar>.filtros{flex:0 1 auto}
+.marca{display:flex;align-items:center;gap:9px;padding-top:2px}
+.marca .logo{width:30px;height:30px;border-radius:var(--radio);background:var(--accent);
+  color:#fff;font-size:11px;font-weight:800;letter-spacing:.02em;
+  display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.marca h1{margin:0;font-size:14.5px;font-weight:700;white-space:nowrap}
+.marca .sub{display:block;font-size:11px;color:var(--muted);white-space:nowrap}
+
+.filtros{display:flex;flex-wrap:wrap;gap:6px 8px;align-items:flex-end}
+/* El [hidden] del navegador es una regla de baja prioridad y pierde contra
+   `.filtros{display:flex}` de arriba (misma especificidad, esta gana por ir
+   despues en la cascada): sin esta regla por ID, ocultar la barra desde JS
+   (bf.hidden=true al entrar a Ventas MTD) no tenia ningun efecto visual. */
+#barraFiltros[hidden]{display:none}
+.filtro{min-width:0;flex:0 1 168px}
+.filtro-fijo{flex:0 1 150px}
+.filtro>span{display:block;font-size:10px;font-weight:600;color:var(--ink-2);
+  text-transform:uppercase;letter-spacing:.04em;margin-bottom:2px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.filtro select{width:100%;padding:6px 7px;border:1px solid var(--borde);border-radius:var(--radio);
+  background:var(--surface);color:var(--ink);font-size:12.5px;font-family:inherit}
+.filtro select[multiple]{height:60px}           /* solo se ve si el CDN falla */
+.filtro select:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 2px var(--accent-suave)}
+
+/* ── Filtros bajo demanda: chip + "+ Nuevo filtro" ──────────────── */
+/* Cada filtro opcional es su propio chip: nombre de la dimensión, su ✕ y el
+   control real (el mismo <select> de siempre). El contenedor es un <div> y no
+   un <label> a propósito: un label sin 'for' activa su primer descendiente
+   labelable ante un clic en CUALQUIER punto suyo, y aquí el primero es el
+   <button> de la ✕ — abrir el desplegable borraba el filtro. */
+.filtro-chip>span{display:flex;align-items:center;gap:4px}
+.chip-nom{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.chip-x{flex:0 0 auto;width:16px;height:16px;margin-left:auto;padding:0;
+  display:flex;align-items:center;justify-content:center;
+  border:none;border-radius:50%;background:none;line-height:1;
+  color:var(--muted);font-size:11px;font-family:inherit;cursor:pointer}
+.chip-x:hover{background:var(--lienzo);color:var(--error)}
+
+.filtro-acc{display:flex;align-items:center;gap:6px;flex:0 0 auto;padding-bottom:1px}
+.pop-anclaje{position:relative}
+.btn-nuevo{border-style:dashed;color:var(--accent);border-color:var(--borde-2)}
+.btn-nuevo:hover{border-style:solid;background:var(--accent-suave)}
+.btn-icono{padding:6px 9px;line-height:1.1}
+.btn-ok{color:var(--sem-alto)}
+.btn-ok:hover{border-color:var(--sem-alto);color:var(--sem-alto);background:var(--lienzo)}
+
+.pop-filtros{position:absolute;top:calc(100% + 5px);left:0;z-index:3200;width:230px;
+  background:var(--surface);border:1px solid var(--borde);border-radius:var(--radio);
+  box-shadow:0 8px 22px rgba(17,24,39,.14);padding:7px}
+.pop-filtros input{width:100%;padding:6px 7px;margin-bottom:5px;font-family:inherit;
+  font-size:12.5px;color:var(--ink);background:var(--surface);
+  border:1px solid var(--borde);border-radius:var(--radio)}
+.pop-filtros input:focus{outline:none;border-color:var(--accent);
+  box-shadow:0 0 0 2px var(--accent-suave)}
+.pop-lista{max-height:240px;overflow-y:auto;display:flex;flex-direction:column}
+.pop-op{display:block;width:100%;text-align:left;padding:6px 8px;border:none;
+  border-radius:var(--radio);background:none;color:var(--ink-2);font-size:12.5px;
+  font-family:inherit;cursor:pointer}
+.pop-op:hover{background:var(--accent-suave);color:var(--accent)}
+.pop-vacio{padding:7px 8px;font-size:12px;color:var(--muted)}
+
+.acciones{display:flex;gap:6px;align-items:center;padding-top:12px}
+.btn{padding:6px 11px;border:1px solid var(--borde-2);border-radius:var(--radio);
+  background:var(--surface);color:var(--ink-2);font-size:12px;font-family:inherit;
+  cursor:pointer;white-space:nowrap}
+.btn:hover{background:var(--lienzo);border-color:var(--accent);color:var(--accent)}
+.btn-primario{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
+.btn-primario:hover{background:var(--accent-2);border-color:var(--accent-2);color:#fff}
+.contador-filtros{display:inline-block;min-width:15px;padding:0 4px;margin-left:4px;
+  border-radius:9px;background:var(--accent);color:#fff;font-size:10px;font-weight:700}
+.contador-filtros[hidden]{display:none}
+
+/* ── Avisos ─────────────────────────────────────────────────────────── */
+.avisos{display:none;flex-direction:column;gap:6px}
+.aviso{padding:7px 12px;border-radius:var(--radio);font-size:12.5px;white-space:pre-wrap;
+  background:#fff8ec;border:1px solid var(--aviso);color:var(--aviso)}
+.aviso.grave{background:#fdf0f0;border-color:var(--error);color:var(--error)}
+
+/* ── Área central: mapa ─────────────────────────────────────────────── */
+.main{display:flex;flex-direction:column;min-height:0;overflow:hidden}
+.barra-mapa{display:flex;align-items:center;gap:14px;flex-wrap:wrap;
+  padding:7px 12px;border-bottom:1px solid var(--borde)}
+.barra-mapa label{font-size:11.5px;color:var(--ink-2);display:flex;align-items:center;gap:5px}
+.barra-mapa select{padding:4px 6px;border:1px solid var(--borde);border-radius:var(--radio);
+  background:var(--surface);color:var(--ink);font-size:12px;font-family:inherit}
+.leyenda-inline{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-left:auto}
+.leyenda-inline .item{display:flex;align-items:center;gap:5px;font-size:11px;color:var(--ink-2)}
+.leyenda-inline .swatch{width:11px;height:11px;border-radius:3px;border:1px solid rgba(17,24,39,.12)}
+.mapa-wrap{position:relative;flex:1;min-height:0}
+#map{position:absolute;inset:0;border-radius:0 0 var(--radio-lg) var(--radio-lg)}
+.banda-prod{position:absolute;top:10px;left:52px;right:10px;z-index:600;
+  background:var(--producto);color:#fff;padding:6px 12px;border-radius:var(--radio);
+  font-size:12.5px;font-weight:600;display:none;align-items:center;gap:10px;
+  box-shadow:0 2px 8px rgba(17,24,39,.18)}
+.banda-prod .x{margin-left:auto;cursor:pointer;font-weight:700;padding:0 4px}
+
+/* ── Panel derecho: KPIs + tabla + análisis ─────────────────────────── */
+.rail{display:flex;flex-direction:column;min-height:0;gap:10px}
+/* KPIs: flex (no grid) a proposito — el primero (siempre el total/hero, sea
+   "Total Sell Out" o "Sell Out producto") se pone flex-basis:100% y ocupa su
+   propia fila con tratamiento destacado; los demas se acomodan debajo en la
+   fila que haga falta, sirvan 3 (modo general) o 4 (modo producto). Antes
+   las 4 tarjetas eran identicas sin ninguna jerarquia entre ellas. */
+.kpis{display:flex;flex-wrap:wrap;gap:8px;flex-shrink:0}
+.kpi{flex:1 1 130px;min-width:0;background:var(--surface);border:1px solid var(--borde);
+  border-radius:var(--radio);box-shadow:var(--sombra);padding:9px 8px;text-align:center}
+.kpi:first-child{flex-basis:100%;text-align:left;padding:13px 16px;
+  background:var(--accent-suave);border-color:transparent}
+.kpi:first-child .kpi-label{color:var(--accent-2);opacity:.8}
+.kpi:first-child .kpi-valor{font-size:28px;color:var(--accent-2)}
+.kpi:first-child .kpi-nota{color:var(--accent-2);opacity:.7}
+.kpi.modo-prod:not(:first-child){border-left:3px solid var(--producto)}
+.kpi-label{font-size:9.5px;font-weight:600;color:var(--ink-2);text-transform:uppercase;
+  letter-spacing:.05em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.kpi-valor{font-size:21px;font-weight:700;line-height:1.15;margin-top:2px;
+  font-variant-numeric:tabular-nums}
+.kpi-nota{font-size:10px;color:var(--muted);margin-top:1px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+.panel{flex:1;min-height:0;display:flex;flex-direction:column;
+  background:var(--surface);border:1px solid var(--borde);border-radius:var(--radio-lg);
+  box-shadow:var(--sombra);overflow:hidden}
+.tabs{display:flex;gap:2px;padding:6px 8px 0;border-bottom:1px solid var(--borde);flex-shrink:0}
+.tab{padding:6px 12px;border:none;background:transparent;color:var(--ink-2);
+  font-size:12px;font-family:inherit;font-weight:600;cursor:pointer;
+  border-bottom:2px solid transparent;margin-bottom:-1px}
+.tab:hover{color:var(--ink)}
+.tab.activa{color:var(--accent);border-bottom-color:var(--accent)}
+.panel-body{flex:1;min-height:0;overflow-y:auto;padding:10px 12px 16px}
+.bloque{margin-bottom:18px}
+.bloque h2{margin:0 0 6px;font-size:11.5px;font-weight:700;text-transform:uppercase;
+  letter-spacing:.04em;color:var(--ink-2)}
+.bloque h2 .acc{float:right;font-size:11px;font-weight:600;color:var(--accent);
+  cursor:pointer;text-transform:none;letter-spacing:0}
+.hint{font-size:11px;color:var(--muted);margin:-2px 0 8px}
+.mini{color:var(--muted);font-size:11.5px}
+
+/* ── Barras (etiqueta de valor directa sobre la barra — regla IBCS) ─── */
+.barra-fila{display:grid;grid-template-columns:minmax(0,1fr) 66px;align-items:center;
+  gap:6px;padding:3px 4px;border-radius:4px;cursor:pointer}
+.barra-fila:hover{background:var(--lienzo)}
+.barra-fila .cat{font-size:11.5px;color:var(--ink-2);white-space:nowrap;
+  overflow:hidden;text-overflow:ellipsis;margin-bottom:2px}
+.barra-fila .valor{grid-row:span 2;font-size:11.5px;font-weight:600;color:var(--ink);
+  font-variant-numeric:tabular-nums;text-align:right}
+.barra-pista{height:9px;position:relative}
+.barra-relleno{position:absolute;left:0;top:0;bottom:0;background:var(--accent);
+  border-radius:0 3px 3px 0;min-width:2px;transition:width .2s ease}
+.barra-fila.apagada .barra-relleno{background:var(--desel)}
+.barra-fila.activa .cat{color:var(--ink);font-weight:700}
+.barra-fila.prod .barra-relleno{background:var(--producto)}
+.barra-fila.brecha .barra-relleno{background:var(--sem-muybajo)}
+.barra-fila:hover .barra-relleno{background:var(--accent-2)}
+
+/* ── Tablas ─────────────────────────────────────────────────────────── */
+.tabla-cab{display:flex;align-items:baseline;gap:8px;margin-bottom:6px}
+.tab-datos{width:100%;border-collapse:collapse;font-size:11.5px}
+.tab-datos th{position:sticky;top:0;z-index:1;background:var(--surface);text-align:left;
+  padding:5px 6px;font-size:9.5px;text-transform:uppercase;letter-spacing:.04em;
+  color:var(--ink-2);border-bottom:1px solid var(--borde-2);white-space:nowrap}
+.tab-datos td{padding:4px 6px;border-bottom:1px solid var(--borde);vertical-align:top}
+.tab-datos th.num,.tab-datos td.num{text-align:right;white-space:nowrap;
+  font-variant-numeric:tabular-nums}
+.tab-datos tbody tr:hover{background:var(--lienzo);cursor:pointer}
+.tab-datos .sub{display:block;font-size:10px;color:var(--muted);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:190px}
+.tab-datos tr.fila-total td{font-weight:700;border-top:2px solid var(--ink);
+  border-bottom:none;background:var(--lienzo)}
+.tab-datos tr.fila-total:hover{background:var(--lienzo);cursor:default}
+
+/* ── Overlay y modales ──────────────────────────────────────────────── */
+.overlay{position:fixed;inset:0;z-index:5000;display:flex;align-items:center;justify-content:center;
+  background:rgba(243,244,246,.8);font-weight:600;color:var(--ink-2)}
+.overlay .caja{background:var(--surface);border:1px solid var(--borde);padding:14px 28px;
+  border-radius:var(--radio-lg);box-shadow:0 6px 20px rgba(17,24,39,.10)}
+/* rgba(17,24,39,.35) sobre un fondo claro se ve casi igual de brillante que
+   sin modal (un velo gris tenue, no un fondo oscurecido reconocible) —
+   subido a .55 para que de verdad separe el modal del contenido de atras. */
+.modal{display:none;position:fixed;inset:0;z-index:4000;background:rgba(17,24,39,.55);
+  align-items:center;justify-content:center;padding:20px}
+.modal .caja{background:var(--surface);border:1px solid var(--borde);border-radius:var(--radio-lg);
+  max-width:760px;width:100%;max-height:82vh;overflow:auto;padding:16px 18px;
+  box-shadow:0 10px 30px rgba(17,24,39,.20)}
+.modal h3{margin:0 0 10px;font-size:14.5px}
+.modal pre{background:var(--lienzo);border:1px solid var(--borde);border-radius:var(--radio);
+  padding:12px;font-size:11.5px;white-space:pre-wrap;word-break:break-word;margin:0}
+.caja-tabla{max-width:1020px}
+.tabla-controles{display:flex;align-items:center;gap:14px;margin:6px 0 10px;flex-wrap:wrap}
+.tabla-controles select{padding:4px 6px;border:1px solid var(--borde);border-radius:var(--radio);
+  background:var(--surface);color:var(--ink);font-size:12.5px;font-family:inherit}
+.tabla-wrap{max-height:58vh;overflow:auto;border:1px solid var(--borde);border-radius:var(--radio)}
+.tabla-wrap .tab-datos{font-size:12px}
+.tabla-wrap .tab-datos .sub{max-width:none}
+
+/* ── Popups del mapa y etiquetas ────────────────────────────────────── */
+.popup-pdv h3{margin:0 0 5px;font-size:14px}
+.popup-pdv,.popup-brick{font-size:12.5px;max-width:295px}
+.popup-pdv a.enlace{display:inline-block;margin-top:8px;background:var(--accent);color:#fff;
+  padding:5px 10px;border-radius:5px;text-decoration:none;font-size:12.5px}
+.popup-sellout{margin:7px 0;padding:7px 9px;background:var(--lienzo);
+  border:1px solid var(--borde);border-radius:var(--radio);font-variant-numeric:tabular-nums}
+.popup-sellout.prod{border-color:var(--producto);background:#f4f3fe}
+.popup-sellout .grande{font-size:15px;font-weight:700}
+.badge-pot{display:inline-block;padding:1px 7px;border-radius:999px;background:var(--ink);
+  color:#fff;font-size:10.5px;font-weight:700;vertical-align:middle;margin-left:4px}
+.badge-agente{display:inline-block;font-size:11px;vertical-align:middle;margin-left:3px;cursor:default}
+.tag-tipo{display:inline-block;padding:0 5px;border-radius:4px;background:var(--ink);
+  color:#fff;font-size:9.5px;font-weight:700;vertical-align:middle;margin-left:3px;letter-spacing:.02em}
+.tag-tipo.lam{background:var(--ink-2)}
+.popup-brick ol{margin:5px 0 0;padding-left:18px}
+.popup-brick li{margin-bottom:3px}
+.btn-portafolio{display:block;width:100%;margin-top:8px;padding:6px;border:1px solid var(--accent);
+  border-radius:var(--radio);background:var(--surface);color:var(--accent);font-size:12.5px;
+  font-weight:600;font-family:inherit;cursor:pointer}
+.btn-portafolio:hover{background:var(--accent);color:#fff}
+
+/* ── Choices.js: repintado al lenguaje visual Power BI ──────────────── */
+.choices{margin-bottom:0;font-size:12.5px}
+.choices:focus{outline:none}
+.choices__inner{background:var(--surface);border:1px solid var(--borde);border-radius:var(--radio);
+  min-height:31px;padding:3px 6px;font-size:12.5px;
+  /* Dos filas de chips exactas: con más, el cuadro hace scroll en vez de
+     dejar un chip cortado por la mitad ni estirar la cabecera. */
+  max-height:52px;overflow-y:auto}
+.choices.is-focused .choices__inner,.choices.is-open .choices__inner{
+  border-color:var(--accent);box-shadow:0 0 0 2px var(--accent-suave)}
+.choices.is-open .choices__inner{border-radius:var(--radio)}
+.choices[data-type*=select-one] .choices__inner{padding-bottom:3px}
+.choices[data-type*=select-one]::after{border-color:var(--muted) transparent transparent}
+.choices__list--multiple .choices__item{background:var(--accent-suave);border:1px solid #cfe0f6;
+  color:var(--accent-2);border-radius:4px;font-size:11px;font-weight:600;
+  padding:1px 6px;margin:1px 3px 1px 0;line-height:1.5}
+.choices__list--multiple .choices__item.is-highlighted{background:#d8e7fa;border-color:var(--accent)}
+.choices__list--multiple .choices__item .choices__button{border-left-color:#cfe0f6;
+  margin:0 -2px 0 6px;padding-left:8px;opacity:.6}
+/* Ancho propio del desplegable: los controles de la cabecera son angostos y los
+   nombres de PDV/brick largos. Selector de 3 clases a propósito: el CSS de
+   Choices trae `.choices__list[aria-expanded]{width:100%}`, que por especificidad
+   (0,2,0) gana a un `.choices__list--dropdown` pelado. */
+.filtros .choices .choices__list--dropdown{border:1px solid var(--borde);
+  border-radius:var(--radio);box-shadow:0 8px 22px rgba(17,24,39,.14);z-index:3000;
+  width:270px;min-width:100%;max-width:90vw}
+.choices__list--dropdown .choices__list{max-height:270px}
+.choices__list--dropdown .choices__item{font-size:12.5px;padding:6px 9px;
+  word-break:normal;white-space:normal;overflow-wrap:break-word}
+.choices__list--dropdown .choices__item--selectable.is-highlighted{background:var(--accent-suave)}
+.choices__list--dropdown .choices__item--selectable::after{display:none}
+.choices__input{background:transparent;font-size:12.5px;padding:2px 0;margin-bottom:2px;
+  font-family:inherit}
+.choices__placeholder{opacity:.55}
+.choices__list--single{padding:1px 14px 1px 2px}
+.choices__list--single .choices__item{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.is-disabled .choices__inner{background:var(--surface-2)}
+
+/* ── Responsivo: el panel baja, pero cada zona conserva scroll propio ─ */
+@media(max-width:1180px){
+  .topbar{gap:8px 14px}
+  .acciones{padding-top:0}
+}
+@media(max-width:1000px){
+  .cuerpo{grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(0,55fr) minmax(0,45fr)}
+}
+@media(max-width:780px){
+  /* El mapa manda: la leyenda pasa a su propia línea en vez de apretarse
+     junto a "Colorear por" y los checkboxes en una sola fila angosta. */
+  .leyenda-inline{margin-left:0;flex-basis:100%;order:99}
+  /* El reparto 55/45 de arriba es sobre el alto de .cuerpo, que ya viene
+     recortado por la cabecera + pestañas de encima; sin un piso explícito,
+     el mapa terminaba con ~28% de la pantalla real, no el 55% que parece.
+     Con el piso, el panel derecho (KPIs+tabla) cede y hace scroll: el mapa
+     es lo primero que se ve completo. */
+  #vistaMapa .cuerpo{grid-template-rows:minmax(54vh,55fr) minmax(0,45fr)}
+}
+
+/* ══════════ Vistas de nivel superior + dashboard Ventas MTD ══════════
+   .mtdtabs-top/.mtdtab-top llevan prefijo porque .tabs/.tab ya son del rail.
+   #vistaMapa recibe el minmax(0,1fr) de .app y debe propagar ese alto a .cuerpo,
+   que es quien hace que el mapa tenga altura; con flex, .avisos (display:none
+   cuando no hay avisos) no consume espacio. #vistaVentasMtd hace su propio scroll.
+   ══════════════════════════════════════════════════════════════════ */
+#vistaMapa{display:flex;flex-direction:column;gap:10px;min-height:0}
+#vistaMapa .cuerpo{flex:1 1 auto;min-height:0}
+#vistaVentasMtd,#vistaSIvsSO{min-height:0;overflow-y:auto;padding:2px}
+/* El [hidden] del navegador es una regla del user-agent y pierde contra el
+   display:flex de arriba, que va por ID: sin estas reglas la vista oculta
+   se sigue pintando y se superpone con la activa en el grid de .app. */
+#vistaMapa[hidden],
+#vistaVentasMtd[hidden],
+#vistaSIvsSO[hidden]{display:none}
+.mtdtabs-top{display:flex;gap:6px;align-items:flex-end;padding:0 2px;
+  border-bottom:1px solid var(--borde);margin-bottom:10px}
+.mtdtab-top{padding:8px 16px;border:1px solid var(--borde);border-bottom:none;
+  border-radius:8px 8px 0 0;background:var(--lienzo);color:var(--ink-2);
+  font-size:13px;font-weight:600;cursor:pointer;position:relative;top:1px}
+.mtdtab-top:hover{color:var(--ink);border-color:var(--accent)}
+.mtdtab-top.activo{background:var(--surface);color:var(--ink);
+  border-color:var(--borde);box-shadow:inset 0 3px 0 var(--accent)}
+
+.mtd-head{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;margin-bottom:12px}
+.mtd-head h2{margin:0;font-size:17px;font-weight:700;letter-spacing:.02em}
+.mtd-head .sub{color:var(--muted);font-size:12.5px}
+.mtd-head .acc{margin-left:auto;display:flex;gap:8px;align-items:center}
+
+.mtd-filtros{display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end;
+  padding:12px 14px;margin-bottom:12px}
+.mtd-filtros .campo{display:flex;flex-direction:column;gap:4px;min-width:170px;flex:1 1 170px}
+.mtd-filtros label{font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-2)}
+.mtd-filtros select,.mtd-filtros input[type=text]{padding:7px 8px;border:1px solid var(--borde);
+  border-radius:6px;background:var(--surface);color:var(--ink);font-size:13px;width:100%}
+.mtd-filtros .acciones{display:flex;gap:8px}
+.mtd-btn{padding:8px 14px;border:1px solid var(--accent);border-radius:6px;
+  background:var(--accent);color:#fff;font-size:12.5px;font-weight:600;cursor:pointer}
+.mtd-btn:hover{background:var(--accent-2);border-color:var(--accent-2)}
+
+.mtd-estado{padding:26px 14px;text-align:center;color:var(--ink-2);font-size:13px}
+.mtd-spinner{display:inline-block;width:15px;height:15px;margin-right:8px;vertical-align:-3px;
+  border:2px solid var(--borde);border-top-color:var(--accent);border-radius:50%;
+  animation:mtd-giro .8s linear infinite}
+@keyframes mtd-giro{to{transform:rotate(360deg)}}
+
+/* Antes topaba en 900px: en un monitor ancho la tarjeta se veía cortada a
+   la mitad, con un vacío enorme a la derecha sin ninguna razón visual. */
+.mtd-kpi{padding:16px 20px;margin-bottom:14px}
+.mtd-kpi .cifras{display:flex;flex-wrap:wrap;gap:28px;align-items:flex-start}
+.mtd-kpi .bloque{min-width:230px}
+.mtd-kpi .etq{font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-2)}
+.mtd-kpi .num{font-size:23px;font-weight:700;line-height:1.2;white-space:nowrap;
+  font-variant-numeric:tabular-nums}
+.mtd-kpi .num.pct{font-size:30px}
+.mtd-kpi .det{font-size:12px;color:var(--muted);margin-top:3px}
+.mtd-barra{margin-top:12px;height:12px;border-radius:999px;background:var(--lienzo);
+  border:1px solid var(--borde);overflow:hidden}
+.mtd-barra span{display:block;height:100%;border-radius:999px;transition:width .3s ease}
+
+.mtd-grid{display:grid;grid-template-columns:3fr 2fr;gap:12px;margin-bottom:14px}
+@media(max-width:1100px){.mtd-grid{grid-template-columns:1fr}}
+.mtd-panel{padding:12px 14px;min-width:0}
+.mtd-panel-cab{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.mtd-btn-csv{padding:3px 9px;border:1px solid var(--borde);border-radius:var(--radio);
+  background:var(--surface);color:var(--ink-2);font-size:11px;font-weight:600;
+  cursor:pointer;white-space:nowrap;flex-shrink:0}
+.mtd-btn-csv:hover{color:var(--accent);border-color:var(--accent)}
+.mtd-panel h3{margin:0 0 4px;font-size:13px;font-weight:700;text-transform:uppercase;
+  letter-spacing:.04em;color:var(--ink-2)}
+.mtd-panel .hint{font-size:11.5px;color:var(--muted);margin-bottom:8px}
+.mtd-scroll{overflow-x:auto;max-height:430px;overflow-y:auto}
+
+.mtd-tabla{width:100%;border-collapse:collapse;font-size:12.5px;
+  font-variant-numeric:tabular-nums;white-space:nowrap}
+/* Mismo lenguaje de encabezado que .tab-datos th (pestaña Mapa): antes esta
+   tabla usaba una franja negra solida que no aparecia en ningun otro lugar
+   de la app y la hacia sentir como una hoja de calculo pegada aparte. */
+.mtd-tabla th{position:sticky;top:0;z-index:1;background:var(--surface);color:var(--ink-2);
+  text-align:right;font-weight:700;font-size:9.5px;padding:6px 10px;
+  text-transform:uppercase;letter-spacing:.04em;border-bottom:1px solid var(--borde-2)}
+.mtd-tabla th:first-child,.mtd-tabla td:first-child{text-align:left;white-space:normal;min-width:150px}
+.mtd-tabla td{padding:6px 10px;text-align:right;border-bottom:1px solid var(--borde);color:var(--ink)}
+.mtd-tabla tbody tr:nth-child(even){background:rgba(11,11,11,.02)}
+.mtd-tabla tbody tr:hover{background:var(--lienzo)}
+.mtd-tabla tbody tr.total{font-weight:700;background:var(--lienzo);color:var(--ink)}
+.mtd-tabla tbody tr.total td{border-top:2px solid var(--ink);border-bottom:none}
+/* Antes: celda con fondo solido plano (estilo formato condicional de Excel).
+   Ahora: punto de color + texto, mismo patron que .pct-badge del resto de la
+   app, para que "% Cumplimiento" no se lea como una hoja de calculo exportada. */
+.mtd-tabla .celda-pct{font-weight:700}
+.pct-badge{display:inline-flex;align-items:center;gap:5px;font-weight:700}
+.pct-badge .d{width:7px;height:7px;border-radius:50%;flex-shrink:0}
+.mtd-tabla .pos{color:var(--sem-alto);font-weight:600}
+.mtd-tabla .neg{color:var(--error);font-weight:600}
+
+/* Sección 2: histórico. Mismo reparto 3fr/2fr que .mtd-grid de arriba. */
+#mtdHistorico{margin-top:22px;padding-top:18px;border-top:2px solid var(--borde)}
+.mtd-filtros-historico{padding:12px 14px;margin-bottom:12px}
+.mtd-filtros-historico .campo{flex:0 1 150px;min-width:130px}
+/* Año/Trimestre/Mes lado a lado en vez de tres bloques apilados: antes la
+   tarjeta terminaba a la mitad de su ancho con un vacío grande a la derecha. */
+.hist-filtros-fila{display:flex;flex-wrap:wrap;gap:10px 32px;align-items:flex-start}
+.mtd-historico-layout{display:grid;grid-template-columns:3fr 2fr;gap:12px;align-items:start}
+@media(max-width:1100px){.mtd-historico-layout{grid-template-columns:1fr}}
+.mtd-historico-derecha{display:flex;flex-direction:column;gap:12px;min-width:0}
+.mtd-historico-derecha .mtd-kpi{margin-bottom:0;max-width:none}
+.mtd-historico-derecha .mtd-kpi .num{font-size:20px}
+.mtd-historico-derecha .mtd-kpi .cifras{gap:18px}
+.mtd-historico-derecha .mtd-kpi .bloque{min-width:150px}
+.mtd-vacio{padding:18px 4px;color:var(--muted);font-size:12.5px;text-align:center}
+
+/* ── Chips de Año/Trimestre del histórico (reemplazan los <select> — un
+   clic en vez de un menú desplegable para el caso de uso más común) ──── */
+.chips-etq{font-size:9.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;
+  color:var(--muted);margin:8px 0 4px}
+.chips-periodo{display:flex;flex-wrap:wrap;gap:6px}
+.chip-periodo{padding:5px 12px;border-radius:999px;font-size:12px;font-weight:600;
+  color:var(--ink-2);background:var(--surface);border:1px solid var(--borde-2);
+  cursor:pointer;white-space:nowrap;font-family:inherit}
+.chip-periodo:hover{border-color:var(--ink)}
+.chip-periodo.activo{background:var(--ink);color:#fff;border-color:var(--ink)}
+
+/* ── Gráfico Venta vs. Plan por trimestre (reemplaza la tabla "Por
+   Trimestre": la misma información, más legible de un vistazo) ────────── */
+.hist-chart{display:flex;align-items:flex-end;gap:20px;height:190px;padding:0 8px 4px;margin:10px 0 4px}
+.hist-barcol{flex:1;max-width:110px;height:100%;position:relative;display:flex;
+  flex-direction:column;align-items:center;justify-content:flex-end}
+.hist-barval{position:absolute;left:50%;transform:translateX(-50%);white-space:nowrap;
+  font-size:11px;font-weight:700;color:var(--ink);font-variant-numeric:tabular-nums}
+/* La barra es el valor real (neutro, "esto pasó"); la línea de meta es el
+   único rojo aquí (marca, "esto es lo que hay que alcanzar"). Antes la barra
+   era roja siempre, sin importar si superaba el plan — el mismo rojo de
+   marca terminaba leyéndose como alerta incluso en trimestres buenos, y
+   además la línea de meta (negra) se confundía con el borde de la barra
+   cuando venta≈plan. El halo blanco de hist-plantick la mantiene visible
+   caiga sobre la barra o sobre el lienzo vacío encima de ella. */
+.hist-bar{width:40px;border-radius:5px 5px 2px 2px;background:var(--ink)}
+.hist-plantick{position:absolute;left:calc(50% - 26px);width:52px;height:3px;
+  background:var(--accent);border-radius:2px;box-shadow:0 0 0 1.5px var(--surface)}
+.hist-barcat{font-size:11px;color:var(--ink-2);font-weight:600;position:absolute;bottom:-20px}
+.hist-legend{display:flex;gap:14px;padding:24px 4px 0;font-size:11px;color:var(--ink-2)}
+.hist-legend .it{display:flex;align-items:center;gap:5px}
+.hist-legend .sw-venta{width:9px;height:9px;border-radius:3px;background:var(--ink)}
+.hist-legend .sw-plan{width:11px;height:3px;border-radius:2px;background:var(--accent)}
+
+/* ══════════ SI vs SO ══════════
+   Reutiliza .mtd-*/.card/.chips-periodo tal cual; solo lo específico de esta
+   pestaña vive aquí: el detalle ΔSI%/ΔSO% de las tarjetas KPI, el gráfico de
+   barras agrupadas SI/SO por mes y el donut de %Participación por BU. ────── */
+.sivso-pos{color:var(--sem-alto);font-weight:600}
+.sivso-neg{color:var(--error);font-weight:600}
+
+/* Gráfico mensual: 2 barras por mes (Sell In oscuro, Sell Out rojo de marca)
+   en vez de 1 sola como en hist-chart — mismo alto/etiquetado de categoría. */
+.sivso-chart{display:flex;align-items:flex-end;gap:10px;height:190px;padding:0 8px 22px;margin:10px 0 4px}
+.sivso-mescol{flex:1;height:100%;position:relative;display:flex;flex-direction:column;
+  align-items:center;justify-content:flex-end}
+.sivso-parbar{display:flex;align-items:flex-end;gap:3px;height:100%}
+.sivso-bar{width:11px;border-radius:3px 3px 1px 1px}
+.sivso-bar.si{background:var(--ink)}
+.sivso-bar.so{background:var(--accent)}
+.sivso-mescat{font-size:10.5px;color:var(--ink-2);font-weight:600;position:absolute;bottom:-18px}
+.hist-legend .sw-so{width:9px;height:9px;border-radius:3px;background:var(--accent)}
+
+/* Donut CSS puro (conic-gradient): sin librería de gráficos, consistente con
+   el resto del visor (hist-chart también es divs a mano, no un chart.js). */
+.sivso-donut-wrap{display:flex;align-items:center;gap:20px;flex-wrap:wrap;padding:6px 0}
+.sivso-donut{width:150px;height:150px;border-radius:50%;flex-shrink:0;position:relative}
+.sivso-donut-hueco{position:absolute;inset:20px;border-radius:50%;background:var(--surface);
+  display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;
+  box-shadow:inset 0 0 0 1px var(--borde)}
+.sivso-donut-hueco span{display:block;font-size:13px;font-weight:700;color:var(--ink);
+  font-variant-numeric:tabular-nums}
+.sivso-donut-hueco .et{font-size:9.5px;font-weight:600;color:var(--muted);
+  text-transform:uppercase;letter-spacing:.04em;margin-top:2px}
+.sivso-donut-leyenda{display:flex;flex-direction:column;gap:6px;min-width:0}
+.sivso-donut-it{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--ink-2)}
+.sivso-donut-it .sw{width:10px;height:10px;border-radius:3px;flex-shrink:0}
+.sivso-donut-it .nom{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:150px}
+.sivso-donut-it .pct{margin-left:auto;font-weight:700;color:var(--ink);font-variant-numeric:tabular-nums}
+
+/* ── Móvil: filtros colapsados detrás de un botón (Mapa y Ventas MTD) ───
+   Antes la barra de filtros completa (Período/Meses/chips/+Filtro/acciones)
+   competía por espacio con el mapa o el informe en cualquier ancho; ahora,
+   por debajo de 780px, se oculta y aparece como un panel flotante solo
+   mientras el usuario la pide. ── */
+.btn-filtros-mv{display:none;justify-content:space-between;gap:8px;min-width:150px}
+.btn-filtros-mv .chev{font-size:9px;color:var(--muted);transition:transform .15s ease}
+.btn-filtros-mv.abierto{border-color:var(--accent);color:var(--accent)}
+.btn-filtros-mv.abierto .chev{transform:rotate(180deg);color:var(--accent)}
+#btnFiltrosMovil[hidden]{display:none}
+@media(max-width:780px){
+  .btn-filtros-mv{display:flex}
+  .filtros{display:none;position:absolute;top:calc(100% + 6px);left:8px;right:8px;
+    z-index:1300;background:var(--surface);border:1px solid var(--borde);
+    border-radius:var(--radio-lg);box-shadow:0 10px 28px rgba(17,24,39,.18);
+    padding:10px;max-height:min(60vh,420px);overflow-y:auto}
+  .filtros.abierto{display:flex}
+  .marca .sub{display:none}
+  .acciones{flex-wrap:wrap}
+  /* Mismo patrón para los filtros propios de Ventas MTD (Canal/KAM/Cliente):
+     antes solo el mapa los colapsaba y el informe los dejaba siempre
+     expandidos — inconsistente entre pestañas de la misma app. */
+  .mtd-filtros{display:none;position:relative}
+  .mtd-filtros.abierto{display:flex}
+}
+
+/* ── Móvil: las tablas anchas de Ventas MTD (hasta 8 columnas) se leen
+   como tarjetas apiladas en vez de forzar scroll horizontal. Requiere que
+   cada <td> (salvo el primero) traiga data-th="<mismo texto del th>". ── */
+@media(max-width:700px){
+  .mtd-tabla thead{display:none}
+  .mtd-tabla,.mtd-tabla tbody,.mtd-tabla tr,.mtd-tabla td{display:block;width:100%}
+  .mtd-tabla{white-space:normal}
+  .mtd-tabla tr{padding:8px 2px;border-bottom:1px solid var(--borde)}
+  .mtd-tabla tr.total{border-bottom:none}
+  .mtd-tabla td{border:none;padding:2px 0;text-align:right}
+  .mtd-tabla td:first-child{font-weight:700;text-align:left;color:var(--ink);padding-bottom:4px}
+  .mtd-tabla td:not(:first-child)::before{content:attr(data-th);float:left;font-size:9.5px;
+    font-weight:700;text-transform:uppercase;letter-spacing:.03em;color:var(--muted)}
+}
+</style>
