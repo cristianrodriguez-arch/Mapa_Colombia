@@ -37,6 +37,10 @@ Resumen rápido:
 4. `git push origin main`
 5. Si necesitas review: crea un PR con descripción en lenguaje natural
 
+## Visor web (Apps Script) y pruebas
+
+El visor vive en `Apps Script/` (ver [Apps Script/CLAUDE.md](Apps%20Script/CLAUDE.md)). Las **definiciones de KPI, sus fuentes, los hallazgos de la auditoría del 2026-10-03 y el checklist de despliegue** están en [Apps Script/DOCUMENTACION_KPIS.md](Apps%20Script/DOCUMENTACION_KPIS.md). Las pruebas en Node están en `tests/` (fuera de `Apps Script/` para que `clasp push` no las suba): `node tests/test_servidor_mtd.js`, `node tests/test_cliente_mtd.js`, `node tests/test_cliente_sivso.js`, `node tests/chequeo_sintaxis_html.js`.
+
 ## Cómo trabajar con los archivos
 
 - Los KML son grandes (0.8–2.8 MB) y varios están minificados en pocas líneas muy largas, por lo que la herramienta Read falla o trunca. Usa PowerShell con `[System.IO.File]::ReadAllText()` + regex (`[regex]::Matches`) para extraer fragmentos, o Grep para localizar patrones.
