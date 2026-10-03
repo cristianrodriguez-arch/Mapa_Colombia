@@ -37,6 +37,12 @@ var CACHE_SEGUNDOS   = 21600;   // 6 horas
 var CACHE_TROZO      = 90000;   // CacheService acepta 100 KB por clave
 var CACHE_MAX_TROZOS = 60;      // ~5.4 MB máximo por archivo
 
+// Capas del mapa que salen de la hoja de cálculo (antes se leían COMPLETAS en
+// cada carga de página). 6 h; limpiarCache() y getXxxJson(true) las refrescan.
+var CACHE_PUNTOS_CLAVE = 'mapa_puntos';
+var CACHE_BRICKS_CLAVE = 'mapa_bricks';
+var CACHE_ASIG_CLAVE   = 'mapa_asignaciones';
+
 /* ============================================================
  * Entrada de la Web App
  * ============================================================ */
@@ -103,25 +109,35 @@ function leerArchivoDrive_(nombre) {
   }
   var texto = it.next().getBlob().getDataAsString('UTF-8');
 
-  var total = Math.ceil(texto.length / CACHE_TROZO);
-  if (total <= CACHE_MAX_TROZOS) {
-    var mapa = {};
-    for (var k = 0; k < total; k++) {
-      mapa['t::' + nombre + '::' + k] = texto.substr(k * CACHE_TROZO, CACHE_TROZO);
-    }
-    mapa['meta::' + nombre] = String(total);
-    try { cache.putAll(mapa, CACHE_SEGUNDOS); } catch (e) { /* caché llena */ }
-  }
+  // Se guarda por trozos (por bytes, ver trocear_) y se anota el nombre en un
+  // registro para que limpiarCache() pueda borrar TAMBIÉN los fragmentos
+  // so_detalle_NN / so_sku_NN (antes quedaban viejos hasta 6 h tras el ETL).
+  if (mtdCacheGuardar_(nombre, texto, CACHE_SEGUNDOS)) registrarClaveDrive_(nombre);
   return texto;
 }
 
-/** Ejecutar tras cada corrida del ETL. */
+var CLAVE_REGISTRO_DRIVE = 'registro_drive';
+
+function registrarClaveDrive_(nombre) {
+  var cache = CacheService.getScriptCache(), lista = [];
+  try { lista = JSON.parse(cache.get(CLAVE_REGISTRO_DRIVE) || '[]'); } catch (e) { lista = []; }
+  if (lista.indexOf(nombre) === -1) {
+    lista.push(nombre);
+    try { cache.put(CLAVE_REGISTRO_DRIVE, JSON.stringify(lista), CACHE_SEGUNDOS); } catch (e2) { /* nada */ }
+  }
+}
+
+/** Ejecutar tras cada corrida del ETL. Borra todos los JSON de Drive cacheados. */
 function limpiarCache() {
-  CacheService.getScriptCache().removeAll([
-    'meta::so_pdv.json', 'meta::so_portafolio.json', 'meta::so_indice.json',
-    'meta::so_sku_indice.json', 'meta::so_manifiesto.json'
-  ]);
-  Logger.log('Caché limpiada.');
+  var cache = CacheService.getScriptCache(), lista = [];
+  try { lista = JSON.parse(cache.get(CLAVE_REGISTRO_DRIVE) || '[]'); } catch (e) { lista = []; }
+  ['so_pdv.json', 'so_portafolio.json', 'so_indice.json', 'so_sku_indice.json', 'so_manifiesto.json']
+    .forEach(function(n) { if (lista.indexOf(n) === -1) lista.push(n); });
+  lista.forEach(mtdCacheQuitar_);
+  cache.remove(CLAVE_REGISTRO_DRIVE);
+  // Las capas que salen de la hoja de cálculo (mapa) también dependen del ETL.
+  [CACHE_PUNTOS_CLAVE, CACHE_BRICKS_CLAVE, CACHE_ASIG_CLAVE].forEach(mtdCacheQuitar_);
+  Logger.log('Caché limpiada (' + lista.length + ' archivos de Drive + capas del mapa).');
   return 'OK';
 }
 
@@ -302,7 +318,11 @@ function getDistribucionSkuJson(sku) {
  * Endpoints — geografía (Google Sheets)
  * ============================================================ */
 
-function getBricksJson() {
+function getBricksJson(forzar) {
+  return conCache_(CACHE_BRICKS_CLAVE, CACHE_SEGUNDOS, construirBricks_, forzar === true);
+}
+
+function construirBricks_() {
   var sheet = abrirHoja_().getSheetByName(VISOR_HOJA_BRICKS);
   if (!sheet) {
     throw new Error("No se encontró la hoja '" + VISOR_HOJA_BRICKS + "'. " +
@@ -348,14 +368,21 @@ function getBricksJson() {
     });
   }
 
-  return JSON.stringify({
-    bricks: bricks,
-    stats: { filas: bricks.length, conGeometria: conGeo,
-             sinGeometria: sinGeo, erroresMuestra: errores }
-  });
+  return {
+    texto: jsonAscii_({
+      bricks: bricks,
+      stats: { filas: bricks.length, conGeometria: conGeo,
+               sinGeometria: sinGeo, erroresMuestra: errores }
+    }),
+    cachear: bricks.length > 0
+  };
 }
 
-function getPuntosJson() {
+function getPuntosJson(forzar) {
+  return conCache_(CACHE_PUNTOS_CLAVE, CACHE_SEGUNDOS, construirPuntos_, forzar === true);
+}
+
+function construirPuntos_() {
   var sheet = abrirHoja_().getSheetByName(NOMBRE_HOJA_PUNTOS);
   if (!sheet) {
     throw new Error("No se encontró la hoja '" + NOMBRE_HOJA_PUNTOS + "'. " +
@@ -385,7 +412,7 @@ function getPuntosJson() {
     throw new Error("No encontré 'Latitud'/'Longitud'.");
   }
 
-  var puntos = [], filas = 0, sinCoord = 0, conPos = 0;
+  var puntos = [], filas = 0, sinCoord = 0, conPos = 0, duplicados = 0, visto = {};
   function txt(row, i) { return (i !== -1 && row[i] != null) ? row[i].toString().trim() : ''; }
 
   for (var i = 1; i < data.length; i++) {
@@ -399,6 +426,14 @@ function getPuntosJson() {
 
     var posId = normalizarPos_(txt(row, posIdIdx));
     if (posId) conPos++;
+    // Un mismo POS_ID en varias filas (en el snapshot hay ~30 repetidos) haría
+    // que el cliente sume SU venta una vez por fila. Se conservan todos los
+    // puntos en el mapa, pero solo el primero es "dueño" de la venta: los
+    // demás salen con dup:1 y el cliente les asigna venta 0.
+    var dup = 0;
+    if (posId && posId !== '0') {
+      if (visto[posId]) { dup = 1; duplicados++; } else visto[posId] = 1;
+    }
 
     puntos.push({
       id: txt(row, idIdx), idSap: txt(row, idSapIdx), posId: posId,
@@ -411,16 +446,20 @@ function getPuntosJson() {
       potencial: txt(row, potIdx)   || 'Sin Potencial',
       afinidad:  txt(row, afinIdx),
       direccion: [txt(row, calleIdx), txt(row, numIdx)].filter(Boolean).join(' ') || 'Sin Dirección',
-      brickCrm:  txt(row, brickIdx)
+      brickCrm:  txt(row, brickIdx),
+      dup:       dup
     });
   }
 
-  return JSON.stringify({
-    puntos: puntos,
-    stats: { filas: filas, conCoordenada: puntos.length, sinCoordenada: sinCoord,
-             conPosId: conPos,
-             columnaPosIdDetectada: posIdIdx !== -1 ? String(data[0][posIdIdx]) : '(no encontrada)' }
-  });
+  return {
+    texto: jsonAscii_({
+      puntos: puntos,
+      stats: { filas: filas, conCoordenada: puntos.length, sinCoordenada: sinCoord,
+               conPosId: conPos, posIdDuplicados: duplicados,
+               columnaPosIdDetectada: posIdIdx !== -1 ? String(data[0][posIdIdx]) : '(no encontrada)' }
+    }),
+    cachear: puntos.length > 0
+  };
 }
 
 /* ============================================================
@@ -433,14 +472,19 @@ function getPuntosJson() {
  * Un PDV puede tener más de una fila (p. ej. un VM y un LAM a la vez),
  * así que devuelve un arreglo de asignaciones por PDV, no una sola.
  */
-function getAsignacionesJson() {
+function getAsignacionesJson(forzar) {
+  return conCache_(CACHE_ASIG_CLAVE, CACHE_SEGUNDOS, construirAsignaciones_, forzar === true);
+}
+
+function construirAsignaciones_() {
   var sheet = abrirHoja_().getSheetByName(NOMBRE_HOJA_ASIGNACION);
   if (!sheet) {
-    return JSON.stringify({ pdv: {}, aviso: "No se encontró la hoja '" + NOMBRE_HOJA_ASIGNACION + "'." });
+    return { texto: jsonAscii_({ pdv: {}, aviso: "No se encontró la hoja '" + NOMBRE_HOJA_ASIGNACION + "'." }),
+             cachear: false };
   }
 
   var data = sheet.getDataRange().getValues();
-  if (data.length < 2) return JSON.stringify({ pdv: {} });
+  if (data.length < 2) return { texto: jsonAscii_({ pdv: {} }), cachear: false };
   var headers = data[0].map(function(h) { return String(h).trim().toLowerCase(); });
 
   var iPos      = buscarCol_(headers, ['oficina farmacia', 'oficina de farmacia']);
@@ -472,7 +516,7 @@ function getAsignacionesJson() {
     pdv[pos].push(asignacion);
   }
 
-  return JSON.stringify({ pdv: pdv });
+  return { texto: jsonAscii_({ pdv: pdv }), cachear: true };
 }
 
 /* ============================================================
@@ -615,29 +659,151 @@ function listarPestanas_() {
 }
 
 /* ============================================================
- * VENTAS MTD — pestaña 2 del dashboard
+ * Caché por trozos (compartida por MTD, SI vs SO y el mapa)
  * ============================================================
- * Lee DOS hojas del MISMO archivo (SPREADSHEET_ID_MTD):
- *   'CUMPLIMIENTO' → tarjeta KPI, tabla de clientes y tabla de KAM
- *   'PLANTILLA'    → tabla de productos
+ * CacheService acepta 100 KB POR CLAVE y el límite es en BYTES, no en
+ * caracteres. Por eso todo lo que se cachea aquí sale de jsonAscii_() (solo
+ * ASCII: 1 carácter = 1 byte) y, por si llega texto con tildes sin escapar,
+ * trocear_() baja el tamaño del trozo a 30.000 caracteres (≤ 90 KB aunque
+ * cada carácter pesara 3 bytes). Antes, un trozo de 90.000 caracteres con
+ * muchas tildes superaba los 100 KB, el putAll fallaba y el error se
+ * tragaba en silencio: la caché "no funcionaba" sin dejar rastro.
+ */
+
+/** JSON.stringify con todo carácter no ASCII escapado (\uXXXX): 1 char = 1 byte. */
+function jsonAscii_(obj) {
+  return JSON.stringify(obj).replace(/[\u007f-￿]/g, function(c) {
+    return '\\u' + ('0000' + c.charCodeAt(0).toString(16)).slice(-4);
+  });
+}
+
+function trocear_(texto) {
+  var tam = /[^\x00-\x7f]/.test(texto) ? 30000 : CACHE_TROZO;
+  var trozos = [];
+  for (var i = 0; i < texto.length; i += tam) trozos.push(texto.substr(i, tam));
+  return trozos;
+}
+
+function mtdCacheLeer_(clave) {
+  var cache = CacheService.getScriptCache();
+  var meta  = cache.get('meta::' + clave);
+  if (!meta) return null;
+  var n = Number(meta), claves = [];
+  for (var i = 0; i < n; i++) claves.push('t::' + clave + '::' + i);
+  var trozos = cache.getAll(claves), partes = [];
+  for (var j = 0; j < n; j++) {
+    var t = trozos['t::' + clave + '::' + j];
+    if (!t) return null;   // trozo vencido: se vuelve a leer la hoja
+    partes.push(t);
+  }
+  return partes.join('');
+}
+
+/** Devuelve true si quedó guardado. Avisa en el log cuando NO se pudo (antes era silencioso). */
+function mtdCacheGuardar_(clave, texto, segundos) {
+  var trozos = trocear_(texto);
+  if (trozos.length > CACHE_MAX_TROZOS) {
+    Logger.log('AVISO caché: ' + clave + ' pesa ' + Math.round(texto.length / 1024) + ' KB (' +
+               trozos.length + ' trozos > tope ' + CACHE_MAX_TROZOS + '); NO se cachea y cada ' +
+               'llamada volverá a leer la hoja.');
+    return false;
+  }
+  var mapa = {};
+  for (var i = 0; i < trozos.length; i++) mapa['t::' + clave + '::' + i] = trozos[i];
+  mapa['meta::' + clave] = String(trozos.length);
+  try {
+    CacheService.getScriptCache().putAll(mapa, segundos);
+    return true;
+  } catch (e) {
+    Logger.log('AVISO caché: putAll falló para ' + clave + ': ' + e.message);
+    return false;
+  }
+}
+
+/** Borra una clave cacheada por trozos (meta + todos sus trozos). */
+function mtdCacheQuitar_(clave) {
+  var cache = CacheService.getScriptCache(), claves = ['meta::' + clave];
+  var meta = cache.get('meta::' + clave);
+  if (meta) for (var i = 0; i < Number(meta); i++) claves.push('t::' + clave + '::' + i);
+  cache.removeAll(claves);
+}
+
+/**
+ * Patrón único de endpoint cacheado:
+ *   1. si hay caché y no se pidió `forzar`, la devuelve;
+ *   2. si no, toma un candado para que N usuarios con la caché fría no lean
+ *      la misma hoja N veces a la vez (el que llega segundo encuentra la
+ *      caché ya llena);
+ *   3. `construir()` devuelve {texto, cachear}: un resultado vacío o con error
+ *      NO se cachea (antes una hoja a medio refrescar dejaba el tablero vacío
+ *      30 minutos).
+ * `forzar` es lo que hace que el botón "Actualizar" funcione de verdad.
+ */
+function conCache_(clave, segundos, construir, forzar) {
+  if (!forzar) {
+    var hit = mtdCacheLeer_(clave);
+    if (hit) return hit;
+  }
+  var lock = LockService.getScriptLock(), tengo = false;
+  try { tengo = lock.tryLock(20000); } catch (e) { /* seguimos sin candado */ }
+  try {
+    if (!forzar && tengo) {
+      var hit2 = mtdCacheLeer_(clave);
+      if (hit2) return hit2;
+    }
+    var r = construir();
+    if (r.cachear) mtdCacheGuardar_(clave, r.texto, segundos);
+    return r.texto;
+  } finally {
+    if (tengo) { try { lock.releaseLock(); } catch (e2) { /* nada */ } }
+  }
+}
+
+/* ============================================================
+ * VENTAS MTD — pestaña 1 del dashboard
+ * ============================================================
+ * Lee TRES hojas del MISMO archivo (SPREADSHEET_ID_MTD) en UNA sola
+ * ejecución y UN solo payload compacto (antes eran 2 llamadas, 2 aperturas
+ * del libro y 2 lecturas completas):
+ *   'CUMPLIMIENTO'        → KPIs, tabla de clientes y de KAM (1 fila por cliente)
+ *   'PLANTILLA'           → tabla de productos (cliente × EAN; se consolida
+ *                           por cliente × nombre de producto)
+ *   'Historico de ventas' → serie mensual por cliente (real y plan) desde 2022
  *
- * Los encabezados se buscan por fragmentos (no por posición), así que
- * aguanta que muevan o renombren columnas. Los de PLANTILLA se escriben
- * en Logger.log() en cada lectura real para poder verificarlos.
+ * Todo el cruce por KAM / canal / cliente ocurre en el navegador a través del
+ * SAP ID, que es la clave común de las tres hojas.
  *
- * Caché: 'ventas_mtd' por 30 min. Si cambian las hojas y se quiere ver
- * el dato fresco antes, ejecutar limpiarCacheMtd().
+ * SIGNIFICADO DE LAS COLUMNAS (verificado contra los datos, sep-2026):
+ *   'Real (LOCAL)' / 'Real'  venta del mes de CORTE (ver periodo abajo)
+ *   'Real -1'                el MISMO MES DEL AÑO ANTERIOR (no el mes anterior):
+ *                            PLANTILLA 'Real -1' de un cliente = Histórico de
+ *                            ese cliente en el mismo mes del año previo.
+ *   'Current Plan (LOCAL)'   meta del mes
+ *   'Real (año)'             acumulado enero → mes de corte
+ *   La hoja CUMPLIMIENTO trae también 'Real -1 (LOCAL)', que NO coincide con
+ *   el Real -1 de PLANTILLA/Histórico (otra base); por eso no se usa.
+ *
+ * PERIODO: CUMPLIMIENTO tiene una celda de control ("cambie el número para
+ * cambiar el mes", p. ej. O1 = 1-sep-2026, P1 = 9). El informe es del mes
+ * CERRADO que indica esa celda, no del mes en curso: se devuelve en
+ * meta.periodo para que la UI no use el reloj del navegador.
+ *
+ * Los encabezados se buscan por nombre exacto y, si no aparece, por
+ * fragmentos (no por posición). Si falta una columna OBLIGATORIA el error lo
+ * dice (antes devolvía 0 en silencio y quedaba cacheado).
+ *
+ * Caché: 'ventas_mtd_v2' 30 min; calentarCache() la mantiene tibia (trigger
+ * de 15 min, ver instalarTriggerCache()). "Actualizar" en la UI pasa
+ * forzar=true y se salta la caché.
  */
 
 var SPREADSHEET_ID_MTD = '1hViwAW2zhLky4bg8uOsmlmeHa9AnLm5KtcWRvSrzoGw';
 
 var HOJA_MTD_CUMPLIMIENTO = 'CUMPLIMIENTO';
 var HOJA_MTD_PLANTILLA    = 'PLANTILLA';
-
 var HOJA_MTD_HISTORICO    = 'Historico de ventas';
 
-var CACHE_MTD_CLAVE    = 'ventas_mtd';
-var CACHE_MTD_HIST     = 'ventas_mtd_historico';
+var CACHE_MTD_CLAVE    = 'ventas_mtd_v2';
 var CACHE_MTD_SEGUNDOS = 1800;   // 30 min
 
 /** Minúsculas, sin tildes y con espacios colapsados, para comparar encabezados. */
@@ -680,6 +846,29 @@ function mtdColAlt_(headers, alternativas) {
 }
 
 /**
+ * Coincidencia EXACTA (normalizada) con alguno de `nombres`, en orden de
+ * preferencia; si ninguno aparece, cae a `respaldo` (mtdColAlt_). Evita que
+ * 'real' agarre 'Real #' o 'cumpl' agarre '% Cumpl Año' por orden de columnas.
+ */
+function mtdColEx_(headers, nombres, respaldo) {
+  for (var n = 0; n < nombres.length; n++) {
+    var buscado = mtdNorm_(nombres[n]);
+    for (var i = 0; i < headers.length; i++) if (headers[i] === buscado) return i;
+  }
+  return respaldo ? mtdColAlt_(headers, respaldo) : null;
+}
+
+/** Lanza un error claro si falta una columna obligatoria. */
+function mtdExigir_(col, claves, nombreHoja, headersRaw) {
+  var faltan = claves.filter(function(k) { return col[k] === null || col[k] === undefined; });
+  if (faltan.length) {
+    throw new Error("En la hoja '" + nombreHoja + "' no encontré la(s) columna(s): " + faltan.join(', ') +
+                    ". Encabezados: " + headersRaw.map(function(h) { return String(h); })
+                                                  .filter(String).join(' | '));
+  }
+}
+
+/**
  * Valor numérico de una celda (0 si no es número). Usa parseNum_ existente,
  * salvo en un caso que parseNum_ no cubre: importes en texto con puntos de
  * miles al estilo colombiano ("3.100.000.000" o "1.234.567,89"), donde
@@ -705,236 +894,40 @@ function mtdTexto_(row, idx) {
   return String(row[idx] == null ? '' : row[idx]).trim();
 }
 
-/**
- * Porcentaje de cumplimiento: "62%" (string) → 0.62; 0.62 (número) → 0.62.
- * Devuelve null si la celda está vacía o no es interpretable.
- */
-function mtdPct_(valor) {
-  if (valor === null || valor === undefined || valor === '') return null;
-  if (typeof valor === 'string' && valor.indexOf('%') !== -1) {
-    var p = parseNum_(valor.replace(/%/g, ''));
-    return isNaN(p) ? null : p / 100;
-  }
-  var d = parseNum_(valor);
-  return isNaN(d) ? null : d;
+/** true si la celda es un error de fórmula ("#N/A (Did not find…)", "#REF!", …). */
+function mtdEsError_(row, idx) {
+  if (idx === null || idx === undefined) return false;
+  var v = row[idx];
+  return typeof v === 'string' && v.charAt(0) === '#';
 }
 
 /** Las filas de totales de la hoja se ignoran: el total se recalcula aquí. */
 function mtdEsFilaTotal_(texto) {
   var t = mtdNorm_(texto);
-  return t === '' ? false : (t.indexOf('total') === 0 || t.indexOf('gran total') === 0);
+  return t === '' ? false : (t.indexOf('total') === 0 || t.indexOf('gran total') === 0 ||
+                             t.indexOf('suma total') === 0);
 }
 
-/* ---------- Caché por trozos (CacheService acepta 100 KB por clave) ---------- */
-
-function mtdCacheLeer_(clave) {
-  var cache = CacheService.getScriptCache();
-  var meta  = cache.get('meta::' + clave);
-  if (!meta) return null;
-  var n = Number(meta), claves = [];
-  for (var i = 0; i < n; i++) claves.push('t::' + clave + '::' + i);
-  var trozos = cache.getAll(claves), partes = [];
-  for (var j = 0; j < n; j++) {
-    var t = trozos['t::' + clave + '::' + j];
-    if (!t) return null;   // trozo vencido: se vuelve a leer la hoja
-    partes.push(t);
-  }
-  return partes.join('');
-}
-
-function mtdCacheGuardar_(clave, texto, segundos) {
-  var total = Math.ceil(texto.length / CACHE_TROZO);
-  if (total > CACHE_MAX_TROZOS) return;
-  var mapa = {};
-  for (var i = 0; i < total; i++) {
-    mapa['t::' + clave + '::' + i] = texto.substr(i * CACHE_TROZO, CACHE_TROZO);
-  }
-  mapa['meta::' + clave] = String(total);
-  try { CacheService.getScriptCache().putAll(mapa, segundos); } catch (e) { /* caché llena */ }
-}
-
-/** Borra la caché de Ventas MTD (útil tras actualizar las hojas). */
-function limpiarCacheMtd() {
-  var cache = CacheService.getScriptCache(), claves = [];
-  [CACHE_MTD_CLAVE, CACHE_MTD_HIST].forEach(function(clave) {
-    claves.push('meta::' + clave);
-    var meta = cache.get('meta::' + clave);
-    if (meta) {
-      for (var i = 0; i < Number(meta); i++) claves.push('t::' + clave + '::' + i);
-    }
-  });
-  cache.removeAll(claves);
-  Logger.log('Caché de Ventas MTD limpiada (incluye el histórico).');
-  return 'OK';
-}
-
-/* ---------- Lectura de cada hoja ---------- */
-
-function mtdLeerCumplimiento_(libro) {
-  var hoja = libro.getSheetByName(HOJA_MTD_CUMPLIMIENTO);
-  if (!hoja) {
-    throw new Error("No se encontró la hoja '" + HOJA_MTD_CUMPLIMIENTO + "' en el archivo de Ventas MTD. " +
-                    'Hojas disponibles: ' + libro.getSheets().map(function(s) { return s.getName(); }).join(' | '));
-  }
-
-  var data = hoja.getDataRange().getValues();
-  if (data.length < 2) return { filas: [], totales: null };
-
-  var headers = data[0].map(mtdNorm_);
-  var col = {
-    sapId:    mtdColAlt_(headers, [[['sap id'], []], [['sap'], []]]),
-    cliente:  mtdCol_(headers, ['cliente'], []),
-    kam:      mtdCol_(headers, ['kam'], []),
-    canal:    mtdCol_(headers, ['canal'], []),
-    // 'Real -1 (LOCAL)' se busca ANTES que 'Real (LOCAL)' y se excluye de esta.
-    realAnt:  mtdColAlt_(headers, [[['real', '-1'], ['plan']], [['anterior'], ['plan']]]),
-    realMes:  mtdCol_(headers, ['real'], ['-1', 'anterior', 'plan', 'ano', 'anio']),
-    planMes:  mtdCol_(headers, ['plan'], ['ano', 'anio']),
-    cumpl:    mtdCol_(headers, ['cumpl'], []),
-    realAnio: mtdColAlt_(headers, [[['real', 'ano'], ['plan']], [['real', 'anio'], ['plan']]]),
-    planAnio: mtdColAlt_(headers, [[['plan', 'ano'], []], [['plan', 'anio'], []]])
-  };
-
-  var filas = [], tot = { realMes: 0, planMes: 0, realAnio: 0, planAnio: 0 }, ignoradas = 0;
-  for (var i = 1; i < data.length; i++) {
-    var row = data[i];
-    var cliente = mtdTexto_(row, col.cliente);
-    var sapId   = mtdTexto_(row, col.sapId);
-    if (!cliente && !sapId) continue;
-    if (mtdEsFilaTotal_(cliente)) { ignoradas++; continue; }
-
-    var realMes = mtdNum_(row, col.realMes);
-    var planMes = mtdNum_(row, col.planMes);
-    var pct = col.cumpl !== null ? mtdPct_(row[col.cumpl]) : null;
-    if (pct === null) pct = planMes !== 0 ? realMes / planMes : null;   // respaldo calculado
-
-    filas.push({
-      sapId:           sapId,
-      cliente:         cliente,
-      kam:             mtdTexto_(row, col.kam),
-      canal:           mtdTexto_(row, col.canal),
-      realMes:         realMes,
-      realMesAnterior: mtdNum_(row, col.realAnt),
-      planMes:         planMes,
-      cumplPct:        pct,
-      realAnio:        mtdNum_(row, col.realAnio),
-      planAnio:        mtdNum_(row, col.planAnio)
-    });
-
-    tot.realMes  += realMes;
-    tot.planMes  += planMes;
-    tot.realAnio += mtdNum_(row, col.realAnio);
-    tot.planAnio += mtdNum_(row, col.planAnio);
-  }
-
-  return {
-    filas: filas,
-    totales: {
-      realMes:  tot.realMes,
-      planMes:  tot.planMes,
-      cumplPct: tot.planMes !== 0 ? tot.realMes / tot.planMes : null,
-      realAnio: tot.realAnio,
-      planAnio: tot.planAnio
-    },
-    columnas: col,
-    filasTotalIgnoradas: ignoradas
-  };
-}
-
-function mtdLeerProductos_(libro) {
-  var hoja = libro.getSheetByName(HOJA_MTD_PLANTILLA);
-  if (!hoja) {
-    Logger.log("AVISO: no existe la hoja '" + HOJA_MTD_PLANTILLA + "'; la tabla de productos irá vacía.");
-    return { productos: [], columnas: null };
-  }
-
-  var data = hoja.getDataRange().getValues();
-  if (data.length < 2) return { productos: [], columnas: null };
-
-  // Encabezados reales de la fila 1, para verificar el mapeo desde el editor.
-  Logger.log("Encabezados de '" + HOJA_MTD_PLANTILLA + "' (fila 1): " +
-             data[0].map(function(h, i) { return (i + 1) + '=' + h; }).join(' | '));
-
-  var headers = data[0].map(mtdNorm_);
-  var col = {
-    nombre:   mtdColAlt_(headers, [[['product'], []], [['nombre'], []], [['descripci'], []]]),
-    ventaAnt: mtdColAlt_(headers, [[['real', '-1'], ['plan']], [['anterior'], ['plan']]]),
-    // 'Real' es el importe original; 'Real (LOCAL)' y 'Real #' también contienen "real",
-    // así que primero se exige coincidencia exacta y solo después se cae al parcial.
-    ventaMes: (function() {
-      for (var i = 0; i < headers.length; i++) {
-        if (headers[i] === 'real') return i;
-      }
-      return mtdCol_(headers, ['real'],
-        ['-1', 'anterior', 'plan', 'ano', 'anio', 'local', '#']);
-    })(),
-    unidades: mtdColAlt_(headers, [[['unidad'], []], [['unit'], []],
-                                    [['real', '#'], ['-1', 'plan', 'ano', 'anio']]])
-  };
-  Logger.log('Mapeo PLANTILLA → nombre=' + col.nombre + ' ventaMes=' + col.ventaMes +
-             ' ventaMesAnterior=' + col.ventaAnt + ' unidades=' + col.unidades +
-             ' (null = columna no encontrada)');
-
-  var productos = [];
-  for (var i = 1; i < data.length; i++) {
-    var row = data[i];
-    var nombre = mtdTexto_(row, col.nombre);
-    if (mtdEsFilaTotal_(nombre)) continue;
-
-    var ventaMes = mtdNum_(row, col.ventaMes);
-    var ventaAnt = mtdNum_(row, col.ventaAnt);
-    var unidades = mtdNum_(row, col.unidades);
-    if (!nombre && !ventaMes && !ventaAnt && !unidades) continue;
-
-    productos.push({
-      nombre:                nombre,
-      ventaMes:              ventaMes,
-      ventaMesAnterior:      ventaAnt,
-      unidades:              unidades,
-      deltaVsPctMesAnterior: ventaAnt !== 0 ? (ventaMes - ventaAnt) / ventaAnt : null
-    });
-  }
-
-  // La hoja está a nivel cliente x producto (73 clientes x ~102 productos), no es un
-  // catálogo: se consolida por nombre para que la tabla muestre una fila por producto.
-  var agrupado = {};
-  productos.forEach(function(p) {
-    var k = p.nombre || '(sin nombre)';
-    if (!agrupado[k]) {
-      agrupado[k] = { nombre: k, ventaMes: 0, ventaMesAnterior: 0, unidades: 0 };
-    }
-    agrupado[k].ventaMes += p.ventaMes || 0;
-    agrupado[k].ventaMesAnterior += p.ventaMesAnterior || 0;
-    agrupado[k].unidades += p.unidades || 0;
-  });
-  var productosAgrupados = Object.keys(agrupado).map(function(k) {
-    var x = agrupado[k];
-    x.deltaVsPctMesAnterior = x.ventaMesAnterior !== 0
-      ? (x.ventaMes - x.ventaMesAnterior) / x.ventaMesAnterior : null;
-    return x;
-  });
-
-  Logger.log('Productos antes de agrupar: ' + productos.length +
-             ' · después de agrupar: ' + productosAgrupados.length);
-
-  return { productos: productosAgrupados, columnas: col };
-}
+/** Entero redondeado (pesos / unidades): recorta decimales de punto flotante del payload. */
+function mtdRed_(n) { return Math.round(n); }
 
 /**
- * Datos del informe de Ventas MTD (cumplimiento por cliente y por KAM, más
- * productos). Devuelve un STRING JSON, igual que el resto de endpoints.
+ * {anio, mes} de una celda de fecha, en la ZONA HORARIA DEL LIBRO. Antes se
+ * usaban los getters del script (Europe/Madrid) o UTC según la pestaña: un
+ * 1-ene a medianoche podía caer en diciembre. Acepta Date, serial de Sheets
+ * (número) o texto d/m/aaaa ("1/01/2022").
  */
-/* ---------- Histórico de ventas (serie mensual por cliente desde 2022) ---------- */
-
-/**
- * {anio, mes} de la celda de fecha. Sheets suele devolver un Date; si la columna
- * está como texto se asume d/m/aaaa, que es el formato de la hoja ("1/01/2022").
- */
-function mtdFecha_(valor) {
+function mtdFecha_(valor, tz) {
   if (valor instanceof Date) {
-    return { anio: valor.getFullYear(), mes: valor.getMonth() + 1 };
+    if (isNaN(valor.getTime())) return null;
+    return { anio: Number(Utilities.formatDate(valor, tz, 'yyyy')),
+             mes:  Number(Utilities.formatDate(valor, tz, 'M')) };
   }
-  var s = (valor || '').toString().trim();
+  if (typeof valor === 'number' && valor > 20000 && valor < 80000) {
+    var d = new Date(Math.round((valor - 25569) * 86400 * 1000));   // serial → UTC (sin hora)
+    return { anio: d.getUTCFullYear(), mes: d.getUTCMonth() + 1 };
+  }
+  var s = (valor == null ? '' : valor).toString().trim();
   var partes = s.split('/');
   if (partes.length === 3) {
     var anio = parseInt(partes[2], 10), mes = parseInt(partes[1], 10);
@@ -944,144 +937,310 @@ function mtdFecha_(valor) {
   return null;
 }
 
-function mtdLeerHistorico_(libro) {
-  var hoja = libro.getSheetByName(HOJA_MTD_HISTORICO);
-  if (!hoja) {
-    Logger.log("AVISO: no existe la hoja '" + HOJA_MTD_HISTORICO + "'; el histórico irá vacío.");
-    return { filas: [], columnas: null };
+/**
+ * Lee un bloque rectangular de una hoja leyendo SOLO las columnas que hacen
+ * falta (hasta la última columna mapeada) y no getDataRange(): el histórico
+ * mide 25 columnas y solo se usan 9. `resolver(headers)` devuelve el mapa
+ * {clave: índice|null}. Devuelve {headersRaw, col, data} (data = filas 2..n).
+ */
+function mtdLeerBloque_(hoja, resolver) {
+  var ultCol = hoja.getLastColumn(), ultFila = hoja.getLastRow();
+  if (ultCol < 1 || ultFila < 1) return { headersRaw: [], col: {}, data: [] };
+  var headersRaw = hoja.getRange(1, 1, 1, ultCol).getValues()[0];
+  var col = resolver(headersRaw.map(mtdNorm_));
+  var maxIdx = 0;
+  Object.keys(col).forEach(function(k) { if (col[k] !== null && col[k] > maxIdx) maxIdx = col[k]; });
+  var data = ultFila > 1 ? hoja.getRange(2, 1, ultFila - 1, maxIdx + 1).getValues() : [];
+  return { headersRaw: headersRaw, col: col, data: data };
+}
+
+function mtdHoja_(libro, nombre, obligatoria) {
+  var hoja = libro.getSheetByName(nombre);
+  if (!hoja && obligatoria) {
+    throw new Error("No se encontró la hoja '" + nombre + "' en el archivo de Ventas MTD. " +
+                    'Hojas disponibles: ' + libro.getSheets().map(function(s) { return s.getName(); }).join(' | '));
   }
+  if (!hoja) throw new Error("No existe la hoja '" + nombre + "'.");
+  return hoja;
+}
 
-  var data = hoja.getDataRange().getValues();
-  if (data.length < 2) return { filas: [], columnas: null };
-
-  Logger.log("Encabezados de '" + HOJA_MTD_HISTORICO + "' (fila 1): " +
-             data[0].map(function(h, i) { return (i + 1) + '=' + h; }).join(' | '));
-
-  var headers = data[0].map(mtdNorm_);
-  var col = {
-    fecha:   mtdColAlt_(headers, [[['fecha'], []], [['date'], []]]),
-    cliente: mtdColAlt_(headers, [[['cliente'], []], [['customer'], []]]),
-    kam:     mtdCol_(headers, ['kam'], []),
-    canal:   mtdColAlt_(headers, [[['canal'], []], [['channel'], []]]),
-    real:    mtdCol_(headers, ['real'], ['plan', 'sell']),
-    plan:    mtdCol_(headers, ['plan'], ['sell'])
-  };
-  Logger.log('Mapeo HISTORICO → fecha=' + col.fecha + ' cliente=' + col.cliente +
-             ' kam=' + col.kam + ' canal=' + col.canal +
-             ' real=' + col.real + ' plan=' + col.plan + ' (null = columna no encontrada)');
-
-  var filas = [], sinFecha = 0, sinCliente = 0;
-  var anioMin = null, anioMax = null, porMes = {};
-  for (var i = 1; i < data.length; i++) {
-    var row = data[i];
-    var f = mtdFecha_(col.fecha === null ? null : row[col.fecha]);
-    if (!f) { sinFecha++; continue; }
-    var cliente = mtdTexto_(row, col.cliente);
-    if (!cliente || mtdEsFilaTotal_(cliente)) { sinCliente++; continue; }
-
-    filas.push({
-      anio:    f.anio,
-      mes:     f.mes,
-      cliente: cliente,
-      kam:     mtdTexto_(row, col.kam),
-      canal:   mtdTexto_(row, col.canal),
-      real:    mtdNum_(row, col.real),
-      plan:    mtdNum_(row, col.plan)
-    });
-    if (anioMin === null || f.anio < anioMin) anioMin = f.anio;
-    if (anioMax === null || f.anio > anioMax) anioMax = f.anio;
-    porMes[f.mes] = (porMes[f.mes] || 0) + 1;
-  }
-
-  // El reparto por mes delata un d/m invertido: con una serie mensual completa
-  // los 12 meses deben aparecer, no concentrarse en uno solo.
-  Logger.log('HISTORICO: ' + filas.length + ' filas útiles de ' + (data.length - 1) +
-             ' (sin fecha: ' + sinFecha + ', sin cliente/total: ' + sinCliente + ')' +
-             ' · años ' + anioMin + '–' + anioMax +
-             ' · meses distintos: ' + Object.keys(porMes).length +
-             ' · filas por mes: ' + JSON.stringify(porMes));
-
-  return { filas: filas, columnas: col, anioMin: anioMin, anioMax: anioMax };
+/** Clave de cliente común a las tres hojas: SAP ID, o el nombre normalizado si no hay. */
+function mtdIdCliente_(sapId, cliente) {
+  return sapId ? String(sapId) : ('N:' + mtdNorm_(cliente));
 }
 
 /**
- * Histórico completo. Son miles de filas, pero mtdCacheGuardar_ ya trocea en
- * bloques de CACHE_TROZO (90 KB) hasta CACHE_MAX_TROZOS, así que no hace falta
- * un mecanismo aparte: soporta ~5.4 MB.
+ * Periodo del informe a partir de la celda de control de CUMPLIMIENTO: busca
+ * la nota "cambie el numero para cambiar el mes" en la fila 1; la celda
+ * anterior es el mes (1-12) y la anterior a esa es la fecha (1-sep-2026).
  */
-function getHistoricoVentasJson() {
-  var enCache = mtdCacheLeer_(CACHE_MTD_HIST);
-  if (enCache) return enCache;
+function mtdPeriodoDeControl_(headersRaw, tz) {
+  for (var i = 0; i < headersRaw.length; i++) {
+    if (mtdNorm_(headersRaw[i]).indexOf('cambie el numero') === -1) continue;
+    var f = i >= 2 ? mtdFecha_(headersRaw[i - 2], tz) : null;
+    var m = i >= 1 ? Number(headersRaw[i - 1]) : NaN;
+    if (f) return { anio: f.anio, mes: f.mes, fuente: 'celda de control de CUMPLIMIENTO' };
+    if (m >= 1 && m <= 12) return { anio: null, mes: m, fuente: 'celda de control de CUMPLIMIENTO' };
+  }
+  return null;
+}
 
-  var libro = SpreadsheetApp.openById(SPREADSHEET_ID_MTD);
-  var hist  = mtdLeerHistorico_(libro);
+/* ---------- Lectura de cada hoja ---------- */
 
-  var texto = JSON.stringify({
-    filas: hist.filas,
-    meta: {
-      actualizadoEn: new Date().toISOString(),
-      totalFilas:    hist.filas.length,
-      anioMin:       hist.anioMin || null,
-      anioMax:       hist.anioMax || null,
-      hoja:          HOJA_MTD_HISTORICO,
-      columnas:      hist.columnas
-    }
+function mtdLeerCumplimiento_(libro, tz) {
+  var hoja = mtdHoja_(libro, HOJA_MTD_CUMPLIMIENTO, true);
+  var b = mtdLeerBloque_(hoja, function(h) {
+    return {
+      sapId:    mtdColEx_(h, ['sap id'], [[['sap'], []]]),
+      cliente:  mtdColEx_(h, ['cliente'], [[['cliente'], []]]),
+      kam:      mtdColEx_(h, ['kam encargado'], [[['kam'], []]]),
+      canal:    mtdColEx_(h, ['canal'], [[['canal'], []]]),
+      realMes:  mtdColEx_(h, ['real (local)'], [[['real'], ['-1', 'anterior', 'plan', 'ano', 'anio', '#']]]),
+      planMes:  mtdColEx_(h, ['current plan (local)'], [[['plan'], ['ano', 'anio', '-1']]]),
+      realAnio: mtdColEx_(h, ['real (ano)'], [[['real', 'ano'], ['plan']], [['real', 'anio'], ['plan']]]),
+      planAnio: mtdColEx_(h, ['current plan (ano)'], [[['plan', 'ano'], []], [['plan', 'anio'], []]])
+    };
   });
+  mtdExigir_(b.col, ['cliente', 'realMes', 'planMes'], HOJA_MTD_CUMPLIMIENTO, b.headersRaw);
+  var col = b.col;
 
-  var kb = Math.round(texto.length / 1024);
-  Logger.log('HISTORICO: JSON de ' + kb + ' KB → ' +
-             Math.ceil(texto.length / CACHE_TROZO) + ' trozo(s) de caché (tope ' +
-             CACHE_MAX_TROZOS + ')');
-  mtdCacheGuardar_(CACHE_MTD_HIST, texto, CACHE_MTD_SEGUNDOS);
-  return texto;
-}
+  var filas = [], ignoradas = 0, conError = [], sumReal = 0;
+  for (var i = 0; i < b.data.length; i++) {
+    var row = b.data[i];
+    var cliente = mtdTexto_(row, col.cliente);
+    var sapId   = mtdTexto_(row, col.sapId);
+    if (!cliente && !sapId) continue;
+    if (mtdEsFilaTotal_(cliente)) { ignoradas++; continue; }
 
-/** Diagnóstico manual desde el editor, análogo a verVentasMtd(). */
-function verHistoricoVentas() {
-  var d = JSON.parse(getHistoricoVentasJson());
-  Logger.log('Total de filas: ' + d.meta.totalFilas +
-             ' · años ' + d.meta.anioMin + '–' + d.meta.anioMax);
-  Logger.log('Primera fila: ' + JSON.stringify(d.filas[0]));
-  Logger.log('Última fila: ' + JSON.stringify(d.filas[d.filas.length - 1]));
-}
+    var error = mtdEsError_(row, col.realMes) || mtdEsError_(row, col.planMes) ||
+                mtdEsError_(row, col.realAnio) || mtdEsError_(row, col.planAnio);
+    if (error) conError.push(cliente || sapId);
 
-function getVentasMtdJson() {
-  var enCache = mtdCacheLeer_(CACHE_MTD_CLAVE);
-  if (enCache) return enCache;
+    var realMes = mtdNum_(row, col.realMes);
+    sumReal += realMes;
+    // El % de cumplimiento NO se toma de la hoja: ahí vale 1 (100 %) cuando el
+    // plan está vacío y 0 cuando no hay plan ni venta. Lo calcula el cliente
+    // como real/plan solo si plan > 0.
+    filas.push({
+      id:       mtdIdCliente_(sapId, cliente),
+      sapId:    sapId,
+      cliente:  cliente,
+      kam:      mtdTexto_(row, col.kam)   || 'SIN KAM',
+      canal:    mtdTexto_(row, col.canal) || 'SIN CANAL',
+      realMes:  mtdRed_(realMes),
+      planMes:  mtdRed_(mtdNum_(row, col.planMes)),
+      realAnio: mtdRed_(mtdNum_(row, col.realAnio)),
+      planAnio: mtdRed_(mtdNum_(row, col.planAnio)),
+      // 'interno': fila contable de ISDIN (SAP ID 1, KAM "OTRO"), no es un cliente.
+      interno:  sapId === '1' ? 1 : 0,
+      error:    error ? 1 : 0
+    });
+  }
 
-  var libro = SpreadsheetApp.openById(SPREADSHEET_ID_MTD);   // una sola apertura para las dos hojas
-  var cumpl = mtdLeerCumplimiento_(libro);
-  var prod  = mtdLeerProductos_(libro);
-
-  var salida = {
-    cumplimiento: {
-      filas: cumpl.filas,
-      totales: cumpl.totales || { realMes: 0, planMes: 0, cumplPct: null, realAnio: 0, planAnio: 0 }
-    },
-    productos: prod.productos,
-    meta: {
-      actualizadoEn:        new Date().toISOString(),
-      totalFilasClientes:   cumpl.filas.length,
-      totalFilasProductos:  prod.productos.length,
-      hojaCumplimiento:     HOJA_MTD_CUMPLIMIENTO,
-      hojaProductos:        HOJA_MTD_PLANTILLA,
-      columnasProductos:    prod.columnas,
-      filasTotalIgnoradas:  cumpl.filasTotalIgnoradas || 0
-    }
+  return {
+    filas: filas, sumReal: sumReal, filasTotalIgnoradas: ignoradas, conError: conError,
+    periodo: mtdPeriodoDeControl_(b.headersRaw, tz)
   };
-
-  var texto = JSON.stringify(salida);
-  mtdCacheGuardar_(CACHE_MTD_CLAVE, texto, CACHE_MTD_SEGUNDOS);
-  return texto;
 }
 
-/** Diagnóstico manual desde el editor: encabezados y primeras filas leídas. */
+/**
+ * PLANTILLA: una fila por cliente × EAN. Se consolida por cliente × NOMBRE de
+ * producto (un mismo producto tiene varios EAN) y se devuelve como arreglos
+ * [clienteId, idxProducto, venta, ventaA1, unidades] con el nombre en un
+ * diccionario aparte: ~9.800 filas como objetos pesaban ~1 MB.
+ */
+function mtdLeerProductos_(libro) {
+  var hoja = mtdHoja_(libro, HOJA_MTD_PLANTILLA, true);
+  var b = mtdLeerBloque_(hoja, function(h) {
+    return {
+      sapId:    mtdColEx_(h, ['sap id'], [[['sap'], []]]),
+      cliente:  mtdColEx_(h, ['cliente'], [[['cliente'], []]]),
+      nombre:   mtdColEx_(h, ['product'], [[['product'], ['id']], [['nombre'], []], [['descripci'], []]]),
+      // 'Real' (exacto) = importe que concilia con CUMPLIMIENTO; 'Real (LOCAL)'
+      // difiere en ~28 filas. 'Real -1' = mismo mes del año anterior.
+      venta:    mtdColEx_(h, ['real'], [[['real'], ['-1', 'anterior', 'plan', 'ano', 'anio', 'local', '#']]]),
+      ventaA1:  mtdColEx_(h, ['real -1'], [[['real', '-1'], ['plan']], [['anterior'], ['plan']]]),
+      unidades: mtdColEx_(h, ['real #'], [[['unidad'], []], [['unit'], []]])
+    };
+  });
+  mtdExigir_(b.col, ['nombre', 'venta'], HOJA_MTD_PLANTILLA, b.headersRaw);
+  if (b.col.sapId === null && b.col.cliente === null) {
+    throw new Error("En la hoja '" + HOJA_MTD_PLANTILLA + "' no encontré 'SAP ID' ni 'CLIENTE'.");
+  }
+  var col = b.col;
+
+  var nombres = [], idxNombre = {}, agr = {}, sumVenta = 0, sinNombre = 0;
+  for (var i = 0; i < b.data.length; i++) {
+    var row = b.data[i];
+    var nombre = mtdTexto_(row, col.nombre);
+    if (mtdEsFilaTotal_(nombre)) continue;
+
+    var venta = mtdNum_(row, col.venta), ant = mtdNum_(row, col.ventaA1), und = mtdNum_(row, col.unidades);
+    if (!venta && !ant && !und) continue;
+
+    var cliente = mtdTexto_(row, col.cliente);
+    var id = mtdIdCliente_(mtdTexto_(row, col.sapId), cliente);
+    if (!nombre) { nombre = 'SIN PRODUCTO'; sinNombre++; }
+    if (idxNombre[nombre] === undefined) { idxNombre[nombre] = nombres.length; nombres.push(nombre); }
+    var k = id + '|' + idxNombre[nombre];
+    var a = agr[k];
+    if (!a) a = agr[k] = [id, idxNombre[nombre], 0, 0, 0];
+    a[2] += venta; a[3] += ant; a[4] += und;
+    sumVenta += venta;
+  }
+  var filas = Object.keys(agr).map(function(k) {
+    var a = agr[k];
+    return [a[0], a[1], mtdRed_(a[2]), mtdRed_(a[3]), mtdRed_(a[4])];
+  });
+  return { productos: nombres, filas: filas, sumVenta: sumVenta, filasSinNombre: sinNombre };
+}
+
+/**
+ * Histórico: arreglos [anio, mes, clienteId, real, plan] + diccionario
+ * clienteId → [cliente, kam, canal] (último dato conocido de cada cliente).
+ * El cruce es por SAP ID (antes por NOMBRE, y el servidor tiraba el SAP ID).
+ * Las filas con real = 0 y plan = 0 (p. ej. los meses futuros que la hoja ya
+ * trae en blanco) no se envían.
+ */
+function mtdLeerHistorico_(libro, tz) {
+  var hoja = mtdHoja_(libro, HOJA_MTD_HISTORICO, true);
+  var b = mtdLeerBloque_(hoja, function(h) {
+    return {
+      fecha:   mtdColEx_(h, ['fecha'], [[['fecha'], []], [['date'], []]]),
+      sapId:   mtdColEx_(h, ['sap id'], [[['sap'], []]]),
+      cliente: mtdColEx_(h, ['cliente'], [[['cliente'], []], [['customer'], []]]),
+      kam:     mtdColEx_(h, ['kam encargado'], [[['kam'], []]]),
+      canal:   mtdColEx_(h, ['canal'], [[['canal'], []], [['channel'], []]]),
+      real:    mtdColEx_(h, ['real (local)'], [[['real'], ['plan', 'sell', '-1', '#']]]),
+      plan:    mtdColEx_(h, ['current plan (local)'], [[['plan'], ['sell']]])
+    };
+  });
+  mtdExigir_(b.col, ['fecha', 'real', 'plan'], HOJA_MTD_HISTORICO, b.headersRaw);
+  if (b.col.sapId === null && b.col.cliente === null) {
+    throw new Error("En la hoja '" + HOJA_MTD_HISTORICO + "' no encontré 'SAP ID' ni 'CLIENTE'.");
+  }
+  var col = b.col;
+
+  var filas = [], clientes = {}, visto = {}, sinFecha = 0, sinCliente = 0;
+  var anioMin = null, anioMax = null, ultimo = null;   // ultimo = {anio, mes} con real ≠ 0
+  for (var i = 0; i < b.data.length; i++) {
+    var row = b.data[i];
+    var f = mtdFecha_(col.fecha === null ? null : row[col.fecha], tz);
+    if (!f) { sinFecha++; continue; }
+    var cliente = mtdTexto_(row, col.cliente);
+    var sapId = mtdTexto_(row, col.sapId);
+    if ((!cliente && !sapId) || mtdEsFilaTotal_(cliente)) { sinCliente++; continue; }
+    var id = mtdIdCliente_(sapId, cliente);
+
+    var real = mtdNum_(row, col.real), plan = mtdNum_(row, col.plan);
+    if (anioMin === null || f.anio < anioMin) anioMin = f.anio;
+    if (anioMax === null || f.anio > anioMax) anioMax = f.anio;
+
+    var orden = f.anio * 12 + f.mes;
+    if (visto[id] === undefined || orden >= visto[id]) {
+      visto[id] = orden;
+      clientes[id] = [cliente, mtdTexto_(row, col.kam) || 'SIN KAM', mtdTexto_(row, col.canal) || 'SIN CANAL'];
+    }
+    if (!real && !plan) continue;
+    if (real && (ultimo === null || orden > ultimo.anio * 12 + ultimo.mes)) ultimo = { anio: f.anio, mes: f.mes };
+    filas.push([f.anio, f.mes, id, mtdRed_(real), mtdRed_(plan)]);
+  }
+  return { filas: filas, clientes: clientes, anioMin: anioMin, anioMax: anioMax, ultimo: ultimo,
+           sinFecha: sinFecha, sinCliente: sinCliente };
+}
+
+/** Σ real del histórico en un (anio, mes): sirve para la conciliación de las 3 hojas. */
+function mtdSumaHistoricoMes_(filas, anio, mes) {
+  var s = 0;
+  for (var i = 0; i < filas.length; i++) if (filas[i][0] === anio && filas[i][1] === mes) s += filas[i][3];
+  return s;
+}
+
+function mtdConstruirCompleto_() {
+  var libro = SpreadsheetApp.openById(SPREADSHEET_ID_MTD);   // una sola apertura para las tres hojas
+  var tz = libro.getSpreadsheetTimeZone();
+  var errores = {}, meta = { versionPayload: 2, zonaHoraria: tz };
+  var cumpl = null, prod = null, hist = null;
+
+  try { cumpl = mtdLeerCumplimiento_(libro, tz); } catch (e) { errores.cumplimiento = e.message; Logger.log('MTD cumplimiento: ' + e.message); }
+  try { prod  = mtdLeerProductos_(libro);        } catch (e) { errores.plantilla   = e.message; Logger.log('MTD plantilla: ' + e.message); }
+  try { hist  = mtdLeerHistorico_(libro, tz);    } catch (e) { errores.historico   = e.message; Logger.log('MTD histórico: ' + e.message); }
+
+  // Periodo: celda de control; si no hay año, el del último mes con venta del histórico.
+  var periodo = cumpl && cumpl.periodo;
+  if (periodo && !periodo.anio && hist && hist.ultimo) {
+    periodo = { anio: hist.ultimo.mes >= periodo.mes ? hist.ultimo.anio : hist.ultimo.anio - 1,
+                mes: periodo.mes, fuente: periodo.fuente + ' + año del histórico' };
+  }
+  if (!periodo && hist && hist.ultimo) {
+    periodo = { anio: hist.ultimo.anio, mes: hist.ultimo.mes, fuente: 'último mes con venta del histórico' };
+  }
+
+  // Conciliación: las tres hojas deben dar la misma venta del mes de corte.
+  var conc = { cumplimiento: cumpl ? mtdRed_(cumpl.sumReal) : null,
+               plantilla:    prod  ? mtdRed_(prod.sumVenta) : null,
+               historico:    (hist && periodo && periodo.anio) ? mtdSumaHistoricoMes_(hist.filas, periodo.anio, periodo.mes) : null };
+
+  meta.actualizadoEn = new Date().toISOString();   // hora en que se LEYÓ la hoja (no la de la caché)
+  meta.periodo = periodo || null;
+  meta.errores = errores;
+  meta.conciliacion = conc;
+  meta.filasTotalIgnoradas = cumpl ? cumpl.filasTotalIgnoradas : 0;
+  meta.clientesConError = cumpl ? cumpl.conError : [];
+  meta.productosSinNombre = prod ? prod.filasSinNombre : 0;
+  meta.historico = hist ? { anioMin: hist.anioMin, anioMax: hist.anioMax, sinFecha: hist.sinFecha,
+                            sinCliente: hist.sinCliente, filas: hist.filas.length } : null;
+
+  Logger.log('MTD: clientes=' + (cumpl ? cumpl.filas.length : 'ERR') + ' · producto×cliente=' +
+             (prod ? prod.filas.length : 'ERR') + ' · histórico=' + (hist ? hist.filas.length : 'ERR') +
+             ' · periodo=' + JSON.stringify(periodo) + ' · conciliación=' + JSON.stringify(conc));
+
+  return {
+    v: 2,
+    clientes: cumpl ? cumpl.filas : [],
+    productos: prod ? prod.productos : [],
+    prod: prod ? prod.filas : [],
+    hist: hist ? hist.filas : [],
+    histClientes: hist ? hist.clientes : {},
+    meta: meta
+  };
+}
+
+/**
+ * Todo lo de la primera pestaña en un solo payload (STRING JSON ASCII).
+ * `forzar` (botón "Actualizar") se salta la caché de 30 min.
+ */
+function getVentasMtdCompletoJson(forzar) {
+  return conCache_(CACHE_MTD_CLAVE, CACHE_MTD_SEGUNDOS, function() {
+    var s = mtdConstruirCompleto_();
+    var hayError = Object.keys(s.meta.errores).length > 0;
+    return { texto: jsonAscii_(s), cachear: !hayError && s.clientes.length > 0 };
+  }, forzar === true);
+}
+
+/** Alias de compatibilidad (REST ?accion=getVentasMtdJson): devuelve el payload v2. */
+function getVentasMtdJson(forzar) { return getVentasMtdCompletoJson(forzar); }
+
+/** Alias: el histórico viaja dentro del payload único. */
+function getHistoricoVentasJson(forzar) { return getVentasMtdCompletoJson(forzar); }
+
+/** Borra la caché de Ventas MTD (útil tras actualizar las hojas). */
+function limpiarCacheMtd() {
+  [CACHE_MTD_CLAVE, 'ventas_mtd', 'ventas_mtd_historico'].forEach(mtdCacheQuitar_);
+  Logger.log('Caché de Ventas MTD limpiada (incluye el histórico).');
+  return 'OK';
+}
+
+/** Diagnóstico manual desde el editor: resumen + conciliación de las tres hojas. */
 function verVentasMtd() {
-  var d = JSON.parse(getVentasMtdJson());
-  Logger.log('Clientes: ' + d.meta.totalFilasClientes + ' · Productos: ' + d.meta.totalFilasProductos);
-  Logger.log('Totales: ' + JSON.stringify(d.cumplimiento.totales));
-  Logger.log('Primera fila cliente: ' + JSON.stringify(d.cumplimiento.filas[0]));
-  Logger.log('Primer producto: ' + JSON.stringify(d.productos[0]));
+  var d = JSON.parse(getVentasMtdCompletoJson(true));
+  Logger.log('Clientes: ' + d.clientes.length + ' · producto×cliente: ' + d.prod.length +
+             ' · histórico: ' + d.hist.length);
+  Logger.log('Periodo: ' + JSON.stringify(d.meta.periodo));
+  Logger.log('Conciliación (deben ser iguales): ' + JSON.stringify(d.meta.conciliacion));
+  Logger.log('Errores: ' + JSON.stringify(d.meta.errores));
+  Logger.log('Primera fila cliente: ' + JSON.stringify(d.clientes[0]));
+  Logger.log('Tamaño del payload: ' + Math.round(JSON.stringify(d).length / 1024) + ' KB');
 }
 
 /* ============================================================
@@ -1094,9 +1253,17 @@ function verVentasMtd() {
  * el filtro real por Type a cada gráfico/tabla de Looker).
  *
  * Se agrega en el servidor por (mes × cliente × producto) — el grano más
- * fino que necesita esta pestaña — y el cruce por Canal/KAM/BU/Marca/
- * Mercado ocurre en el navegador sobre ese arreglo, igual que el resto del
+ * fino que necesita esta pestaña — y el cruce por Canal/KAM/BU/Marca
+ * ocurre en el navegador sobre ese arreglo, igual que el resto del
  * visor ("tocar un filtro nunca vuelve al servidor").
+ *
+ * Payload v2 compacto: dos diccionarios (clientes y productos, con sus
+ * atributos) + filas como arreglos
+ *   [mes, idxCliente, idxProducto, si, siU, so, soU, inv, invU, tieneInv]
+ * El cliente las expande a objetos con los mismos nombres de campo que ya
+ * usaba (sivsoExpandir_ en JsSIvsSO.html). `tieneInv` = 1 solo si hubo una
+ * fila Type=INV: sin eso no se puede distinguir "inventario 0" de "no hay
+ * foto de inventario ese mes".
  *
  * Fuera de alcance a propósito: Sell Through (Type=ST, no se usa en esta
  * pestaña) y DDI/"Diferencia INV" — la hoja 'DIAS DE INV' de donde saldría
@@ -1106,55 +1273,49 @@ function verVentasMtd() {
 
 var SPREADSHEET_ID_LOOKER = '1_eW3f95MgTcwPUH5oyTo1qQbgt-45sf6EgsDYSbylzE';
 var HOJA_LOOKER_DATA       = 'Data';
-var CACHE_SIVSO_CLAVE      = 'si_vs_so';
+var CACHE_SIVSO_CLAVE      = 'si_vs_so_v2';
 var CACHE_SIVSO_SEGUNDOS   = 1800;   // 30 min, igual que Ventas MTD
 
-/** Serial de fecha de Sheets, o Date ya convertido por Apps Script, → 'YYYY-MM'. */
-function sivsoMes_(valor) {
-  var d;
-  if (valor instanceof Date) d = valor;
-  else if (typeof valor === 'number') d = new Date(Math.round((valor - 25569) * 86400 * 1000));
-  else return null;
-  if (isNaN(d.getTime())) return null;
-  var m = d.getUTCMonth() + 1;
-  return d.getUTCFullYear() + '-' + (m < 10 ? '0' + m : m);
+/** 'YYYY-MM' de una celda de fecha en la zona horaria del libro (ver mtdFecha_). */
+function sivsoMes_(valor, tz) {
+  var f = mtdFecha_(valor, tz);
+  if (!f) return null;
+  return f.anio + '-' + (f.mes < 10 ? '0' + f.mes : f.mes);
 }
 
 function sivsoLeerDatos_() {
   var libro = SpreadsheetApp.openById(SPREADSHEET_ID_LOOKER);
+  var tz = libro.getSpreadsheetTimeZone();
   var hoja  = libro.getSheetByName(HOJA_LOOKER_DATA);
   if (!hoja) {
     throw new Error("No se encontró la hoja '" + HOJA_LOOKER_DATA + "' en el archivo Carga Looker. " +
                     'Hojas disponibles: ' + libro.getSheets().map(function(s) { return s.getName(); }).join(' | '));
   }
 
-  var data = hoja.getDataRange().getValues();
-  if (data.length < 2) return { filas: [], meta: { totalFilasOrigen: 0 } };
+  var b = mtdLeerBloque_(hoja, function(h) {
+    return {
+      fecha:   mtdColEx_(h, ['fecha'], [[['fecha'], []]]),
+      sapId:   mtdColEx_(h, ['sap id'], [[['sap', 'id'], []]]),
+      prodId:  mtdColEx_(h, ['product id'], [[['product', 'id'], []]]),
+      prodNom: mtdColEx_(h, ['product'], [[['product'], ['id']]]),
+      real:    mtdColEx_(h, ['real (local)'], [[['real', 'local'], ['-1']]]),
+      realN:   mtdColEx_(h, ['real #'], [[['real', '#'], []]]),
+      tipo:    mtdColEx_(h, ['type'], [[['type'], []]]),
+      cliente: mtdColEx_(h, ['cliente'], [[['cliente'], []]]),
+      kam:     mtdColEx_(h, ['kam encargado'], [[['kam'], []]]),
+      channel: mtdColEx_(h, ['channel'], [[['channel'], []]]),
+      bu:      mtdColEx_(h, ['bu'], [[['bu'], []]]),
+      brand:   mtdColEx_(h, ['brand'], [[['brand'], []]])
+    };
+  });
+  mtdExigir_(b.col, ['fecha', 'sapId', 'prodId', 'real', 'tipo'], HOJA_LOOKER_DATA, b.headersRaw);
+  var col = b.col;
 
-  var headers = data[0].map(mtdNorm_);
-  var col = {
-    fecha:   mtdCol_(headers, ['fecha'], []),
-    sapId:   mtdCol_(headers, ['sap id'], []),
-    // 'Product ID' se busca ANTES que 'Product' (nombre) y se excluye de esta.
-    prodId:  mtdCol_(headers, ['product id'], []),
-    prodNom: mtdCol_(headers, ['product'], ['id']),
-    realN:   mtdCol_(headers, ['real #'], []),
-    tipo:    mtdCol_(headers, ['type'], []),
-    cliente: mtdCol_(headers, ['cliente'], []),
-    kam:     mtdCol_(headers, ['kam'], []),
-    channel: mtdCol_(headers, ['channel'], []),
-    bu:      mtdCol_(headers, ['bu'], []),
-    brand:   mtdCol_(headers, ['brand'], []),
-    lanz:    mtdCol_(headers, ['lanzamientos'], []),
-    stratM:  mtdCol_(headers, ['strategic market'], []),
-    tactM:   mtdCol_(headers, ['tactic market'], [])
-  };
-  col.real = mtdCol_(headers, ['real', 'local']);   // exige AMBOS fragmentos: distingue 'Real (LOCAL)' de 'Real #'
-
+  var cliIdx = {}, clientes = [], prodIdx = {}, productos = [];
   var acc = {}, filasOrigen = 0, sinFecha = 0, sinTipo = 0;
-  for (var i = 1; i < data.length; i++) {
-    var row = data[i];
-    var mes  = sivsoMes_(row[col.fecha]);
+  for (var i = 0; i < b.data.length; i++) {
+    var row = b.data[i];
+    var mes  = sivsoMes_(row[col.fecha], tz);
     var tipo = mtdTexto_(row, col.tipo).toUpperCase();
     if (!mes) { sinFecha++; continue; }
     // Sell Through (Type=ST) se ignora a propósito: esta pestaña no lo usa.
@@ -1162,69 +1323,110 @@ function sivsoLeerDatos_() {
     filasOrigen++;
 
     var sapId = mtdTexto_(row, col.sapId), prodId = mtdTexto_(row, col.prodId);
-    var key = mes + '|' + sapId + '|' + prodId;
-    var f = acc[key];
-    if (!f) {
-      f = acc[key] = {
-        mes: mes, sapId: sapId, productId: prodId,
-        cliente: mtdTexto_(row, col.cliente), kam: mtdTexto_(row, col.kam),
-        channel: mtdTexto_(row, col.channel), producto: mtdTexto_(row, col.prodNom),
-        bu: mtdTexto_(row, col.bu), brand: mtdTexto_(row, col.brand),
-        lanzamiento: mtdTexto_(row, col.lanz),
-        mercadoEstrategico: mtdTexto_(row, col.stratM), mercadoTactico: mtdTexto_(row, col.tactM),
-        si: 0, siU: 0, so: 0, soU: 0, inv: 0, invU: 0
-      };
+    // Atributos descriptivos: el primero que aparece de cada cliente / producto.
+    if (cliIdx[sapId] === undefined) {
+      cliIdx[sapId] = clientes.length;
+      clientes.push([sapId, mtdTexto_(row, col.cliente), mtdTexto_(row, col.kam), mtdTexto_(row, col.channel)]);
     }
+    if (prodIdx[prodId] === undefined) {
+      prodIdx[prodId] = productos.length;
+      productos.push([prodId, mtdTexto_(row, col.prodNom), mtdTexto_(row, col.bu).trim(), mtdTexto_(row, col.brand)]);
+    }
+    var key = mes + '|' + cliIdx[sapId] + '|' + prodIdx[prodId];
+    var f = acc[key];
+    if (!f) f = acc[key] = [mes, cliIdx[sapId], prodIdx[prodId], 0, 0, 0, 0, 0, 0, 0];
     var peso = mtdNum_(row, col.real), unidades = mtdNum_(row, col.realN);
-    if (tipo === 'SI') { f.si += peso; f.siU += unidades; }
-    else if (tipo === 'SO') { f.so += peso; f.soU += unidades; }
-    else { f.inv += peso; f.invU += unidades; }
+    if (tipo === 'SI')      { f[3] += peso; f[4] += unidades; }
+    else if (tipo === 'SO') { f[5] += peso; f[6] += unidades; }
+    else                    { f[7] += peso; f[8] += unidades; f[9] = 1; }
   }
 
-  return {
-    filas: Object.keys(acc).map(function(k) { return acc[k]; }),
-    meta: { totalFilasOrigen: filasOrigen, filasSinFecha: sinFecha, filasTipoIgnorado: sinTipo }
-  };
+  var filas = Object.keys(acc).map(function(k) {
+    var f = acc[k];
+    return [f[0], f[1], f[2], mtdRed_(f[3]), mtdRed_(f[4]), mtdRed_(f[5]), mtdRed_(f[6]),
+            mtdRed_(f[7]), mtdRed_(f[8]), f[9]];
+  });
+  return { filas: filas, clientes: clientes, productos: productos,
+           meta: { totalFilasOrigen: filasOrigen, filasSinFecha: sinFecha, filasTipoIgnorado: sinTipo, zonaHoraria: tz } };
 }
 
 /**
  * Datos agregados de SI vs SO (mes × cliente × producto). Devuelve un STRING
- * JSON, igual que el resto de endpoints. Caché de 30 min vía las mismas
- * utilidades por trozos que usa Ventas MTD (genéricas, no específicas de esa
- * pestaña pese al prefijo mtd).
+ * JSON ASCII, igual que el resto de endpoints, con la caché de 30 min de
+ * conCache_ (`forzar` = botón "Actualizar").
  */
-function getSIvsSOJson() {
-  var enCache = mtdCacheLeer_(CACHE_SIVSO_CLAVE);
-  if (enCache) return enCache;
-
-  var leido = sivsoLeerDatos_();
-  var texto = JSON.stringify({
-    filas: leido.filas,
-    meta: {
-      actualizadoEn: new Date().toISOString(),
-      totalFilas:    leido.filas.length,
-      hoja:          HOJA_LOOKER_DATA,
-      archivo:       SPREADSHEET_ID_LOOKER,
-      origen:        leido.meta
-    }
-  });
-  mtdCacheGuardar_(CACHE_SIVSO_CLAVE, texto, CACHE_SIVSO_SEGUNDOS);
-  return texto;
+function getSIvsSOJson(forzar) {
+  return conCache_(CACHE_SIVSO_CLAVE, CACHE_SIVSO_SEGUNDOS, function() {
+    var leido = sivsoLeerDatos_();
+    var texto = jsonAscii_({
+      v: 2,
+      clientes: leido.clientes,
+      productos: leido.productos,
+      filas: leido.filas,
+      meta: {
+        actualizadoEn: new Date().toISOString(),
+        totalFilas:    leido.filas.length,
+        hoja:          HOJA_LOOKER_DATA,
+        archivo:       SPREADSHEET_ID_LOOKER,
+        origen:        leido.meta
+      }
+    });
+    return { texto: texto, cachear: leido.filas.length > 0 };
+  }, forzar === true);
 }
 
 /** Borra la caché de SI vs SO (útil tras actualizar la hoja Data). */
 function limpiarCacheSIvsSO() {
-  var cache = CacheService.getScriptCache(), claves = ['meta::' + CACHE_SIVSO_CLAVE];
-  var meta = cache.get('meta::' + CACHE_SIVSO_CLAVE);
-  if (meta) for (var i = 0; i < Number(meta); i++) claves.push('t::' + CACHE_SIVSO_CLAVE + '::' + i);
-  cache.removeAll(claves);
+  [CACHE_SIVSO_CLAVE, 'si_vs_so'].forEach(mtdCacheQuitar_);
   Logger.log('Caché de SI vs SO limpiada.');
   return 'OK';
 }
 
 /** Diagnóstico manual desde el editor. */
 function verSIvsSO() {
-  var d = JSON.parse(getSIvsSOJson());
-  Logger.log('Filas agregadas: ' + d.meta.totalFilas + ' · origen: ' + JSON.stringify(d.meta.origen));
+  var d = JSON.parse(getSIvsSOJson(true));
+  Logger.log('Filas agregadas: ' + d.meta.totalFilas + ' · clientes: ' + d.clientes.length +
+             ' · productos: ' + d.productos.length + ' · origen: ' + JSON.stringify(d.meta.origen));
   Logger.log('Primera fila: ' + JSON.stringify(d.filas[0]));
+}
+
+/* ============================================================
+ * Calentamiento de caché (para que el primer usuario no espere)
+ * ============================================================
+ * Con la caché fría cada pestaña lee sus hojas completas (varios segundos).
+ * calentarCache() las llena de antemano; instalarTriggerCache() la programa
+ * cada 15 min (la caché dura 30). Se instala UNA vez, desde el editor de
+ * Apps Script (clasp push no instala triggers). quitarTriggerCache() lo retira.
+ */
+
+function calentarCache() {
+  var pasos = [
+    ['Ventas MTD', function() { return getVentasMtdCompletoJson(true); }],
+    ['SI vs SO',   function() { return getSIvsSOJson(true); }],
+    // Las del mapa duran 6 h: solo se llenan si faltan (no se fuerzan cada 15 min).
+    ['Puntos',        function() { return getPuntosJson(false); }],
+    ['Bricks',        function() { return getBricksJson(false); }],
+    ['Asignaciones',  function() { return getAsignacionesJson(false); }]
+  ];
+  pasos.forEach(function(p) {
+    var t0 = Date.now();
+    try {
+      var n = p[1]().length;
+      Logger.log(p[0] + ': OK · ' + Math.round(n / 1024) + ' KB · ' + (Date.now() - t0) + ' ms');
+    } catch (e) {
+      Logger.log(p[0] + ': ERROR · ' + e.message);
+    }
+  });
+}
+
+function instalarTriggerCache() {
+  quitarTriggerCache();
+  ScriptApp.newTrigger('calentarCache').timeBased().everyMinutes(15).create();
+  Logger.log('Trigger instalado: calentarCache cada 15 minutos.');
+}
+
+function quitarTriggerCache() {
+  ScriptApp.getProjectTriggers().forEach(function(t) {
+    if (t.getHandlerFunction() === 'calentarCache') ScriptApp.deleteTrigger(t);
+  });
 }
