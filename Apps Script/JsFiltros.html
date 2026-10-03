@@ -327,8 +327,11 @@ function sumarSerie(s){var u=0,a=0;(s||[]).forEach(function(t){
   if(idxSel[t[0]]){u+=t[1];a+=t[2]}});return{unidades:u,total:a}}
 function sumarSerieTotal(s){var a=0;(s||[]).forEach(function(t){a+=t[2]});return a}
 
+/* `p.dup` (lo marca getPuntosJson): el POS ID está repetido en el CRM y la venta
+   pertenece SOLO al primer PDV que lo usa. Sin esto, cada fila repetida sumaba la
+   misma venta otra vez en los KPI, el mapa y los rankings. */
 function ventaPDV(p){
-  var bus=p.posId?ventasG[p.posId]:null;var u=0,a=0,mc={};
+  var bus=(p.posId&&!p.dup)?ventasG[p.posId]:null;var u=0,a=0,mc={};
   if(bus)Object.keys(bus).forEach(function(b){
     if(!buActiva(b))return;
     bus[b].forEach(function(t){if(idxSel[t[0]]){u+=t[1];a+=t[2];mc[t[0]]=1}})});
@@ -336,7 +339,7 @@ function ventaPDV(p){
   return{total:a,unidades:u,mesesConDato:Object.keys(mc).length,promedio:n>0?a/n:0}}
 
 function ventaSku(p){
-  if(!distSku||!p.posId)return{total:0,unidades:0,mesesConDato:0};
+  if(!distSku||!p.posId||p.dup)return{total:0,unidades:0,mesesConDato:0};
   var s=distSku[p.posId];if(!s)return{total:0,unidades:0,mesesConDato:0};
   var u=0,a=0,mc=0;
   s.forEach(function(t){if(idxSel[t[0]]){u+=t[1];a+=t[2];mc++}});

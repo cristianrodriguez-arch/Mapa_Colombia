@@ -216,4 +216,25 @@ t('diccionarios de clientes y productos; ST ignorado', () => {
   assert.strictEqual(s.meta.origen.filasTipoIgnorado, 1);
 });
 
+console.log('Servidor · mapa (PDV)');
+const maestro = [
+  ['Id cuenta 18', 'Nombre de la cuenta', 'Ubicación: Coordenadas (Latitud)', 'Ubicación: Coordenadas (Longitud)', 'Nº Oficina Farmacia'],
+  ['A1', 'PDV UNO', '4,66', '-74,08', '8301160397'],
+  ['A2', 'PDV DOS (mismo POS ID)', '4,70', '-74,10', '8301160397'],
+  ['A3', 'PDV TRES', '6,25', '-75,57', '900793687'],
+  ['A4', 'SIN POS', '3,44', '-76,52', '']
+];
+const c5 = nuevoContexto({ 'CO_Puntos_Maestro clientes': hoja(maestro) }, 'America/Bogota');
+const pts = JSON.parse(c5.getPuntosJson());
+t('POS ID repetido: se conservan los 4 puntos pero solo el primero es dueño de la venta (dup:1 en los demás)', () => {
+  assert.strictEqual(pts.puntos.length, 4);
+  assert.deepStrictEqual(Array.from(pts.puntos.map(p => p.dup)), [0, 1, 0, 0]);
+  assert.strictEqual(pts.stats.posIdDuplicados, 1);
+});
+t('las capas del mapa se cachean (segunda llamada no vuelve a abrir la hoja)', () => {
+  const antes = c5.__lecturas();
+  c5.getPuntosJson();
+  assert.strictEqual(c5.__lecturas(), antes);
+});
+
 console.log('\n' + ok + ' pruebas OK' + (process.exitCode ? ' · HAY FALLAS' : ''));
