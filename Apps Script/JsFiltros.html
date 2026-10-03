@@ -15,13 +15,17 @@
    lo que quedaría al elegir esa opción.
 
    La UI son <select multiple> nativos mejorados con Choices.js. Si el CDN
-   está bloqueado, `CHOICES_OK` queda en false y se usan los <select>
+   está bloqueado, `choicesListo()` da false y se usan los <select>
    nativos: el resto de la lógica no cambia porque siempre se lee/escribe
    contra el mismo objeto `filtros`.
    ══════════════════════════════════════════════════════════════════════ */
 
 var DIMS_PDV=['grupo','channel','region','poblacion','potencial'];
-var SELECTORES={},CHOICES_OK=(typeof Choices==='function');
+var SELECTORES={};
+/* Choices.js llega por CDN de forma ASÍNCRONA (cargarLib en JsNucleo): ya no se
+   puede decidir al parsear el archivo. Se consulta en el momento de construir
+   cada Selector. */
+function choicesListo(){return typeof Choices==='function'}
 
 var CFG_SELECTORES=[
   {dim:'mes',       id:'fMes',       multi:true},
@@ -391,15 +395,18 @@ function opcionesDe(dim){
     return{valor:k,etiqueta:k,cnt:c[k]}})}
 
 /* ══════════════ Selector: <select multiple> + Choices.js ════════════ */
+/* `cfg` admite tres ganchos opcionales para reutilizar el control fuera del
+   mapa (lo usa Ventas MTD): ops() → opciones, sel() → arreglo elegido y
+   alCambiar(valores). Sin ellos el Selector trabaja contra `filtros` del mapa. */
 function Selector(cfg){
-  this.dim=cfg.dim;this.multi=!!cfg.multi;this.tope=cfg.tope||0;
+  this.cfg=cfg;this.dim=cfg.dim;this.multi=!!cfg.multi;this.tope=cfg.tope||0;
   this.vacio=cfg.vacio||'';this.el=document.getElementById(cfg.id);
   this.todas=[];this.etiquetas={};this.firma='';this.query='';
   this.abierto=false;this.silencio=false;this.ch=null;this.temp=null;this.firmaSel=null;
   if(!this.el)return;
   var self=this;
 
-  if(CHOICES_OK){
+  if(choicesListo()){
     this.ch=new Choices(this.el,{
       removeItemButton:this.multi,
       searchEnabled:true,
@@ -435,7 +442,8 @@ function Selector(cfg){
 
 /* Valores elegidos hoy, como mapa (la fuente de verdad es `filtros`). */
 Selector.prototype.seleccion=function(){
-  var m={},arr=this.dim==='sku'?(skuSel?[skuSel]:[]):(filtros[this.dim]||[]);
+  var m={},arr=this.cfg.sel?(this.cfg.sel()||[]):
+    (this.dim==='sku'?(skuSel?[skuSel]:[]):(filtros[this.dim]||[]));
   arr.forEach(function(v){m[v]=1});return m};
 
 Selector.prototype.valores=function(){
@@ -446,7 +454,8 @@ Selector.prototype.valores=function(){
   return v.filter(function(x){return x!==''&&x!=null&&x!=='__mas__'})};
 
 Selector.prototype.emitir=function(){
-  cambiarSeleccion(this.dim,this.valores());
+  if(this.cfg.alCambiar)this.cfg.alCambiar(this.valores());
+  else cambiarSeleccion(this.dim,this.valores());
   // El chip que acaba de crear Choices trae el conteo pegado; recortarlo aquí
   // evita esperar al siguiente repintado (que no ocurre si el menú sigue abierto).
   this.recortarChips()};
@@ -455,7 +464,7 @@ Selector.prototype.emitir=function(){
 Selector.prototype.refrescar=function(forzar){
   if(!this.el)return;
   if(this.abierto&&!forzar)return;             // no interrumpir un desplegable abierto
-  var ops=opcionesDe(this.dim),self=this,firma=ops.length+'|';
+  var ops=this.cfg.ops?this.cfg.ops():opcionesDe(this.dim),self=this,firma=ops.length+'|';
   for(var i=0;i<ops.length;i++)firma+=ops[i].valor+':'+(ops[i].cnt==null?'':ops[i].cnt)+',';
   firma+='#'+Object.keys(this.seleccion()).sort().join(',');
   if(firma===this.firma&&!forzar)return;
@@ -546,7 +555,7 @@ function cambiarSeleccion(dim,vals){
 
 function iniciarSelectores(){
   CFG_SELECTORES.forEach(function(cfg){SELECTORES[cfg.dim]=new Selector(cfg)});
-  if(!CHOICES_OK)avisar('Choices.js no cargó desde el CDN: los filtros funcionan como '+
+  if(!choicesListo())avisar('Choices.js no cargó desde el CDN: los filtros funcionan como '+
     'listas múltiples nativas (Ctrl+clic para elegir varios).')}
 
 function sincronizarSelectores(){
@@ -554,15 +563,13 @@ function sincronizarSelectores(){
   actContador()}
 
 /* ══════════════ Arranque de la interfaz ═════════════════════════════ */
-function iniciarUI(){
-  // Orden importante: Choices.js primero. Mientras los filtros son <select
-  // multiple> nativos la cabecera mide cientos de píxeles y el mapa se queda
-  // con una franja de 5 px; Leaflet cachea ese tamaño al construirse.
-  iniciarSelectores();
-  crearMapa();
-  verVista('tabla');
-  actContador();
-  pintarDimensiones();
+/* Lo mínimo para pintar la pestaña por defecto. El mapa NO se inicia aquí:
+   lo hace iniciarMapa() (JsNucleo) en segundo plano cuando Ventas MTD ya
+   está en pantalla, o antes si el usuario abre "Mapa". */
+function iniciarUIBasica(){
+  // Choices.js lo necesitan ya los filtros de Ventas MTD: se precarga en
+  // paralelo con la llamada al servidor (no bloquea el pintado).
+  cargarLib('choices',function(){});
   // Ventas MTD es la vista por defecto (a pedido del usuario): dispara la
   // misma carga perezosa + el ocultamiento de la barra de filtros del mapa
   // que pasaría si el usuario acabara de hacer clic en esa pestaña.
@@ -575,5 +582,17 @@ function iniciarUI(){
     var panel=panelFiltrosMovilActual();
     if(panel&&panel.classList.contains('abierto')&&e.target.id!=='btnFiltrosMovil'&&
        (!e.target.closest||!e.target.closest('.mtd-filtros, #barraFiltros')))cerrarFiltrosMovil()});
+}
+
+/* Interfaz del mapa (la llama iniciarMapa() cuando Leaflet y Choices ya llegaron). */
+function iniciarMapaUI(){
+  // Orden importante: Choices.js primero. Mientras los filtros son <select
+  // multiple> nativos la cabecera mide cientos de píxeles y el mapa se queda
+  // con una franja de 5 px; Leaflet cachea ese tamaño al construirse.
+  iniciarSelectores();
+  crearMapa();
+  verVista('tabla');
+  actContador();
+  pintarDimensiones();
 }
 </script>

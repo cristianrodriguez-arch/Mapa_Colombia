@@ -4,21 +4,21 @@
 <base target="_top">
 <meta charset="utf-8">
 
-<!-- Mapa -->
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin=""/>
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
-
-<!-- Filtros multi-selección. Si el CDN está bloqueado, JsFiltros.html detecta que
-     window.Choices no existe y deja los <select multiple> nativos funcionando. -->
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/choices.js@10.2.0/public/assets/styles/choices.min.css"/>
-<script src="https://cdn.jsdelivr.net/npm/choices.js@10.2.0/public/assets/scripts/choices.min.js"></script>
+<!-- Librerías externas: Leaflet (mapa) y Choices.js (filtros multi-selección) YA NO
+     van aquí. Antes eran scripts bloqueantes: la página quedaba en blanco hasta que
+     respondían dos CDN, aunque la pestaña por defecto (Ventas MTD) no usa el mapa.
+     Ahora cargarLib() (JsNucleo.html) las inyecta bajo demanda; si una falla, los
+     <select multiple> nativos siguen funcionando. Sus hojas de estilo se insertan
+     ANTES de #libs-ancla para que Estilos.html siga ganando la cascada. -->
+<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+<link rel="preconnect" href="https://unpkg.com" crossorigin>
+<meta id="libs-ancla" name="libs-ancla" content="">
 
 <?!= include('Estilos'); ?>
 </head>
 <body>
 
-<!-- ═══ Capa de carga y modales ═══════════════════════════════════════ -->
-<div id="overlay" class="overlay"><div class="caja" id="overlayTexto">Cargando datos…</div></div>
+<!-- ═══ Modales ═══════════════════════════════════════════════════════ -->
 
 <div id="modalDiag" class="modal" onclick="if(event.target===this)cerrarDiag()">
   <div class="caja">
@@ -149,6 +149,8 @@
         </div>
         <div class="mapa-wrap">
           <div id="map"></div>
+          <!-- Carga del mapa: local a este panel (antes era una capa fija sobre toda la app). -->
+          <div id="overlay" class="overlay"><div class="caja" id="overlayTexto">Preparando el mapa…</div></div>
           <div class="banda-prod" id="bandaProd">
             <span id="bandaTxt"></span>
             <span class="x" onclick="seleccionarSku('')" title="Salir del análisis de producto">✕</span>
@@ -244,25 +246,29 @@
       </span>
     </div>
 
+    <!-- Un solo juego de filtros gobierna TODA la hoja (KPIs, Por Cliente, Por KAM,
+         Por Producto e Histórico). Multi-selección con buscador (Selector/Choices,
+         el mismo control del mapa); se aplican al elegir, sin botón "Aplicar". -->
     <div class="card mtd-filtros">
       <div class="campo">
         <label for="mtdCanal">Canal</label>
-        <select id="mtdCanal" onchange="renderVentasMtd()"><option value="TODOS">Todos los canales</option></select>
+        <select id="mtdCanal" multiple></select>
       </div>
       <div class="campo">
         <label for="mtdKam">KAM</label>
-        <select id="mtdKam" onchange="renderVentasMtd()"><option value="TODOS">Todos los KAM</option></select>
+        <select id="mtdKam" multiple></select>
       </div>
-      <div class="campo">
+      <div class="campo campo-ancho">
         <label for="mtdCliente">Cliente</label>
-        <input type="text" id="mtdCliente" placeholder="Buscar cliente…" autocomplete="off"
-               onkeydown="if(event.key==='Enter')renderVentasMtd()">
+        <select id="mtdCliente" multiple></select>
       </div>
       <div class="acciones">
-        <button class="mtd-btn" onclick="renderVentasMtd()">Aplicar Filtros</button>
-        <button class="btn" onclick="mtdLimpiarFiltros()">Limpiar</button>
+        <button class="btn" onclick="mtdLimpiarFiltros()" title="Quitar todos los filtros">Limpiar<span
+          class="contador-filtros" id="mtdContador" hidden>0</span></button>
       </div>
     </div>
+
+    <div id="mtdAvisos" class="mtd-avisos" hidden></div>
 
     <div id="mtdEstado" class="mtd-estado"><span class="mtd-spinner"></span>Cargando datos…</div>
 
@@ -288,7 +294,8 @@
         <div class="mtd-barra"><span id="mtdKpiBarra" style="width:0%"></span></div>
       </div>
 
-      <div class="mtd-grid">
+      <!-- Apilado (1 columna): Por Cliente y Por KAM ganaron columnas A-1 / Δ y no caben 3fr/2fr. -->
+      <div class="mtd-grid mtd-grid-apilado">
         <div class="card mtd-panel">
           <div class="mtd-panel-cab"><h3>Por Cliente</h3><button class="mtd-btn-csv" onclick="mtdCsvClientes()" title="Descargar lo que muestra la tabla">⬇ CSV</button></div>
           <div class="hint" id="mtdHintClientes"></div>
@@ -303,7 +310,7 @@
 
       <div class="card mtd-panel">
         <div class="mtd-panel-cab"><h3>Por Producto</h3><button class="mtd-btn-csv" onclick="mtdCsvProductos()" title="Descargar lo que muestra la tabla">⬇ CSV</button></div>
-        <div class="hint" id="mtdHintProductos">Hoja PLANTILLA · no se filtra por canal/KAM/cliente (esa hoja no trae esos datos) · ΔV-1 % compara contra el mes anterior</div>
+        <div class="hint" id="mtdHintProductos"></div>
         <div class="mtd-scroll"><table class="mtd-tabla" id="mtdTablaProductos"></table></div>
       </div>
 
@@ -347,9 +354,7 @@
           </div>
         </div>
 
-        <div id="mtdHistEstado" class="mtd-estado"><span class="mtd-spinner"></span>Cargando histórico…</div>
-
-        <div id="mtdHistContenido" style="display:none">
+        <div id="mtdHistContenido">
           <div class="mtd-historico-layout">
             <div class="card mtd-panel">
               <h3>Por Cliente</h3>
@@ -484,6 +489,6 @@
 <?!= include('JsPaneles'); ?>
 <?!= include('JsVentasMtd'); ?>
 <?!= include('JsSIvsSO'); ?>
-<script>iniciarUI();cargarDatos();</script>
+<script>iniciarUIBasica();</script>
 </body>
 </html>

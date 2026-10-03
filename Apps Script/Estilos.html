@@ -224,8 +224,11 @@ html,body{margin:0;padding:0;height:100%;background:var(--lienzo);color:var(--in
 .tab-datos tr.fila-total:hover{background:var(--lienzo);cursor:default}
 
 /* ── Overlay y modales ──────────────────────────────────────────────── */
-.overlay{position:fixed;inset:0;z-index:5000;display:flex;align-items:center;justify-content:center;
+.overlay{position:absolute;inset:0;z-index:1100;display:flex;align-items:center;justify-content:center;
   background:rgba(243,244,246,.8);font-weight:600;color:var(--ink-2)}
+/* Antes era position:fixed sobre TODA la app y esperaba los 5 endpoints del mapa
+   aunque la pestaña visible fuera Ventas MTD: ahora vive dentro de .mapa-wrap y
+   solo tapa el mapa mientras este carga. */
 .overlay .caja{background:var(--surface);border:1px solid var(--borde);padding:14px 28px;
   border-radius:var(--radio-lg);box-shadow:0 6px 20px rgba(17,24,39,.10)}
 /* rgba(17,24,39,.35) sobre un fondo claro se ve casi igual de brillante que
@@ -292,7 +295,8 @@ html,body{margin:0;padding:0;height:100%;background:var(--lienzo);color:var(--in
    nombres de PDV/brick largos. Selector de 3 clases a propósito: el CSS de
    Choices trae `.choices__list[aria-expanded]{width:100%}`, que por especificidad
    (0,2,0) gana a un `.choices__list--dropdown` pelado. */
-.filtros .choices .choices__list--dropdown{border:1px solid var(--borde);
+.filtros .choices .choices__list--dropdown,
+.mtd-filtros .choices .choices__list--dropdown{border:1px solid var(--borde);
   border-radius:var(--radio);box-shadow:0 8px 22px rgba(17,24,39,.14);z-index:3000;
   width:270px;min-width:100%;max-width:90vw}
 .choices__list--dropdown .choices__list{max-height:270px}
@@ -362,6 +366,7 @@ html,body{margin:0;padding:0;height:100%;background:var(--lienzo);color:var(--in
 .mtd-filtros label{font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-2)}
 .mtd-filtros select,.mtd-filtros input[type=text]{padding:7px 8px;border:1px solid var(--borde);
   border-radius:6px;background:var(--surface);color:var(--ink);font-size:13px;width:100%}
+.mtd-filtros .campo-ancho{flex:2 1 300px}
 .mtd-filtros .acciones{display:flex;gap:8px}
 .mtd-btn{padding:8px 14px;border:1px solid var(--accent);border-radius:6px;
   background:var(--accent);color:#fff;font-size:12.5px;font-weight:600;cursor:pointer}
@@ -389,6 +394,7 @@ html,body{margin:0;padding:0;height:100%;background:var(--lienzo);color:var(--in
 
 .mtd-grid{display:grid;grid-template-columns:3fr 2fr;gap:12px;margin-bottom:14px}
 @media(max-width:1100px){.mtd-grid{grid-template-columns:1fr}}
+.mtd-grid.mtd-grid-apilado{grid-template-columns:1fr}
 .mtd-panel{padding:12px 14px;min-width:0}
 .mtd-panel-cab{display:flex;align-items:center;justify-content:space-between;gap:10px}
 .mtd-btn-csv{padding:3px 9px;border:1px solid var(--borde);border-radius:var(--radio);
@@ -407,7 +413,25 @@ html,body{margin:0;padding:0;height:100%;background:var(--lienzo);color:var(--in
    de la app y la hacia sentir como una hoja de calculo pegada aparte. */
 .mtd-tabla th{position:sticky;top:0;z-index:1;background:var(--surface);color:var(--ink-2);
   text-align:right;font-weight:700;font-size:9.5px;padding:6px 10px;
-  text-transform:uppercase;letter-spacing:.04em;border-bottom:1px solid var(--borde-2)}
+  text-transform:uppercase;letter-spacing:.04em;
+  /* box-shadow y no border-bottom: con border-collapse el borde del th sticky se
+     queda atrás al hacer scroll y la línea del encabezado desaparece. */
+  box-shadow:inset 0 -1px 0 var(--borde-2)}
+/* Encabezados ordenables (mtdTabla en JsVentasMtd.html). La flecha aparece solo
+   en la columna activa; las demás muestran una pista suave al pasar el mouse. */
+.mtd-tabla th.ord{cursor:pointer;user-select:none}
+.mtd-tabla th.ord:hover{color:var(--accent)}
+.mtd-tabla th.ord:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+.mtd-tabla th.ord::after{content:'';display:inline-block;width:0;margin-left:0}
+.mtd-tabla th[aria-sort=descending]::after{content:'▼';font-size:8px;margin-left:4px;width:auto;color:var(--accent)}
+.mtd-tabla th[aria-sort=ascending]::after{content:'▲';font-size:8px;margin-left:4px;width:auto;color:var(--accent)}
+.mtd-tabla th[aria-sort=descending],.mtd-tabla th[aria-sort=ascending]{color:var(--ink)}
+.mtd-tabla caption.ord-movil{display:none}
+.mtd-tabla tbody tr.clicable{cursor:pointer}
+.mtd-tabla tbody tr.sel{background:var(--accent-suave)}
+.mtd-tabla .nuevo{color:var(--ink-2);font-style:italic}
+.mtd-avisos{display:flex;flex-direction:column;gap:6px;margin-bottom:12px}
+.mtd-avisos[hidden]{display:none}
 .mtd-tabla th:first-child,.mtd-tabla td:first-child{text-align:left;white-space:normal;min-width:150px}
 .mtd-tabla td{padding:6px 10px;text-align:right;border-bottom:1px solid var(--borde);color:var(--ink)}
 .mtd-tabla tbody tr:nth-child(even){background:rgba(11,11,11,.02)}
@@ -540,6 +564,12 @@ html,body{margin:0;padding:0;height:100%;background:var(--lienzo);color:var(--in
    cada <td> (salvo el primero) traiga data-th="<mismo texto del th>". ── */
 @media(max-width:700px){
   .mtd-tabla thead{display:none}
+  .mtd-tabla caption.ord-movil{display:flex;gap:8px;align-items:center;padding:4px 0 8px;
+    font-size:11px;color:var(--ink-2);text-align:left;caption-side:top}
+  .mtd-tabla caption.ord-movil label{flex:1;display:flex;gap:6px;align-items:center}
+  .mtd-tabla caption.ord-movil select{flex:1;padding:5px 6px;border:1px solid var(--borde);
+    border-radius:6px;background:var(--surface);color:var(--ink);font-size:12px}
+  .mtd-tabla caption{display:block}
   .mtd-tabla,.mtd-tabla tbody,.mtd-tabla tr,.mtd-tabla td{display:block;width:100%}
   .mtd-tabla{white-space:normal}
   .mtd-tabla tr{padding:8px 2px;border-bottom:1px solid var(--borde)}

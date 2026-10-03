@@ -11,6 +11,9 @@ var TOPE_TABLA_RAIL=100, TOPE_TABLA_MODAL=500;
 /* ══════════════ Ciclo de actualización ══════════════════════════════ */
 function actualizar(){
   if(!listo.puntos)return;
+  // Con otra pestaña visible no se recrean los marcadores del mapa: se marca
+  // sucio y mapaAlEntrar() repinta una sola vez al volver a "Mapa".
+  if(mtdVistaActiva!=='mapa'||mapaEstado!=='listo'){mapaSucio=true;return}
   var vis=visibles(),vv=vis.map(ventaPDV);
 
   // Agregados por brick (Sell Out, Sell Out conectado y cobertura de agente).

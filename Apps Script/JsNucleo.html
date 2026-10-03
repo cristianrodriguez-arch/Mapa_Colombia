@@ -2,9 +2,18 @@
 /* ══════════════════════════════════════════════════════════════════════
    NÚCLEO · configuración, estado global, formatos y carga de datos.
    Todo el filtrado posterior ocurre EN MEMORIA sobre estos arreglos:
-   google.script.run solo se usa al arrancar (5 llamadas paralelas) y para
-   los detalles que se piden bajo demanda (portafolio, distribución de SKU,
-   conteo de SKUs). Tocar un filtro nunca vuelve al servidor.
+   google.script.run solo se usa al abrir cada pestaña y para los detalles que
+   se piden bajo demanda (portafolio, distribución de SKU, conteo de SKUs).
+   Tocar un filtro nunca vuelve al servidor.
+
+   ARRANQUE (orden que NO se debe invertir):
+     1. iniciarUIBasica()  pinta la pestaña por defecto (Ventas MTD) y pide su
+                           ÚNICA llamada al servidor; precarga Choices.js.
+     2. Cuando Ventas MTD ya está en pantalla, programarMapa() inicia el mapa en
+        segundo plano (cargarLib Leaflet → iniciarMapaUI → cargarDatos: 5
+        llamadas). Si el usuario abre "Mapa" antes, mapaAlEntrar() lo adelanta.
+     Antes todo esto corría junto al inicio (7 llamadas, un overlay que tapaba la
+     app y dos CDN bloqueantes), y Ventas MTD esperaba al mapa que no usa.
    ══════════════════════════════════════════════════════════════════════ */
 
 /* ── Paletas (color con significado, nunca decorativo) ──────────────── */
@@ -47,6 +56,42 @@ var modoColor='rendimiento';
 
 var listo={puntos:false,bricks:false,ventas:false,port:false,asignaciones:false};
 var asignado=false;
+/* Ciclo de vida del mapa: 'no' → 'cargando' → 'listo' ('error' si falla el CDN).
+   mapaSucio = hubo datos nuevos mientras otra pestaña estaba visible; se repinta
+   una sola vez al volver a Mapa (actualizar() recrea todos los marcadores). */
+var mapaEstado='no',mapaSucio=false,pintadoBase=false,pintadoAsig=false,portDibujado=false;
+
+/* ── Carga de librerías externas bajo demanda ───────────────────────────
+   Leaflet y Choices.js ya no son <script> bloqueantes del <head>: cargarLib()
+   las inyecta cuando hacen falta y avisa con cb(ok). Las hojas de estilo van
+   ANTES de #libs-ancla (que está antes de Estilos.html) para que los overrides
+   propios sigan ganando la cascada por orden. */
+var LIBS={
+  choices:{css:'https://cdn.jsdelivr.net/npm/choices.js@10.2.0/public/assets/styles/choices.min.css',
+           js:'https://cdn.jsdelivr.net/npm/choices.js@10.2.0/public/assets/scripts/choices.min.js',
+           ok:function(){return typeof Choices==='function'},cross:false},
+  leaflet:{css:'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css',
+           js:'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js',
+           ok:function(){return typeof L!=='undefined'&&!!L.map},cross:true}};
+var libEstado={};
+function cargarLib(nombre,cb){
+  var l=LIBS[nombre],e=libEstado[nombre];
+  if(l.ok()){cb(true);return}
+  if(e&&e.fin){cb(e.ok);return}
+  if(e){e.cbs.push(cb);return}
+  e=libEstado[nombre]={fin:false,ok:false,cbs:[cb]};
+  function fin(ok){
+    if(e.fin)return;e.fin=true;e.ok=ok&&l.ok();
+    e.cbs.forEach(function(f){try{f(e.ok)}catch(err){console.error(err)}});e.cbs=[]}
+  var ancla=document.getElementById('libs-ancla')||document.head.lastChild;
+  var k=document.createElement('link');k.rel='stylesheet';k.href=l.css;
+  if(l.cross)k.crossOrigin='';
+  ancla.parentNode.insertBefore(k,ancla);
+  var s=document.createElement('script');s.src=l.js;s.async=true;
+  if(l.cross)s.crossOrigin='';
+  s.onload=function(){fin(true)};s.onerror=function(){fin(false)};
+  setTimeout(function(){fin(false)},20000);          // CDN colgado: no esperar para siempre
+  document.head.appendChild(s)}
 
 /* ── Utilidades de entorno ──────────────────────────────────────────── */
 function esGas(){return typeof google!=='undefined'&&google.script&&google.script.run}
@@ -54,7 +99,34 @@ function me(e){return e&&e.message?e.message:String(e)}
 function avisar(m,g){var c=document.getElementById('avisos');c.style.display='flex';
   var d=document.createElement('div');d.className='aviso'+(g?' grave':'');d.innerText=m;c.appendChild(d)}
 
-/* ══════════════ Carga de datos ══════════════════════════════════════ */
+/* ══════════════ Arranque diferido del mapa ═════════════════════════ */
+function programarMapa(){
+  if(mapaEstado!=='no')return;
+  var ir=function(){iniciarMapa()};
+  // En idle (con tope de 3 s) para no competir con el render de Ventas MTD.
+  if(window.requestIdleCallback)requestIdleCallback(ir,{timeout:3000});else setTimeout(ir,600)}
+
+/* Primera vez que el usuario abre "Mapa" (o cada vez que vuelve a él). */
+function mapaAlEntrar(){
+  if(mapaEstado==='no')iniciarMapa();
+  else if(mapaEstado==='listo'&&mapaSucio){mapaSucio=false;actualizar()}}
+
+function iniciarMapa(){
+  if(mapaEstado!=='no')return;
+  mapaEstado='cargando';
+  var t=document.getElementById('overlayTexto');if(t)t.innerText='Preparando el mapa…';
+  cargarLib('leaflet',function(okL){
+    cargarLib('choices',function(){
+      if(!okL){
+        mapaEstado='error';
+        if(t)t.innerText='No se pudo cargar el mapa (Leaflet no llegó desde el CDN). Recarga la página.';
+        avisar('Leaflet no cargó desde el CDN: el mapa no está disponible.',true);return}
+      // Orden importante (ver CLAUDE.md): Choices primero, luego el mapa.
+      iniciarMapaUI();
+      mapaEstado='listo';
+      cargarDatos()})})}
+
+/* ══════════════ Carga de datos del mapa ═════════════════════════════ */
 function cargarDatos(){
   if(!esGas()){setTimeout(cargarMock,250);return}
   google.script.run.withSuccessHandler(function(j){recPuntos(JSON.parse(j))})
@@ -93,17 +165,25 @@ function recPort(p){
   validarSku();listo.port=true;boot()}
 function recAsignaciones(p){asignacionesG=p.pdv||{};listo.asignaciones=true;boot()}
 
+/* boot() lo llama cada una de las 5 respuestas. Antes disparaba actualizar()
+   en TODAS (hasta 5 corridas completas que recreaban todos los marcadores);
+   ahora una sola cuando puntos+bricks+ventas están listos y otra cuando llegan
+   las asignaciones (las necesitan los badges y el filtro de agente). */
 function boot(){
   actOverlay();
   if(listo.bricks&&listo.puntos&&!asignado){
     asignarBricks();dibujarBricks();asignado=true;
-    if(bbBricks&&bbBricks.isValid())map.fitBounds(bbBricks,{padding:[30,30]})}
-  if(listo.puntos)actualizar();
+    // En un mapa oculto (0x0) fitBounds calcularía un zoom absurdo: el
+    // ResizeObserver de JsMapa reencuadra cuando la pestaña se hace visible.
+    if(map&&map.getSize().x>0&&bbBricks&&bbBricks.isValid())map.fitBounds(bbBricks,{padding:[30,30]})}
+  if(listo.puntos&&listo.bricks&&listo.ventas){
+    if(!pintadoBase){pintadoBase=true;pintadoAsig=listo.asignaciones;actualizar()}
+    else if(listo.asignaciones&&!pintadoAsig){pintadoAsig=true;actualizar()}}
   // El portafolio depende de idxSel (definido en recVentas): esperar ambos.
-  if(listo.port&&listo.ventas)dibujarPort()}
+  if(listo.port&&listo.ventas&&!portDibujado){portDibujado=true;dibujarPort()}}
 
 function actOverlay(){
-  var o=document.getElementById('overlay');
+  var o=document.getElementById('overlay');if(!o)return;
   if(listo.puntos&&listo.bricks&&listo.ventas&&listo.port&&listo.asignaciones){o.style.display='none';return}
   var f=[];if(!listo.puntos)f.push('PDV');if(!listo.bricks)f.push('bricks');
   if(!listo.ventas)f.push('Sell Out');if(!listo.port)f.push('portafolio');
@@ -114,9 +194,10 @@ function actOverlay(){
 function abrirDiag(){document.getElementById('modalDiag').style.display='flex';
   var p=document.getElementById('diagTexto');
   if(!esGas()){p.innerText='Solo disponible dentro de Apps Script.';return}
-  p.innerText='Consultando…';
-  google.script.run.withSuccessHandler(function(j){p.innerText=JSON.stringify(JSON.parse(j),null,2)})
-    .withFailureHandler(function(e){p.innerText='Error: '+me(e)}).getDiagnosticoJson()}
+  var mtd=(typeof mtdTextoConciliacion==='function')?mtdTextoConciliacion():'';
+  p.innerText=mtd+'Consultando…';
+  google.script.run.withSuccessHandler(function(j){p.innerText=mtd+JSON.stringify(JSON.parse(j),null,2)})
+    .withFailureHandler(function(e){p.innerText=mtd+'Error: '+me(e)}).getDiagnosticoJson()}
 function cerrarDiag(){document.getElementById('modalDiag').style.display='none'}
 
 /* ══════════════ Datos de prueba (solo fuera de Apps Script) ══════════
