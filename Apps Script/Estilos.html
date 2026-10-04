@@ -428,7 +428,14 @@ html,body{margin:0;padding:0;height:100%;background:var(--lienzo);color:var(--in
 .mtd-tabla th[aria-sort=descending],.mtd-tabla th[aria-sort=ascending]{color:var(--ink)}
 .mtd-tabla caption.ord-movil{display:none}
 .mtd-tabla tbody tr.clicable{cursor:pointer}
-.mtd-tabla tbody tr.sel{background:var(--accent-suave)}
+.mtd-tabla tbody tr.clicable:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+/* Filtrado cruzado: fila elegida = fondo suave + franja fina de acento; con una
+   selección activa, las no elegidas se atenúan (mismo criterio que .apagada). */
+.mtd-tabla tbody tr.sel,.mtd-tabla tbody tr.sel:nth-child(even){background:var(--accent-suave)}
+.mtd-tabla tbody tr.sel td:first-child{box-shadow:inset 3px 0 0 var(--accent)}
+.mtd-tabla tbody tr.atenuada td{opacity:.45}
+.mtd-tabla tbody tr.atenuada:hover td{opacity:.8}
+.mtd-tabla td.nd{color:var(--muted);font-style:italic}
 .mtd-tabla .nuevo{color:var(--ink-2);font-style:italic}
 .mtd-avisos{display:flex;flex-direction:column;gap:6px;margin-bottom:12px}
 .mtd-avisos[hidden]{display:none}
@@ -473,6 +480,31 @@ html,body{margin:0;padding:0;height:100%;background:var(--lienzo);color:var(--in
   cursor:pointer;white-space:nowrap;font-family:inherit}
 .chip-periodo:hover{border-color:var(--ink)}
 .chip-periodo.activo{background:var(--ink);color:#fff;border-color:var(--ink)}
+
+/* ── Filtros activos (filtrado cruzado): mismo chip oscuro que .chip-periodo.activo
+   con una × para quitarlo; "Quitar todos" es texto plano. ── */
+.chips-activos{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-bottom:12px}
+.chips-activos[hidden]{display:none}
+.chips-activos-etq{font-size:9.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--muted);margin-right:2px}
+.chip-filtro{display:inline-flex;align-items:center;gap:6px;padding:4px 6px 4px 11px;border-radius:999px;
+  font-size:12px;font-weight:600;font-family:inherit;color:#fff;background:var(--ink);
+  border:1px solid var(--ink);cursor:pointer;max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.chip-filtro .x{font-size:14px;line-height:1;opacity:.7;padding:0 3px}
+.chip-filtro:hover .x{opacity:1}
+.chip-filtro:focus-visible,.chip-filtro-limpiar:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.chip-filtro-limpiar{border:none;background:none;font-family:inherit;font-size:12px;font-weight:600;
+  color:var(--ink-2);cursor:pointer;text-decoration:underline;padding:4px 6px}
+.chip-filtro-limpiar:hover{color:var(--accent)}
+
+/* ── Gráficos clicables (barras de trimestre/mes, leyenda del donut): mismo
+   estado seleccionado/atenuado que las filas de tabla ── */
+.hist-barcol.clicable,.sivso-mescol.clicable{cursor:pointer;border-radius:6px}
+.hist-barcol.clicable:hover,.sivso-mescol.clicable:hover{background:var(--lienzo)}
+.hist-barcol.clicable:focus-visible,.sivso-mescol.clicable:focus-visible,.sivso-donut-it.clicable:focus-visible{
+  outline:2px solid var(--accent);outline-offset:2px}
+.hist-barcol.sel,.sivso-mescol.sel{background:var(--accent-suave);box-shadow:inset 0 -3px 0 var(--accent)}
+.hist-barcol.atenuada .hist-bar,.sivso-mescol.atenuada .sivso-bar{opacity:.35}
+.hist-barcol.atenuada .hist-barval,.hist-barcol.atenuada .hist-barcat,.sivso-mescol.atenuada .sivso-mescat{opacity:.5}
 
 /* ── Gráfico Venta vs. Plan por trimestre (reemplaza la tabla "Por
    Trimestre": la misma información, más legible de un vistazo) ────────── */
@@ -528,7 +560,13 @@ html,body{margin:0;padding:0;height:100%;background:var(--lienzo);color:var(--in
 .sivso-donut-hueco .et{font-size:9.5px;font-weight:600;color:var(--muted);
   text-transform:uppercase;letter-spacing:.04em;margin-top:2px}
 .sivso-donut-leyenda{display:flex;flex-direction:column;gap:6px;min-width:0}
-.sivso-donut-it{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--ink-2)}
+.sivso-donut-it{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--ink-2);
+  background:none;border:none;font-family:inherit;text-align:left;padding:3px 6px;margin:-3px -6px;
+  border-radius:6px;width:calc(100% + 12px)}
+.sivso-donut-it.clicable{cursor:pointer}
+.sivso-donut-it.clicable:hover{background:var(--lienzo)}
+.sivso-donut-it.sel{background:var(--accent-suave);box-shadow:inset 3px 0 0 var(--accent);color:var(--ink)}
+.sivso-donut-it.atenuada{opacity:.45}
 .sivso-donut-it .sw{width:10px;height:10px;border-radius:3px;flex-shrink:0}
 .sivso-donut-it .nom{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:150px}
 .sivso-donut-it .pct{margin-left:auto;font-weight:700;color:var(--ink);font-variant-numeric:tabular-nums}

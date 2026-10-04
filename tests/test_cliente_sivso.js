@@ -138,9 +138,108 @@ t('clic en "Sell In" ordena de mayor a menor y deja la fila TOTAL al final', () 
   assert.ok(h.lastIndexOf('class="total"') > h.lastIndexOf('PROD 3'));
 });
 t('el filtro por KAM recorta Productos, Clientes y KPI', () => {
-  c.document.getElementById('sivsoKam').value = 'K2'; c.renderSIvsSO();
+  c.setSivsoFiltro('kam', ['K2']); c.renderSIvsSO();
   assert.strictEqual(c.sivsoVistaClientes.length, 1);
   assert.strictEqual(c.sivsoVistaClientes[0].cliente, 'CLI 2');
-  c.document.getElementById('sivsoKam').value = 'TODOS';
+  c.sivsoLimpiarFiltros();
+});
+
+console.log('SI vs SO · filtrado cruzado (clic en tablas y gráficos, estilo Looker)');
+const E = c.document.els, soKpi = () => E.sivsoKpiSo.innerText.replace(/\s/g, ' ');
+const filaDe = (id, pred) => Array.from(c.MTD_TABLAS[id].vista).findIndex(pred);
+t('estado: setSivsoFiltro mantiene el espejo; OR dentro de una dimensión, AND entre dimensiones', () => {
+  c.setSivsoFiltro('kam', ['K1', 'K2']); c.setSivsoFiltro('brand', ['DM']);
+  assert.deepStrictEqual(Object.keys(c.sivsoFset.kam), ['K1', 'K2']);
+  assert.deepStrictEqual(Array.from(c.sivsoFilas().map(f => f.productId)), ['P2', 'P2']);   // solo DM: CLI2/P2 (SI/SO ago + foto INV)
+  c.sivsoLimpiarFiltros();
+  assert.strictEqual(c.sivsoFset.kam, null);
+});
+t('cascada: las opciones de cada selector salen de los DEMÁS filtros, no del suyo', () => {
+  c.setSivsoFiltro('kam', ['K2']);
+  assert.deepStrictEqual(Array.from(c.sivsoOpciones('brand').map(o => o.valor)), ['DM']);      // K2 solo compra P2/DM
+  assert.deepStrictEqual(Array.from(c.sivsoOpciones('kam').map(o => o.valor)), ['K1', 'K2']);  // el KAM no se filtra a sí mismo
+  c.sivsoLimpiarFiltros();
+});
+t('clic en un producto: KPI y Clientes se filtran, la tabla Productos NO se encoge y marca la fila', () => {
+  c.renderSIvsSO();
+  c.mtdClicTabla('sivsoTablaProductos', filaDe('sivsoTablaProductos', x => x.producto === 'PROD 1'));
+  assert.deepStrictEqual(Array.from(c.sivsoFiltros.producto), ['P1']);
+  assert.ok(/880/.test(soKpi()), soKpi());                                   // 8 meses × 110 (jul sin dato)
+  assert.strictEqual(c.sivsoVistaProductos.length, 3);                       // P1, P2 y P3 siguen en la tabla
+  const h = E.sivsoTablaProductos.innerHTML;
+  assert.strictEqual((h.match(/class="clicable sel"/g) || []).length, 1);
+  assert.strictEqual((h.match(/class="clicable atenuada"/g) || []).length, 2);
+  assert.ok(/TOTAL SELECCIÓN/.test(h));
+  assert.strictEqual(c.sivsoVistaClientes.length, 1);                        // solo quien compró P1
+  c.mtdClicTabla('sivsoTablaProductos', filaDe('sivsoTablaProductos', x => x.producto === 'PROD 1'));   // 2.º clic lo quita
+  assert.deepStrictEqual(Array.from(c.sivsoFiltros.producto), []);
+});
+t('clic en un cliente: la tabla Clientes conserva a todos y los % Part no cambian', () => {
+  c.renderSIvsSO();
+  const antes = c.sivsoVistaClientes.map(x => x.partSo).join();
+  c.mtdClicTabla('sivsoTablaClientes', filaDe('sivsoTablaClientes', x => x.cliente === 'CLI 2'));
+  assert.deepStrictEqual(Array.from(c.sivsoFiltros.cliente), ['2']);        // clave = SAP ID
+  assert.strictEqual(c.sivsoVistaClientes.length, 2);
+  assert.strictEqual(c.sivsoVistaClientes.map(x => x.partSo).join(), antes);
+  assert.ok(/-\$\s?30/.test(soKpi().replace('−', '-')), soKpi());          // CLI 2: SO −30 en ago
+  assert.strictEqual(c.sivsoVistaProductos.length, 1);                      // Productos sí se filtra: solo PROD 2
+  c.sivsoLimpiarFiltros();
+});
+t('clic en un mes: KPI, Δ e INV se limitan a ese mes; el gráfico sigue con 12 meses y marca el elegido', () => {
+  c.renderSIvsSO();
+  c.sivsoAlternar('mes', 8);                                                 // ago: CLI1/P1 110 + CLI2/P2 −30 = 80
+  assert.ok(/80/.test(soKpi()), soKpi());
+  assert.ok(/Ago 2025/.test(E.sivsoKpiSoDet.innerHTML), E.sivsoKpiSoDet.innerHTML);   // contra el mismo mes del año anterior
+  const g = E.sivsoGraficoMensual.innerHTML;
+  assert.strictEqual((g.match(/class="sivso-mescol/g) || []).length, 12);
+  assert.strictEqual((g.match(/sivso-mescol clicable sel/g) || []).length, 1);
+  assert.strictEqual((g.match(/sivso-mescol clicable atenuada/g) || []).length, 11);
+  assert.strictEqual(c.sivsoVistaProductos.find(x => x.producto === 'PROD 1').inv, 40);   // foto de ago, dentro del mes elegido
+  assert.strictEqual(c.sivsoVistaProductos.find(x => x.producto === 'PROD 1').promSo, (0 + 110 + 110) / 3);  // Prom SO no depende del mes
+  c.sivsoAlternar('mes', 8); c.sivsoAlternar('mes', 9);                       // varios meses se acumulan y se pueden quitar
+  c.sivsoAlternar('mes', 7);
+  assert.deepStrictEqual(Array.from(c.sivsoFiltros.mes), [9, 7]);
+  c.sivsoLimpiarFiltros();
+});
+t('clic en una BU de la leyenda del donut filtra por esa BU y marca la leyenda', () => {
+  c.renderSIvsSO();
+  assert.strictEqual(c.sivsoDonutItems[0].k, 'FOTO');                        // "Foto" y "FOTO" agrupadas
+  c.sivsoClicDonut(0);
+  assert.deepStrictEqual(Array.from(c.sivsoFiltros.buK), ['FOTO']);
+  assert.ok(/sivso-donut-it clicable sel/.test(E.sivsoDonutBu.innerHTML));
+  assert.ok(/890/.test(soKpi()), soKpi());                                   // P1 880 + P3 10
+  assert.ok(/conic-gradient/.test(E.sivsoDonutBu.innerHTML));
+  c.sivsoClicDonut(0);
+  assert.deepStrictEqual(Array.from(c.sivsoFiltros.buK), []);
+});
+t('chips: un chip por filtro con nombres legibles, el texto de búsqueda también, y × quita uno', () => {
+  c.sivsoLimpiarFiltros();
+  assert.strictEqual(E.sivsoChips.hidden, true);
+  c.sivsoAlternar('cliente', '1'); c.sivsoAlternar('mes', 8); c.sivsoAlternar('producto', 'P1');
+  c.document.getElementById('sivsoCliente').value = 'cli'; c.renderSIvsSO();
+  const h = E.sivsoChips.innerHTML;
+  assert.ok(/Cliente: CLI 1/.test(h) && /Mes: Ago/.test(h) && /Producto: PROD 1/.test(h) && /Cliente contiene: cli/.test(h) && /Quitar todos/.test(h), h);
+  c.sivsoActualizarContador(); assert.strictEqual(E.sivsoContador.innerText, 4);
+  c.mtdQuitarChip('sivsoChips', 2);                                          // chip de Mes (orden: cliente, producto, mes, texto)
+  assert.deepStrictEqual(Array.from(c.sivsoFiltros.mes), []);
+  c.mtdQuitarChip('sivsoChips', 2);                                          // ahora el chip del texto de búsqueda es el 3.º → índice 2 tras quitar Mes
+  assert.strictEqual(c.document.getElementById('sivsoCliente').value, '');
+  c.mtdLimpiarChips('sivsoChips');
+  assert.ok(c.SIVSO_DIMS.every(d => c.sivsoFiltros[d].length === 0));
+  assert.strictEqual(E.sivsoChips.hidden, true);
+});
+t('el buscador de texto filtra clientes por subcadena sin acentos y se combina con los clics', () => {
+  c.document.getElementById('sivsoCliente').value = 'cli 1'; c.renderSIvsSO();
+  assert.strictEqual(c.sivsoVistaClientes.length, 1);
+  c.sivsoLimpiarFiltros();
+  assert.strictEqual(c.document.getElementById('sivsoCliente').value, '');
+  assert.strictEqual(c.sivsoVistaClientes.length, 2);
+});
+t('al recargar datos se descartan filtros que ya no existen', () => {
+  c.setSivsoFiltro('producto', ['P1', 'FANTASMA']); c.setSivsoFiltro('mes', [8, 3]);
+  c.onSIvsSOCargado({ v: 2, clientes, productos, filas, meta: {} });
+  assert.deepStrictEqual(Array.from(c.sivsoFiltros.producto), ['P1']);
+  assert.deepStrictEqual(Array.from(c.sivsoFiltros.mes), [8, 3]);           // 3 (mar) sí existe
+  c.sivsoLimpiarFiltros();
 });
 console.log('\n' + ok + ' pruebas OK' + (process.exitCode ? ' · HAY FALLAS' : ''));

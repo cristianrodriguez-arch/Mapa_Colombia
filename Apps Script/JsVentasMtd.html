@@ -67,6 +67,11 @@ function mtdDeltaImp(v,a,th){var d=mtdDeltaV(v,a);
   if(d==null&&v>0)return'<td'+(th?' data-th="'+esc(th)+'"':'')+' class="nuevo">Nuevo</td>';
   return mtdDelta(d,th)}
 function mtdTd(txt,th,clase){return'<td'+(th?' data-th="'+esc(th)+'"':'')+(clase?' class="'+clase+'"':'')+'>'+txt+'</td>'}
+/* "n/d" = la medida no existe con el filtro actual (Plan y Venta Año no existen
+   por producto). Distinto de "sin plan" (cliente sin meta) y de $0. */
+function mtdMonedaND(v){return v==null?'n/d':mtdMoneda(v)}
+function mtdCeldaMonedaND(v,th){return v==null?mtdTd('n/d',th,'nd'):mtdTd(mtdMoneda(v),th)}
+function mtdCeldaPctND(v,th,nd){return nd?mtdTd('n/d',th,'nd'):mtdCeldaPct(v,th)}
 
 /* ══════════ Tabla ordenable (helper único; lo usan también SI vs SO) ══════════
    mtdTabla({id, columnas, filas, total, orden, vacio, fila, alOrdenar})
@@ -77,6 +82,10 @@ function mtdTd(txt,th,clase){return'<td'+(th?' data-th="'+esc(th)+'"':'')+(clase
         abajo y NUNCA se ordena). orden: {k,dir} por defecto.
      fila(f) : atributos extra del <tr>. alOrdenar(vista): recibe las filas en el
         orden mostrado (para que el CSV exporte lo que se ve).
+     clic    : {valor(f), activo(f), haySel(), alClic(valor), titulo} vuelve cada fila
+        un filtro cruzado (estilo Looker): clic = alClic(valor(f)). Con selección
+        activa (haySel) las filas elegidas llevan .sel y las demás .atenuada: la
+        tabla NO se encoge, sigue mostrando todo su universo.
    Clic en un encabezado: 1.º mayor→menor (texto: A→Z) · 2.º invierte · 3.º vuelve
    al orden por defecto. Nulos siempre al final. El orden elegido se conserva al
    volver a filtrar (MTD_ORDEN[id]).                                          */
@@ -106,7 +115,10 @@ function mtdPintarTabla(id){
   if(!cfg||!el)return;
   var filas=cfg.filas.slice(),ord=mtdOrdenActual(cfg);
   if(ord)filas.sort(mtdComparador(ord.col,ord.dir));
+  cfg.vista=filas;                      // mtdClicTabla(id,i) resuelve la fila por este índice
   if(cfg.alOrdenar)cfg.alOrdenar(filas);
+  // Repintar con innerHTML resetea el scroll interno: se guarda y se restaura.
+  var cont=el.parentNode,scroll=(cont&&cont.scrollTop)||0;
   if(!filas.length){mtdVacio(id,cfg.vacio||'Sin datos con los filtros actuales');return}
   var h='<caption class="ord-movil">'+mtdSelectorOrdenMovil(cfg,ord)+'</caption><thead><tr>';
   cfg.columnas.forEach(function(c){
@@ -116,11 +128,47 @@ function mtdPintarTabla(id){
        '\')" onkeydown="if(event.key===\'Enter\'||event.key===\' \'){event.preventDefault();mtdOrdenar(\''+
        id+'\',\''+c.k+'\')}" title="Clic para ordenar">'+esc(c.t)+'</th>'});
   h+='</tr></thead><tbody>';
-  filas.forEach(function(f){h+='<tr'+(cfg.fila?cfg.fila(f):'')+'>'+
-    cfg.columnas.map(function(c){return c.celda(f,c.t)}).join('')+'</tr>'});
+  var clic=cfg.clic,haySel=!!(clic&&clic.haySel&&clic.haySel());
+  filas.forEach(function(f,i){
+    var at='';
+    if(clic){
+      var sel=haySel&&clic.activo(f);
+      at=' class="clicable'+(sel?' sel':(haySel?' atenuada':''))+'" data-i="'+i+'" tabindex="0" aria-selected="'+
+        (sel?'true':'false')+'" title="'+esc(clic.titulo||'Clic para filtrar el dashboard por esta fila')+
+        '" onclick="mtdClicTabla(\''+id+'\','+i+')" onkeydown="if(event.key===\'Enter\'||event.key===\' \'){event.preventDefault();mtdClicTabla(\''+
+        id+'\','+i+')}"'}
+    else if(cfg.fila)at=cfg.fila(f);
+    h+='<tr'+at+'>'+cfg.columnas.map(function(c){return c.celda(f,c.t)}).join('')+'</tr>'});
   if(cfg.total)h+=cfg.total;
   h+='</tbody>';
-  el.innerHTML=h}
+  el.innerHTML=h;
+  if(cont&&scroll)cont.scrollTop=scroll}
+
+/* Clic (o Enter/Espacio) en una fila con opción `clic`. */
+function mtdClicTabla(id,i){
+  var cfg=MTD_TABLAS[id];
+  if(!cfg||!cfg.clic||!cfg.vista||!cfg.vista[i])return;
+  cfg.clic.alClic(cfg.clic.valor(cfg.vista[i]))}
+
+/* ── Chips de filtros activos (los usan MTD y SI vs SO) ──
+   items: [{etq, dim, valor}]  ·  alQuitar(item)  ·  alLimpiar().
+   Son la señal de que el clic en una tabla/gráfico filtró el dashboard y la
+   forma de quitar filtros que no tienen selector propio. */
+var MTD_CHIPS={};
+function mtdPintarChips(contId,items,alQuitar,alLimpiar){
+  var cont=document.getElementById(contId);if(!cont)return;
+  MTD_CHIPS[contId]={items:items,alQuitar:alQuitar,alLimpiar:alLimpiar};
+  cont.hidden=!items.length;
+  if(!items.length){cont.innerHTML='';return}
+  cont.innerHTML='<span class="chips-activos-etq">Filtros activos</span>'+
+    items.map(function(it,i){
+      return'<button type="button" class="chip-filtro" onclick="mtdQuitarChip(\''+contId+'\','+i+')" title="Quitar este filtro">'+
+        esc(it.etq)+'<span class="x" aria-hidden="true">×</span></button>'}).join('')+
+    '<button type="button" class="chip-filtro-limpiar" onclick="mtdLimpiarChips(\''+contId+'\')">Quitar todos</button>'}
+function mtdQuitarChip(contId,i){
+  var c=MTD_CHIPS[contId];if(c&&c.items[i])c.alQuitar(c.items[i])}
+function mtdLimpiarChips(contId){
+  var c=MTD_CHIPS[contId];if(c)c.alLimpiar()}
 
 /* En móvil el <thead> se oculta (las filas se vuelven tarjetas): el orden se
    elige con un <select> + botón de dirección dentro del <caption>. */
@@ -260,11 +308,15 @@ function cargarVentasMtd(forzar){
     .getVentasMtdCompletoJson(forzar===true)}
 
 /* Estado derivado del payload (se arma una vez por carga). */
-var mtdU={},mtdUlista=[],mtdVenta1={},mtdCortes={},histAnios=[];
+var mtdU={},mtdUlista=[],mtdVenta1={},mtdCortes={},histAnios=[],mtdProdIdx={};
 
 function mtdPrepararDatos(){
   var D=ventasMtdData;
-  mtdU={};mtdVenta1={};mtdCortes={};
+  mtdU={};mtdVenta1={};mtdCortes={};mtdCtxCache=null;
+  // nombre de producto → índices en D.productos (el filtro de producto guarda el
+  // NOMBRE: es estable entre cargas y se puede persistir; un índice no).
+  mtdProdIdx={};
+  (D.productos||[]).forEach(function(n,i){(mtdProdIdx[n]||(mtdProdIdx[n]=[])).push(i)});
   (D.clientes||[]).forEach(function(f){
     mtdU[f.id]={id:f.id,cliente:f.cliente||f.sapId||f.id,kam:f.kam||'SIN KAM',canal:f.canal||'SIN CANAL',m:f}});
   var hc=D.histClientes||{};
@@ -341,13 +393,17 @@ function mtdTextoConciliacion(){
    Mismo modelo que el mapa: arreglo vacío = sin filtrar; OR dentro de una
    dimensión, AND entre dimensiones. Se cambian SOLO con setMtdFiltro().
    Las opciones se calculan en cascada (cada filtro ve lo que dejan los otros). */
-var MTD_DIMS=['canal','kam','cliente'];
-var mtdFiltros={canal:[],kam:[],cliente:[]},mtdFset={canal:null,kam:null,cliente:null};
+var MTD_DIMS=['canal','kam','cliente','producto'];
+var MTD_DIM_ETQ={canal:'Canal',kam:'KAM',cliente:'Cliente',producto:'Producto'};
+var mtdFiltros={canal:[],kam:[],cliente:[],producto:[]},mtdFset={canal:null,kam:null,cliente:null,producto:null};
 var MTD_SEL={};
+var mtdCtxCache=null;   // contexto por dimensión ignorada; se invalida al cambiar un filtro
 
+/* `producto` NO es una dimensión del cliente: no pasa por mtdPasa ni tiene
+   selector; se filtra con clic en la tabla Por Producto y vive en los chips. */
 function setMtdFiltro(dim,arr){
   arr=(arr||[]).filter(function(v){return v!==''&&v!=null&&v!=='__mas__'});
-  mtdFiltros[dim]=arr;
+  mtdFiltros[dim]=arr;mtdCtxCache=null;
   if(!arr.length){mtdFset[dim]=null;return}
   var m={};arr.forEach(function(v){m[v]=1});mtdFset[dim]=m}
 
@@ -357,9 +413,68 @@ function mtdPasa(u,ig){
   if(ig!=='cliente'&&mtdFset.cliente&&!mtdFset.cliente[u.id])return false;
   return true}
 
-/* Conjunto de ids (SAP) que pasan los filtros: lo consumen TODAS las secciones. */
+/* Conjunto de ids (SAP) que pasan los filtros de CLIENTE (Canal·KAM·Cliente). Lo
+   usa el histórico, que no tiene producto y por eso no se filtra por él. */
 function mtdIdsFiltrados(){
   var o={};mtdUlista.forEach(function(u){if(mtdPasa(u,null))o[u.id]=1});return o}
+
+/* ══════════ Contexto por dimensión (filtrado cruzado estilo Looker) ══════════
+   mtdContexto(ig) = lo que ve un visual que NO se filtra por su propia dimensión:
+   todos los filtros salvo `ig`. La tabla Por KAM usa ig='kam' (sigue mostrando todos
+   los KAM, con los elegidos resaltados); KPIs y el resto usan ig=null.
+     ids   : clientes que pasan los filtros (con producto activo, solo los que
+             vendieron ese producto)
+     filas : registros de cliente de esos ids (D.clientes; con producto activo se
+             arman desde mtdU para no perder clientes que solo salen en PLANTILLA)
+     pv    : null sin filtro de producto; si no, {id:{v,a1,u}} = venta del mes, A-1 y
+             unidades de los productos elegidos. PLAN y VENTA AÑO no existen por
+             producto: con pv activo mtdMedidas los devuelve null ("n/d").       */
+function mtdContexto(ig){
+  var k=ig||'*';
+  if(!mtdCtxCache)mtdCtxCache={};
+  if(mtdCtxCache[k])return mtdCtxCache[k];
+  var D=ventasMtdData,ids={},pv=null;
+  mtdUlista.forEach(function(u){if(mtdPasa(u,ig))ids[u.id]=1});
+  if(ig!=='producto'&&mtdFiltros.producto.length){
+    var sel={};
+    mtdFiltros.producto.forEach(function(n){(mtdProdIdx[n]||[]).forEach(function(i){sel[i]=1})});
+    pv={};
+    (D.prod||[]).forEach(function(r){
+      if(!ids[r[0]]||!sel[r[1]])return;
+      var x=pv[r[0]]||(pv[r[0]]={v:0,a1:0,u:0});
+      x.v+=r[2];x.a1+=r[3];x.u+=r[4]});
+    Object.keys(ids).forEach(function(id){if(!pv[id])delete ids[id]})}
+  var filas;
+  if(pv)filas=Object.keys(ids).map(function(id){
+    var u=mtdU[id];return u.m||{id:id,sapId:id,cliente:u.cliente,kam:u.kam,canal:u.canal,
+      realMes:0,planMes:0,realAnio:0,planAnio:0}});
+  else filas=(D.clientes||[]).filter(function(f){return ids[f.id]});
+  return(mtdCtxCache[k]={ids:ids,filas:filas,pv:pv})}
+
+/* Medidas de un cliente en un contexto. Con filtro de producto solo hay venta,
+   A-1 y unidades; lo demás es null (n/d). */
+function mtdMedidas(f,ctx){
+  if(ctx.pv){var p=ctx.pv[f.id]||{v:0,a1:0,u:0};
+    return{realMes:p.v,planMes:null,ventaA1:p.a1,realAnio:null,planAnio:null,unidades:p.u,nd:true}}
+  return{realMes:f.realMes||0,planMes:f.planMes||0,ventaA1:mtdVenta1[f.id]||0,
+    realAnio:f.realAnio||0,planAnio:f.planAnio||0,unidades:null,nd:false}}
+
+/* Totales de un conjunto de filas. `ids` define de dónde sale A-1: para el total
+   completo son los ids del contexto (como antes); para una selección, los de las filas. */
+function mtdTotales(filas,ctx,ids){
+  var t={realMes:0,planMes:0,realAnio:0,planAnio:0,a1:0,unidades:0,conVenta:0,nd:!!ctx.pv};
+  filas.forEach(function(f){var m=mtdMedidas(f,ctx);
+    t.realMes+=m.realMes;
+    if(t.nd)t.unidades+=m.unidades||0;
+    else{t.planMes+=m.planMes;t.realAnio+=m.realAnio;t.planAnio+=m.planAnio}
+    if(m.realMes!==0||(m.planMes||0)>0)t.conVenta++});
+  Object.keys(ids).forEach(function(id){
+    t.a1+=ctx.pv?(ctx.pv[id]?ctx.pv[id].a1:0):(mtdVenta1[id]||0)});
+  if(t.nd){t.planMes=t.realAnio=t.planAnio=null}
+  t.cumplPct=t.nd?null:mtdCumpl(t.realMes,t.planMes);
+  return t}
+
+function mtdIdsDe(filas){var o={};filas.forEach(function(f){o[f.id]=1});return o}
 
 function mtdOpciones(dim){
   var cnt={};
@@ -396,7 +511,8 @@ function mtdCambiarFiltro(dim,vals){
   renderVentasMtd();
   mtdSincronizarSelectores(false)}
 
-/* Cambio hecho desde fuera (clic en una fila de la tabla de KAM). */
+/* Cambio hecho desde fuera (clic en una fila de una tabla): agrega o quita el
+   valor; se pueden acumular varios, como en Looker con Ctrl+clic. */
 function mtdAlternarFiltro(dim,val){
   var a=mtdFiltros[dim].slice(),i=a.indexOf(val);
   if(i===-1)a.push(val);else a.splice(i,1);
@@ -404,7 +520,21 @@ function mtdAlternarFiltro(dim,val){
   mtdGuardarFiltros();
   renderVentasMtd();
   mtdSincronizarSelectores(true)}
-function mtdClicFila(tr,dim){mtdAlternarFiltro(dim,tr.getAttribute('data-v'))}
+
+/* Chips: un valor suelto o, con valor null, toda la dimensión. */
+function mtdQuitarFiltro(dim,val){
+  if(val===null){
+    setMtdFiltro(dim,[]);mtdGuardarFiltros();renderVentasMtd();mtdSincronizarSelectores(true)}
+  else mtdAlternarFiltro(dim,val)}
+
+function mtdRenderChips(){
+  var items=[];
+  MTD_DIMS.forEach(function(d){
+    var v=mtdFiltros[d];
+    if(v.length>4)items.push({dim:d,valor:null,etq:MTD_DIM_ETQ[d]+': '+v.length+' seleccionados'});
+    else v.forEach(function(x){
+      items.push({dim:d,valor:x,etq:MTD_DIM_ETQ[d]+': '+(d==='cliente'&&mtdU[x]?mtdU[x].cliente:x)})})});
+  mtdPintarChips('mtdChips',items,function(it){mtdQuitarFiltro(it.dim,it.valor)},mtdLimpiarFiltros)}
 
 function mtdLimpiarFiltros(){
   MTD_DIMS.forEach(function(d){setMtdFiltro(d,[])});
@@ -421,26 +551,24 @@ function mtdRestaurarFiltros(){
   var g=null;try{g=JSON.parse(localStorage.getItem(MTD_LS)||'null')}catch(e){}
   if(!g)return;
   MTD_DIMS.forEach(function(d){
-    var ok={};mtdUlista.forEach(function(u){ok[d==='cliente'?u.id:u[d]]=1});
+    var ok={};
+    if(d==='producto')Object.keys(mtdProdIdx).forEach(function(n){ok[n]=1});
+    else mtdUlista.forEach(function(u){ok[d==='cliente'?u.id:u[d]]=1});
     setMtdFiltro(d,(g[d]||[]).filter(function(v){return ok[v]}))})}
 
 /* ══════════ Render de la hoja ══════════ */
 function renderVentasMtd(){
   if(!ventasMtdData)return;
-  var ids=mtdIdsFiltrados();
-  var filas=(ventasMtdData.clientes||[]).filter(function(f){return ids[f.id]});
-  var tot={realMes:0,planMes:0,realAnio:0,planAnio:0,a1:0,conVenta:0};
-  filas.forEach(function(f){
-    tot.realMes+=f.realMes||0;tot.planMes+=f.planMes||0;
-    tot.realAnio+=f.realAnio||0;tot.planAnio+=f.planAnio||0;
-    if((f.realMes||0)!==0||(f.planMes||0)>0)tot.conVenta++});
+  // KPIs: contexto completo (todos los filtros). Cada tabla pide el suyo, que
+  // ignora su propia dimensión (ver mtdContexto).
+  var ctx=mtdContexto(null);
   // A-1 sale de PLANTILLA por SAP ID (= histórico del mismo mes un año antes).
-  Object.keys(ids).forEach(function(id){tot.a1+=mtdVenta1[id]||0});
-  tot.cumplPct=mtdCumpl(tot.realMes,tot.planMes);
-  mtdRenderKpi(tot,filas.length);
-  mtdRenderClientes(filas,tot);
-  mtdRenderKam(filas);
-  mtdRenderProductos(ids);
+  var tot=mtdTotales(ctx.filas,ctx,ctx.ids);
+  mtdRenderChips();
+  mtdRenderKpi(tot,ctx);
+  mtdRenderClientes();
+  mtdRenderKam();
+  mtdRenderProductos();
   renderHistorico()}
 
 function mtdPlanYtd(ids){
@@ -449,20 +577,21 @@ function mtdPlanYtd(ids){
     if(r[0]===p.anio&&r[1]<=p.mes&&ids[r[2]])s+=r[4]});
   return s}
 
-function mtdRenderKpi(tot,nFilas){
-  var sem=mtdSem(tot.cumplPct),ids=mtdIdsFiltrados();
+function mtdRenderKpi(tot,ctx){
+  var sem=mtdSem(tot.cumplPct),nd=tot.nd;
   document.getElementById('mtdKpiVenta').innerText=mtdMoneda(tot.realMes);
   var d1=mtdDeltaV(tot.realMes,tot.a1);
   document.getElementById('mtdKpiVentaDet').innerHTML=
-    'vs Plan '+esc(mtdMoneda(tot.planMes))+'<br>A-1 '+esc(mtdMoneda(tot.a1))+
+    (nd?'Solo el producto elegido · '+esc(FMT.format(Math.round(tot.unidades||0)))+' unidades'
+       :'vs Plan '+esc(mtdMoneda(tot.planMes)))+'<br>A-1 '+esc(mtdMoneda(tot.a1))+
     (d1==null?'':' · <span class="'+(d1>=0?'pos':'neg')+'">'+(d1>0?'+':'')+mtdPctTxt(d1)+'</span>');
   var pct=document.getElementById('mtdKpiPct');
-  pct.innerText=tot.cumplPct==null?'sin plan':mtdPctEntero(tot.cumplPct);pct.style.color=sem[1];
-  document.getElementById('mtdKpiPctDet').innerText=
+  pct.innerText=nd?'n/d':(tot.cumplPct==null?'sin plan':mtdPctEntero(tot.cumplPct));pct.style.color=sem[1];
+  document.getElementById('mtdKpiPctDet').innerText=nd?'El plan no existe por producto':
     tot.conVenta+(tot.conVenta===1?' cliente':' clientes')+' con venta o plan';
-  document.getElementById('mtdKpiAnio').innerText=mtdMoneda(tot.realAnio);
-  var pytd=mtdPlanYtd(ids);
-  document.getElementById('mtdKpiAnioDet').innerHTML=
+  document.getElementById('mtdKpiAnio').innerText=nd?'n/d':mtdMoneda(tot.realAnio);
+  var pytd=nd?null:mtdPlanYtd(ctx.ids);
+  document.getElementById('mtdKpiAnioDet').innerHTML=nd?'El acumulado no existe por producto':
     (pytd!=null&&pytd>0?'Plan YTD '+esc(mtdMoneda(pytd))+' · '+esc(mtdPctTxt(tot.realAnio/pytd))+'<br>':'')+
     'Plan año '+esc(mtdMoneda(tot.planAnio))+
     (tot.planAnio>0?' · '+esc(mtdPctTxt(tot.realAnio/tot.planAnio)):'');
@@ -470,19 +599,31 @@ function mtdRenderKpi(tot,nFilas){
   var p=(tot.cumplPct==null||!isFinite(tot.cumplPct))?0:Math.max(0,Math.min(100,tot.cumplPct*100));
   barra.style.width=p+'%';barra.style.background=sem[1]}
 
-function mtdRenderClientes(filas,tot){
+/* Texto del rótulo TOTAL: con selección en la propia tabla suma solo lo elegido
+   (así cuadra con los KPIs); sin selección suma todo. */
+function mtdRotuloTotal(hay){return hay?'TOTAL SELECCIÓN':'TOTAL'}
+
+function mtdRenderClientes(){
+  var ctx=mtdContexto('cliente'),hay=!!mtdFset.cliente;
   var todas=(ventasMtdData.clientes||[]).length;
-  document.getElementById('mtdHintClientes').innerText=
-    filas.length+' de '+todas+' clientes · clic en un encabezado para ordenar · A-1 = mismo mes del año anterior';
-  var lista=filas.map(function(f){
-    var a1=mtdVenta1[f.id]||0;
+  var lista=ctx.filas.map(function(f){
+    var m=mtdMedidas(f,ctx);
     return{id:f.id,sapId:f.sapId,cliente:f.cliente||f.sapId||'–',canal:f.canal,kam:f.kam,
-      realMes:f.realMes,planMes:f.planMes,cumplPct:mtdCumpl(f.realMes,f.planMes),
-      ventaA1:a1,deltaA1:mtdDeltaV(f.realMes,a1),realAnio:f.realAnio,planAnio:f.planAnio,
-      interno:f.interno,error:f.error}});
+      realMes:m.realMes,planMes:m.planMes,cumplPct:mtdCumpl(m.realMes,m.planMes),
+      ventaA1:m.ventaA1,deltaA1:mtdDeltaV(m.realMes,m.ventaA1),realAnio:m.realAnio,planAnio:m.planAnio,
+      interno:f.interno,error:f.error,nd:m.nd}});
+  var selFilas=hay?ctx.filas.filter(function(f){return mtdFset.cliente[f.id]}):ctx.filas;
+  var tot=hay?mtdTotales(selFilas,ctx,mtdIdsDe(selFilas)):mtdTotales(ctx.filas,ctx,ctx.ids);
+  document.getElementById('mtdHintClientes').innerText=
+    lista.length+' de '+todas+' clientes · clic en una fila para filtrar todo el informe (varias a la vez) · '+
+    'clic en un encabezado para ordenar · A-1 = mismo mes del año anterior'+
+    (ctx.pv?' · con producto elegido Plan y Venta Año no existen (n/d)':'');
   mtdTabla({id:'mtdTablaClientes',filas:lista,orden:{k:'realMes',dir:'desc'},
     vacio:'Sin clientes con los filtros actuales',
     alOrdenar:function(v){mtdVistaClientes=v},
+    clic:{valor:function(x){return x.id},activo:function(x){return!!(mtdFset.cliente&&mtdFset.cliente[x.id])},
+      haySel:function(){return hay},alClic:function(v){mtdAlternarFiltro('cliente',v)},
+      titulo:'Clic para filtrar por este cliente'},
     columnas:[
       {k:'cliente',t:'Cliente',tipo:'txt',celda:function(f){
         return'<td>'+esc(f.cliente)+(f.interno?' <span class="mini" title="Fila contable de ISDIN, no es un cliente">(interno)</span>':'')+
@@ -490,52 +631,55 @@ function mtdRenderClientes(filas,tot){
       {k:'canal',t:'Canal',tipo:'txt',celda:function(f,t){return mtdTd(esc(f.canal||'–'),t)}},
       {k:'kam',t:'KAM',tipo:'txt',celda:function(f,t){return mtdTd(esc(f.kam||'–'),t)}},
       {k:'realMes',t:'Venta Mes',tipo:'num',celda:function(f,t){return mtdTd(mtdMoneda(f.realMes),t)}},
-      {k:'planMes',t:'Plan Mes',tipo:'num',celda:function(f,t){return mtdTd(mtdMoneda(f.planMes),t)}},
-      {k:'cumplPct',t:'% Cumpl',tipo:'num',celda:function(f,t){return mtdCeldaPct(f.cumplPct,t)}},
+      {k:'planMes',t:'Plan Mes',tipo:'num',celda:function(f,t){return mtdCeldaMonedaND(f.planMes,t)}},
+      {k:'cumplPct',t:'% Cumpl',tipo:'num',celda:function(f,t){return mtdCeldaPctND(f.cumplPct,t,f.nd)}},
       {k:'ventaA1',t:'Venta A-1',tipo:'num',celda:function(f,t){return mtdTd(mtdMoneda(f.ventaA1),t)}},
       {k:'deltaA1',t:'Δ vs A-1',tipo:'num',celda:function(f,t){return mtdDeltaImp(f.realMes,f.ventaA1,t)}},
-      {k:'realAnio',t:'Venta Año',tipo:'num',celda:function(f,t){return mtdTd(mtdMoneda(f.realAnio),t)}},
-      {k:'planAnio',t:'Plan Año',tipo:'num',celda:function(f,t){return mtdTd(mtdMoneda(f.planAnio),t)}}],
-    total:'<tr class="total"><td>TOTAL</td><td></td><td></td>'+
-      mtdTd(mtdMoneda(tot.realMes),'Venta Mes')+mtdTd(mtdMoneda(tot.planMes),'Plan Mes')+
-      mtdCeldaPct(tot.cumplPct,'% Cumpl')+mtdTd(mtdMoneda(tot.a1),'Venta A-1')+
+      {k:'realAnio',t:'Venta Año',tipo:'num',celda:function(f,t){return mtdCeldaMonedaND(f.realAnio,t)}},
+      {k:'planAnio',t:'Plan Año',tipo:'num',celda:function(f,t){return mtdCeldaMonedaND(f.planAnio,t)}}],
+    total:'<tr class="total"><td>'+mtdRotuloTotal(hay)+'</td><td></td><td></td>'+
+      mtdTd(mtdMoneda(tot.realMes),'Venta Mes')+mtdCeldaMonedaND(tot.planMes,'Plan Mes')+
+      mtdCeldaPctND(tot.cumplPct,'% Cumpl',tot.nd)+mtdTd(mtdMoneda(tot.a1),'Venta A-1')+
       mtdDeltaImp(tot.realMes,tot.a1,'Δ vs A-1')+
-      mtdTd(mtdMoneda(tot.realAnio),'Venta Año')+mtdTd(mtdMoneda(tot.planAnio),'Plan Año')+'</tr>'})}
+      mtdCeldaMonedaND(tot.realAnio,'Venta Año')+mtdCeldaMonedaND(tot.planAnio,'Plan Año')+'</tr>'})}
 
-function mtdRenderKam(filas){
-  var g={};
-  filas.forEach(function(f){
-    var k=f.kam||'SIN KAM';
-    if(!g[k])g[k]={kam:k,realMes:0,planMes:0,ventaA1:0,clientes:0};
-    g[k].realMes+=f.realMes||0;g[k].planMes+=f.planMes||0;
-    g[k].ventaA1+=mtdVenta1[f.id]||0;
-    if((f.realMes||0)!==0)g[k].clientes++});
+function mtdRenderKam(){
+  var ctx=mtdContexto('kam'),hay=!!mtdFset.kam,g={},nd=!!ctx.pv;
+  ctx.filas.forEach(function(f){
+    var k=f.kam||'SIN KAM',m=mtdMedidas(f,ctx);
+    if(!g[k])g[k]={kam:k,realMes:0,planMes:nd?null:0,ventaA1:0,clientes:0,nd:nd};
+    g[k].realMes+=m.realMes;if(!nd)g[k].planMes+=m.planMes;
+    g[k].ventaA1+=m.ventaA1;
+    if(m.realMes!==0)g[k].clientes++});
   var lista=Object.keys(g).map(function(k){var x=g[k];
     x.cumplPct=mtdCumpl(x.realMes,x.planMes);x.deltaA1=mtdDeltaV(x.realMes,x.ventaA1);return x});
   document.getElementById('mtdHintKam').innerText=
-    lista.length+' KAM en la selección · clic en una fila para filtrar por ese KAM';
-  var tr=lista.reduce(function(a,x){a.r+=x.realMes;a.p+=x.planMes;a.a+=x.ventaA1;a.c+=x.clientes;return a},
+    lista.length+' KAM · clic en una fila para filtrar todo el informe por ese KAM (varios a la vez)';
+  var sel=hay?lista.filter(function(x){return mtdFset.kam[x.kam]}):lista;
+  var tr=sel.reduce(function(a,x){a.r+=x.realMes;a.p+=x.planMes||0;a.a+=x.ventaA1;a.c+=x.clientes;return a},
     {r:0,p:0,a:0,c:0});
   mtdTabla({id:'mtdTablaKam',filas:lista,orden:{k:'realMes',dir:'desc'},vacio:'Sin datos por KAM',
     alOrdenar:function(v){mtdVistaKam=v},
-    fila:function(x){return' class="clicable'+(mtdFset.kam&&mtdFset.kam[x.kam]?' sel':'')+
-      '" data-v="'+esc(x.kam)+'" onclick="mtdClicFila(this,\'kam\')" title="Clic para filtrar por este KAM"'},
+    clic:{valor:function(x){return x.kam},activo:function(x){return!!(mtdFset.kam&&mtdFset.kam[x.kam])},
+      haySel:function(){return hay},alClic:function(v){mtdAlternarFiltro('kam',v)},
+      titulo:'Clic para filtrar por este KAM'},
     columnas:[
       {k:'kam',t:'KAM',tipo:'txt',celda:function(x){return'<td>'+esc(x.kam)+'</td>'}},
       {k:'realMes',t:'Venta',tipo:'num',celda:function(x,t){return mtdTd(mtdMoneda(x.realMes),t)}},
-      {k:'planMes',t:'Plan',tipo:'num',celda:function(x,t){return mtdTd(mtdMoneda(x.planMes),t)}},
-      {k:'cumplPct',t:'% Cumpl',tipo:'num',celda:function(x,t){return mtdCeldaPct(x.cumplPct,t)}},
+      {k:'planMes',t:'Plan',tipo:'num',celda:function(x,t){return mtdCeldaMonedaND(x.planMes,t)}},
+      {k:'cumplPct',t:'% Cumpl',tipo:'num',celda:function(x,t){return mtdCeldaPctND(x.cumplPct,t,x.nd)}},
       {k:'ventaA1',t:'Venta A-1',tipo:'num',celda:function(x,t){return mtdTd(mtdMoneda(x.ventaA1),t)}},
       {k:'deltaA1',t:'Δ vs A-1',tipo:'num',celda:function(x,t){return mtdDeltaImp(x.realMes,x.ventaA1,t)}},
       {k:'clientes',t:'Clientes',tipo:'num',celda:function(x,t){return mtdTd(FMT.format(x.clientes),t)}}],
-    total:'<tr class="total"><td>TOTAL</td>'+mtdTd(mtdMoneda(tr.r),'Venta')+mtdTd(mtdMoneda(tr.p),'Plan')+
-      mtdCeldaPct(mtdCumpl(tr.r,tr.p),'% Cumpl')+mtdTd(mtdMoneda(tr.a),'Venta A-1')+
+    total:'<tr class="total"><td>'+mtdRotuloTotal(hay)+'</td>'+mtdTd(mtdMoneda(tr.r),'Venta')+
+      mtdCeldaMonedaND(nd?null:tr.p,'Plan')+
+      mtdCeldaPctND(nd?null:mtdCumpl(tr.r,tr.p),'% Cumpl',nd)+mtdTd(mtdMoneda(tr.a),'Venta A-1')+
       mtdDeltaImp(tr.r,tr.a,'Δ vs A-1')+mtdTd(FMT.format(tr.c),'Clientes')+'</tr>'})}
 
 /* PLANTILLA llega por cliente × producto, así que SÍ se filtra por KAM/canal/cliente
    (antes se asumía que no traía esos datos y la tabla ignoraba los filtros). */
-function mtdRenderProductos(ids){
-  var D=ventasMtdData,g={};
+function mtdRenderProductos(){
+  var D=ventasMtdData,g={},ctx=mtdContexto('producto'),ids=ctx.ids,hay=!!mtdFset.producto;
   (D.prod||[]).forEach(function(r){
     if(!ids[r[0]])return;
     var x=g[r[1]];if(!x)x=g[r[1]]={nombre:D.productos[r[1]]||'(sin nombre)',ventaMes:0,ventaA1:0,unidades:0};
@@ -543,19 +687,24 @@ function mtdRenderProductos(ids){
   var lista=Object.keys(g).map(function(k){var x=g[k];x.deltaA1=mtdDeltaV(x.ventaMes,x.ventaA1);return x});
   var sinNombre=(D.meta||{}).productosSinNombre||0;
   document.getElementById('mtdHintProductos').innerText=
-    lista.length+' productos · mismos filtros que el resto de la hoja · A-1 = mismo mes del año anterior'+
+    lista.length+' productos · clic en una fila para filtrar ventas, A-1 y unidades por ese producto (varios a la vez) · '+
+    'A-1 = mismo mes del año anterior'+
     (sinNombre?' · "SIN PRODUCTO": '+sinNombre+' filas de la hoja sin nombre de producto':'');
-  var tot=lista.reduce(function(a,p){a.v+=p.ventaMes;a.a+=p.ventaA1;a.u+=p.unidades;return a},{v:0,a:0,u:0});
+  var sel=hay?lista.filter(function(p){return mtdFset.producto[p.nombre]}):lista;
+  var tot=sel.reduce(function(a,p){a.v+=p.ventaMes;a.a+=p.ventaA1;a.u+=p.unidades;return a},{v:0,a:0,u:0});
   mtdTabla({id:'mtdTablaProductos',filas:lista,orden:{k:'ventaMes',dir:'desc'},
     vacio:'Sin productos con los filtros actuales',
     alOrdenar:function(v){mtdVistaProductos=v},
+    clic:{valor:function(p){return p.nombre},activo:function(p){return!!(mtdFset.producto&&mtdFset.producto[p.nombre])},
+      haySel:function(){return hay},alClic:function(v){mtdAlternarFiltro('producto',v)},
+      titulo:'Clic para filtrar por este producto'},
     columnas:[
       {k:'nombre',t:'Producto',tipo:'txt',celda:function(p){return'<td>'+esc(p.nombre||'–')+'</td>'}},
       {k:'ventaMes',t:'Venta',tipo:'num',celda:function(p,t){return mtdTd(mtdMoneda(p.ventaMes),t)}},
       {k:'ventaA1',t:'Venta A-1',tipo:'num',celda:function(p,t){return mtdTd(mtdMoneda(p.ventaA1),t)}},
       {k:'unidades',t:'Unidades',tipo:'num',celda:function(p,t){return mtdTd(FMT.format(Math.round(p.unidades||0)),t)}},
       {k:'deltaA1',t:'Δ vs A-1',tipo:'num',celda:function(p,t){return mtdDeltaImp(p.ventaMes,p.ventaA1,t)}}],
-    total:'<tr class="total"><td>TOTAL</td>'+mtdTd(mtdMoneda(tot.v),'Venta')+mtdTd(mtdMoneda(tot.a),'Venta A-1')+
+    total:'<tr class="total"><td>'+mtdRotuloTotal(hay)+'</td>'+mtdTd(mtdMoneda(tot.v),'Venta')+mtdTd(mtdMoneda(tot.a),'Venta A-1')+
       mtdTd(FMT.format(Math.round(tot.u)),'Unidades')+mtdDeltaImp(tot.v,tot.a,'Δ vs A-1')+'</tr>'})}
 
 /* ══════════ Sección 2 · HISTÓRICO DE VENTAS ══════════
@@ -611,6 +760,10 @@ function histSetTrim(v){
   histPintarChipsTrim();
   renderHistorico()}
 
+/* Clic en una barra del gráfico de trimestres: lo elige; otro clic sobre el mismo lo quita. */
+function histAlternarTrim(t){
+  histSetTrim(document.getElementById('histTrimFil').value===String(t)?'':String(t))}
+
 /* Meses pedidos por el usuario: el mes manda sobre el trimestre; si no hay
    ninguno, los 12 del año. */
 function histMesesActivos(){
@@ -633,6 +786,10 @@ function histAgruparPorCliente(anio,meses,ids){
 
 function renderHistorico(){
   if(!ventasMtdData)return;
+  // El histórico no trae producto: se filtra por Canal·KAM·Cliente y avisa si hay
+  // un producto elegido (sus cifras son de TODOS los productos).
+  var nota=document.getElementById('mtdHistNotaProd');
+  if(nota)nota.hidden=!mtdFiltros.producto.length;
   var ids=mtdIdsFiltrados();
   var anio=Number(document.getElementById('histAnioFil').value||0);
   var pedidos=histMesesActivos();
@@ -719,10 +876,14 @@ function histRenderTrimestres(anio,ids){
   var max=0;[1,2,3,4].forEach(function(t){max=Math.max(max,acc[t].real,acc[t].plan)});
   if(max<=0){cont.innerHTML='<div class="mtd-vacio">Sin datos para '+anio+'</div>';return}
   var ALTO=150,escala=ALTO/(max*1.12),h='';
+  var trimSel=document.getElementById('histTrimFil').value;   // '' = ninguno
   [1,2,3,4].forEach(function(t){
     var x=acc[t],barPx=Math.round(Math.max(0,x.real)*escala),tickPx=Math.round(Math.max(0,x.plan)*escala);
     var valTop=Math.max(barPx,tickPx)+14;
-    h+='<div class="hist-barcol">'+
+    var sel=trimSel===String(t);
+    h+='<div class="hist-barcol clicable'+(sel?' sel':(trimSel?' atenuada':''))+'" tabindex="0" role="button" aria-pressed="'+
+      (sel?'true':'false')+'" title="Clic para ver solo T'+t+' en el histórico" onclick="histAlternarTrim('+t+
+      ')" onkeydown="if(event.key===\'Enter\'||event.key===\' \'){event.preventDefault();histAlternarTrim('+t+')}">'+
       '<div class="hist-barval" style="bottom:'+valTop+'px">'+mtdMonedaCorta(x.real)+'</div>'+
       '<div class="hist-bar" style="height:'+barPx+'px"></div>'+
       '<div class="hist-plantick" style="bottom:'+tickPx+'px"></div>'+

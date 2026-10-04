@@ -18,11 +18,11 @@ function crearDom() {
   return { getElementById: get, querySelectorAll: () => [], els, createElement: () => ({}) };
 }
 
-function cargar() {
+function cargar(guardado) {
   const document = crearDom();
   const ctx = {
     document, console, Intl, Math, JSON, Date, Number, String, Object, Array, isFinite, isNaN, parseInt, parseFloat,
-    window: {}, localStorage: { getItem: () => null, setItem() {} },
+    window: {}, localStorage: { getItem: () => (guardado ? JSON.stringify(guardado) : null), setItem() {} },
     setTimeout: (f) => f(), alert() {},
     FMT: new Intl.NumberFormat('es-CO'),
     esc: s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'),
@@ -131,7 +131,12 @@ t('KAM = ANGELICA MONSALVE → solo su cliente en KPI, tabla de clientes, KAM, p
   const e = c.document.els;
   assert.ok(/4\.560/.test(num0(e.mtdKpiVenta.innerText)), 'KPI venta = 4.560: ' + e.mtdKpiVenta.innerText);
   assert.ok(/CLIENTE A/.test(e.mtdTablaClientes.innerHTML) && !/SAINT-PRIEST/.test(e.mtdTablaClientes.innerHTML));
-  assert.ok(/ANGELICA MONSALVE/.test(e.mtdTablaKam.innerHTML) && !/SERGIO MAGGI/.test(e.mtdTablaKam.innerHTML));
+  // Estilo Looker: la tabla Por KAM NO se encoge; muestra a todos, el elegido resaltado y los demás atenuados.
+  assert.ok(/ANGELICA MONSALVE/.test(e.mtdTablaKam.innerHTML) && /SERGIO MAGGI/.test(e.mtdTablaKam.innerHTML));
+  assert.strictEqual(c.mtdVistaKam.length, 3);
+  assert.strictEqual((e.mtdTablaKam.innerHTML.match(/class="clicable sel"/g) || []).length, 1);
+  assert.strictEqual((e.mtdTablaKam.innerHTML.match(/class="clicable atenuada"/g) || []).length, 2);
+  assert.ok(/TOTAL SELECCIÓN/.test(e.mtdTablaKam.innerHTML));
   // Por Producto filtrado por SAP: A tiene PROD 1 (300) y PROD 2 (100); B y C no deben aparecer
   assert.ok(/PROD 1/.test(e.mtdTablaProductos.innerHTML));
   assert.strictEqual(c.mtdVistaProductos.length, 2);
@@ -156,6 +161,117 @@ t('cascada de opciones: con canal=Cadenas, KAM solo ofrece los de ese canal', ()
   c.setMtdFiltro('canal', []);
 });
 function num0(s) { return String(s).replace(/\s/g, ' '); }
+
+console.log('Cliente · filtrado cruzado (clic en tablas, estilo Looker)');
+const E = c.document.els, filaDe = (id, pred) => Array.from(c.MTD_TABLAS[id].vista).findIndex(pred);
+t('mtdAlternarFiltro agrega y quita; se acumulan varios', () => {
+  c.mtdLimpiarFiltros();
+  c.mtdAlternarFiltro('kam', 'ANGELICA MONSALVE'); c.mtdAlternarFiltro('kam', 'SERGIO MAGGI');
+  assert.deepStrictEqual(Array.from(c.mtdFiltros.kam), ['ANGELICA MONSALVE', 'SERGIO MAGGI']);
+  c.mtdAlternarFiltro('kam', 'ANGELICA MONSALVE');
+  assert.deepStrictEqual(Array.from(c.mtdFiltros.kam), ['SERGIO MAGGI']);
+  c.mtdLimpiarFiltros();
+});
+t('clic en una fila (mtdClicTabla) filtra por su clave: Por KAM, Por Cliente y Por Producto', () => {
+  c.renderVentasMtd();
+  c.mtdClicTabla('mtdTablaKam', filaDe('mtdTablaKam', f => f.kam === 'SERGIO MAGGI'));
+  assert.deepStrictEqual(Array.from(c.mtdFiltros.kam), ['SERGIO MAGGI']);
+  c.mtdLimpiarFiltros();                                                  // con el KAM puesto, A ya no está en la tabla
+  c.mtdClicTabla('mtdTablaClientes', filaDe('mtdTablaClientes', f => f.id === 'A'));
+  assert.deepStrictEqual(Array.from(c.mtdFiltros.cliente), ['A']);       // clave = SAP ID, no el nombre
+  c.mtdLimpiarFiltros();
+  c.mtdClicTabla('mtdTablaProductos', filaDe('mtdTablaProductos', f => f.nombre === 'PROD 2'));
+  assert.deepStrictEqual(Array.from(c.mtdFiltros.producto), ['PROD 2']);  // clave = nombre
+  c.mtdLimpiarFiltros();
+  assert.ok(c.MTD_DIMS.every(d => c.mtdFiltros[d].length === 0), 'Limpiar vacía también producto');
+});
+t('las filas llevan data-i, tabindex y aria-selected (accesible por teclado)', () => {
+  c.renderVentasMtd();
+  const h = E.mtdTablaKam.innerHTML;
+  assert.ok(/data-i="0"/.test(h) && /tabindex="0"/.test(h) && /aria-selected="false"/.test(h) && /onclick="mtdClicTabla\('mtdTablaKam',0\)"/.test(h));
+});
+t('Por Cliente no se encoge al elegir un cliente: KPI cambia, la tabla sigue con los 3', () => {
+  c.mtdAlternarFiltro('cliente', 'A');
+  assert.strictEqual(c.mtdVistaClientes.length, 3);
+  assert.ok(/4\.560/.test(num0(E.mtdKpiVenta.innerText)));
+  assert.ok(/TOTAL SELECCIÓN/.test(E.mtdTablaClientes.innerHTML));
+  assert.strictEqual((E.mtdTablaClientes.innerHTML.match(/class="clicable sel"/g) || []).length, 1);
+  // otras tablas sí se filtran: Por KAM solo conserva el KAM de ese cliente
+  assert.strictEqual(c.mtdVistaKam.length, 1);
+  c.mtdLimpiarFiltros();
+});
+t('con selección, el TOTAL suma solo lo elegido y cuadra con el KPI', () => {
+  c.mtdAlternarFiltro('kam', 'ANGELICA MONSALVE');
+  const h = E.mtdTablaKam.innerHTML, total = h.slice(h.lastIndexOf('class="total"'));
+  assert.ok(/4\.560/.test(num0(total)) && !/SERGIO/.test(total), total);
+  c.mtdLimpiarFiltros();
+});
+t('filtro de producto: Venta, A-1 y unidades se recalculan desde prod; Plan y Acumulado quedan "n/d"', () => {
+  c.mtdAlternarFiltro('producto', 'PROD 1');           // A: 300 (A-1 600, 10 u) + B: 7 (A-1 7, 1 u)
+  assert.ok(/307/.test(num0(E.mtdKpiVenta.innerText)), E.mtdKpiVenta.innerText);
+  assert.ok(/607/.test(num0(E.mtdKpiVentaDet.innerHTML)) && /11 unidades/.test(E.mtdKpiVentaDet.innerHTML));
+  assert.strictEqual(E.mtdKpiPct.innerText, 'n/d');
+  assert.strictEqual(E.mtdKpiAnio.innerText, 'n/d');
+  assert.ok(/no existe por producto/.test(E.mtdKpiPctDet.innerText + E.mtdKpiAnioDet.innerHTML));
+  // Por Cliente: solo quienes vendieron ese producto (C no), con Plan/Cumpl/Año en n/d
+  assert.strictEqual(c.mtdVistaClientes.length, 2);
+  assert.ok(/class="nd"/.test(E.mtdTablaClientes.innerHTML) && !/sin plan/.test(E.mtdTablaClientes.innerHTML));
+  assert.strictEqual(c.mtdVistaClientes.find(f => f.id === 'A').planMes, null);
+  // Por Producto sigue mostrando ambos productos: el elegido resaltado, el otro atenuado
+  assert.strictEqual(c.mtdVistaProductos.length, 2);
+  assert.ok(/class="clicable atenuada"/.test(E.mtdTablaProductos.innerHTML) && /class="clicable sel"/.test(E.mtdTablaProductos.innerHTML));
+  // El histórico no trae producto: avisa
+  assert.strictEqual(E.mtdHistNotaProd.hidden, false);
+  c.mtdAlternarFiltro('producto', 'PROD 1');
+  assert.strictEqual(E.mtdHistNotaProd.hidden, true);
+  assert.strictEqual(E.mtdKpiPct.innerText.includes('n/d'), false);
+});
+t('producto + KAM se combinan (AND); el KPI de venta es solo de ese KAM y producto', () => {
+  c.mtdAlternarFiltro('producto', 'PROD 2'); c.mtdAlternarFiltro('kam', 'ANGELICA MONSALVE');   // A/PROD 2 = 100
+  assert.ok(/\b100\b/.test(num0(E.mtdKpiVenta.innerText)), E.mtdKpiVenta.innerText);
+  c.mtdLimpiarFiltros();
+});
+t('chips de filtros activos: un chip por valor, con el nombre del cliente, y vacío = oculto', () => {
+  c.mtdLimpiarFiltros();
+  assert.strictEqual(E.mtdChips.hidden, true);
+  c.mtdAlternarFiltro('kam', 'SERGIO MAGGI'); c.mtdAlternarFiltro('cliente', 'B'); c.mtdAlternarFiltro('producto', 'PROD 1');
+  const h = E.mtdChips.innerHTML;
+  assert.strictEqual(E.mtdChips.hidden, false);
+  assert.ok(/KAM: SERGIO MAGGI/.test(h) && /Cliente: SAINT-PRIEST/.test(h) && /Producto: PROD 1/.test(h) && /Quitar todos/.test(h), h);
+  c.mtdQuitarChip('mtdChips', 2);                                   // quita el chip de producto
+  assert.deepStrictEqual(Array.from(c.mtdFiltros.producto), []);
+  c.mtdLimpiarChips('mtdChips');
+  assert.ok(c.MTD_DIMS.every(d => c.mtdFiltros[d].length === 0));
+});
+t('más de 4 valores en una dimensión se agrupan en un solo chip', () => {
+  c.setMtdFiltro('cliente', ['A', 'B', 'C', 'P', 'X']); c.renderVentasMtd();
+  assert.ok(/Cliente: 5 seleccionados/.test(E.mtdChips.innerHTML));
+  c.mtdLimpiarFiltros();
+});
+t('repintar la tabla conserva el scroll interno (antes saltaba al inicio al hacer clic)', () => {
+  const el = c.document.getElementById('mtdTablaClientes'), padre = { scrollTop: 0 };
+  let html = ''; el.parentNode = padre;
+  Object.defineProperty(el, 'innerHTML', { get: () => html, set: v => { html = v; padre.scrollTop = 0; }, configurable: true });
+  padre.scrollTop = 150;
+  c.mtdAlternarFiltro('kam', 'SERGIO MAGGI');
+  assert.strictEqual(padre.scrollTop, 150);
+  c.mtdLimpiarFiltros();
+});
+t('clic en una barra de trimestre alterna el trimestre del histórico', () => {
+  c.document.getElementById('histAnioFil').value = '2026';
+  c.histAlternarTrim(2);
+  assert.strictEqual(c.document.getElementById('histTrimFil').value, '2');
+  assert.ok(/hist-barcol clicable sel/.test(E.mtdHistGraficoTrimestre.innerHTML) && /hist-barcol clicable atenuada/.test(E.mtdHistGraficoTrimestre.innerHTML));
+  assert.strictEqual((E.mtdHistGraficoTrimestre.innerHTML.match(/hist-barcol/g) || []).length, 4);   // sigue mostrando los 4
+  c.histAlternarTrim(2);
+  assert.strictEqual(c.document.getElementById('histTrimFil').value, '');
+});
+t('persistencia: se restauran solo valores que aún existen, producto incluido', () => {
+  const c2 = cargar({ canal: [], kam: ['ANGELICA MONSALVE', 'FANTASMA'], cliente: [], producto: ['PROD 2', 'NO EXISTE'] });
+  c2.onVentasMtdCargado(JSON.parse(JSON.stringify(payload)));
+  assert.deepStrictEqual(Array.from(c2.mtdFiltros.kam), ['ANGELICA MONSALVE']);
+  assert.deepStrictEqual(Array.from(c2.mtdFiltros.producto), ['PROD 2']);
+});
 
 console.log('Cliente · orden por encabezado');
 t('1.er clic = mayor a menor; 2.º = menor a mayor; 3.º = vuelve al orden por defecto', () => {

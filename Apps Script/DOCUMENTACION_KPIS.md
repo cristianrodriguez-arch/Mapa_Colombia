@@ -39,14 +39,18 @@ Todos los endpoints devuelven **strings JSON ASCII** (`jsonAscii_`), se cachean 
 | **% Cumplimiento** | Σ real ÷ Σ plan (**ponderado**, no promedio de %) solo si plan > 0; si no, "sin plan" (gris) | Semáforo: ≥ 100 % negro, ≥ 85 %/70 % gris, < 70 % rojo | ídem |
 | **Acumulado año** | Σ `Real (año)` | `Plan YTD` (Σ plan del Histórico hasta el mes de corte) y `Plan año` | ídem |
 | **Por Cliente** | una fila por cliente de CUMPLIMIENTO; `% Cumpl = real/plan` (plan>0); `Δ vs A-1 = (venta−A-1)/A-1` (A-1>0; "Nuevo" si no hay base) | A-1 | ídem |
-| **Por KAM** | agrupa los clientes filtrados por KAM; clic en una fila filtra por ese KAM | A-1 | ídem |
-| **Por Producto** | PLANTILLA consolidada por **nombre de producto** (varios EAN → un producto); `Δ vs A-1` | A-1 | ídem (cruce por SAP ID) |
+| **Por KAM** | agrupa los clientes por KAM; clic en una fila filtra todo el informe por ese KAM (ver §4) | A-1 | ídem, **salvo KAM** (la tabla no se filtra por su propia dimensión) |
+| **Por Producto** | PLANTILLA consolidada por **nombre de producto** (varios EAN → un producto); `Δ vs A-1`; clic en una fila filtra por producto (ver §4) | A-1 | ídem (cruce por SAP ID), **salvo Producto** |
 | **Histórico por cliente** | Σ real y plan del año elegido, en los meses elegidos **hasta el corte** | mismo corte del año anterior (cruce por SAP ID); el total A-1 incluye clientes que ya no venden | ídem + Año · Trimestre · Mes |
-| **Por Trimestre** | 4 barras venta vs plan del año | — | Canal · KAM · Cliente (no Mes/Trimestre) |
+| **Por Trimestre** | 4 barras venta vs plan del año; clic en una barra elige ese trimestre del histórico | — | Canal · KAM · Cliente (no Mes/Trimestre ni Producto) |
 
 Reglas:
-- **Un solo conjunto de filtros** (`mtdFiltros`: `canal`, `kam`, `cliente`; multi-selección; OR dentro, AND entre dimensiones; opciones en cascada)
-  produce `mtdIdsFiltrados()` y **todas** las secciones lo leen. Cambiar filtros solo con `setMtdFiltro(dim, arr)`.
+- **Un solo conjunto de filtros** (`mtdFiltros`: `canal`, `kam`, `cliente`, `producto`; multi-selección; OR dentro, AND entre dimensiones; opciones en cascada)
+  produce el contexto (`mtdContexto`) y **todas** las secciones lo leen. Cambiar filtros solo con `setMtdFiltro(dim, arr)`.
+  `producto` solo se fija con clic en la tabla Por Producto (no tiene selector) y guarda el **nombre** del producto.
+- **Filtro de producto**: de PLANTILLA solo existen venta, A-1 y unidades por producto. Con un producto elegido el KPI Venta, A-1, Δ y
+  Unidades se recalculan; **Plan, % Cumplimiento, Venta Año y Acumulado año pasan a "n/d"** (no existen por producto; mostrar un valor
+  mezclaría el plan de todos los productos con la venta de uno). El histórico tampoco trae producto: **no se filtra por él** y avisa.
 - Los filtros se recuerdan en `localStorage` (`mtdFiltros_v1`).
 - Atributos KAM/canal: los de CUMPLIMIENTO (cartera actual); para clientes que solo existen en el histórico, los de su última fila.
 
@@ -59,13 +63,58 @@ Reglas:
 | **% SO / SI** | SO ÷ SI (si SI > 0) |
 | **Prom SO (Nm)** | Σ SO de los N meses **calendario** que terminan en el corte del año elegido ÷ N (meses sin dato = 0). La ventana puede cruzar el año. |
 | **INV** | Inventario del **último mes con fila `Type=INV`** del año elegido, **sumado** sobre cliente×producto. Productos/clientes sin foto ese mes = 0. |
-| **% Part SI / SO** | cuota sobre el total visible |
-| **Donut BU** | Participación del SO por BU, **solo BU con SO neto > 0** (las devoluciones netas se avisan aparte) |
+| **% Part SI / SO** | cuota sobre el universo de la tabla Clientes (todos los clientes mostrados): no cambia al elegir filas; el TOTAL con selección suma las partes elegidas |
+| **Donut BU** | Participación del SO por BU, **solo BU con SO neto > 0** (las devoluciones netas se avisan aparte); clic en la leyenda filtra por BU |
 | **DDI / Diferencia INV** | **No implementados** (la hoja `DIAS DE INV` está rota). Propuesta por confirmar con el equipo: `DDI = INV ÷ (Prom SO ÷ 30)` |
 
-## 4. Orden por encabezado (`mtdTabla`)
+## 4. Filtrado cruzado (clic en tablas y gráficos, estilo Looker Studio)
 
-Helper único en `JsVentasMtd.html` (lo usan también las tablas de SI vs SO). `mtdTabla({id, columnas, filas, total, orden, fila, alOrdenar})`.
+Un clic en una fila de tabla, una barra o una BU de la leyenda **filtra todo el dashboard**, además de los filtros de la barra superior.
+Todo ocurre en el navegador (no hay llamadas al servidor).
+
+**Comportamiento**
+- Clic **agrega o quita** el valor; se pueden elegir varias filas a la vez (OR dentro de la dimensión, AND entre dimensiones).
+- **El visual donde haces clic no se encoge**: sigue mostrando todo su universo, con las filas elegidas resaltadas (`.sel`) y las demás atenuadas
+  (`.atenuada`). Los KPIs y los demás visuales sí se filtran. Es la regla de **"ignorar la propia dimensión"**: cada visual pide su contexto con
+  `mtdContexto(ig)` (MTD) o `sivsoFilas(ig)` (SI vs SO) y `ig` = la dimensión que ese visual dispara.
+- La fila **TOTAL** de una tabla con selección suma solo lo elegido (rótulo "TOTAL SELECCIÓN") para que cuadre con los KPIs.
+- **Chips de filtros activos** (`#mtdChips`, `#sivsoChips`) encima de los KPIs: uno por valor (con el nombre del cliente/producto, no el id); más de 4
+  valores de una dimensión se agrupan en un chip "N seleccionados". Cada chip se quita con ×; "Quitar todos" limpia todo.
+- Repintar una tabla **conserva el scroll interno** (`mtdPintarTabla` guarda y restaura `scrollTop`).
+- Accesible por teclado: las filas clicables llevan `tabindex="0"` y `aria-selected`; Enter/Espacio equivale al clic.
+
+**Qué es clicable**
+
+| Pestaña | Visual | Dimensión | Clave |
+|---|---|---|---|
+| Ventas MTD | Por Cliente | `cliente` | SAP ID |
+| Ventas MTD | Por KAM | `kam` | nombre del KAM |
+| Ventas MTD | Por Producto | `producto` | nombre del producto |
+| Ventas MTD | barras de trimestre (histórico) | trimestre (`histTrimFil`) | 1–4 |
+| SI vs SO | tabla Productos | `producto` | `productId` (o nombre) |
+| SI vs SO | tabla Clientes | `cliente` | `sapId` (o nombre) |
+| SI vs SO | barras del gráfico mensual | `mes` | 1–12 |
+| SI vs SO | leyenda del donut de BU | `buK` | BU normalizada (mayúsculas) |
+
+El donut es un `conic-gradient` CSS: los trozos no son clicables, **la leyenda es la zona de clic** y los trozos no elegidos se atenúan.
+El histórico por cliente de MTD solo **recibe** filtros (no los dispara).
+
+**SI vs SO (estado propio)**: `sivsoFiltros` = `{channel, kam, buK, brand, cliente, producto, mes}` (se cambia solo con `setSivsoFiltro`; antes eran
+selects de un solo valor leídos del DOM). Canal, KAM, BU y Marca son selectores multi-selección con cascada (`Selector`); "Buscar cliente" (texto) es un
+filtro adicional. Ya no existe el botón "Aplicar Filtros": todo se aplica al elegir.
+- **Filtro de mes**: limita KPIs, tablas y donut a esos meses; el año anterior se compara contra **esos mismos meses** (hasta el corte) y el rótulo del Δ lo dice.
+  **INV** es la foto del último mes con inventario *dentro de los meses elegidos*. **Prom SO no depende del mes** (su ventana son los N meses
+  calendario que terminan en el corte del año) ni del producto elegido (la tabla muestra todos).
+- Al recargar datos (`Actualizar`) se descartan los filtros cuyo valor ya no existe.
+
+**Agregar un visual clicable**: en una tabla `mtdTabla`, pasa `clic:{valor, activo, haySel, alClic, titulo}` y pinta con el contexto `ig` de su dimensión.
+En un gráfico, usa las clases `.clicable` + `.sel`/`.atenuada`, `tabindex="0"` y `onclick` que llame a `mtdAlternarFiltro` / `sivsoAlternar`.
+
+**Fuera de alcance**: el Mapa no participa (sus claves —`grupo`/`posId`/`brick`— no cruzan con SAP ID).
+
+## 5. Orden por encabezado (`mtdTabla`)
+
+Helper único en `JsVentasMtd.html` (lo usan también las tablas de SI vs SO). `mtdTabla({id, columnas, filas, total, orden, fila, alOrdenar, clic})` (`clic` = filtrado cruzado, ver §4).
 
 - 1.er clic en un encabezado = **mayor → menor** (columnas de texto: A→Z); 2.º clic invierte; 3.er clic vuelve al orden por defecto.
 - Nulos ("sin plan", sin base) **siempre al final**. La fila **TOTAL** nunca se ordena. El orden se conserva al volver a filtrar (`MTD_ORDEN`).
@@ -73,7 +122,7 @@ Helper único en `JsVentasMtd.html` (lo usan también las tablas de SI vs SO). `
 - El CSV exporta **lo que se ve** (`alOrdenar` entrega las filas en el orden mostrado).
 - Para agregar una columna: añade `{k, t, tipo:'num'|'txt', celda(f, titulo)}` a `columnas`. `celda` devuelve el `<td>` (usa `mtdTd`, `mtdCeldaPct`, `mtdDeltaImp`).
 
-## 5. Hallazgos de la auditoría (2026-10-03) y estado
+## 6. Hallazgos de la auditoría (2026-10-03) y estado
 
 | # | Hallazgo | Severidad | Estado |
 |---|---|---|---|
@@ -94,7 +143,7 @@ Helper único en `JsVentasMtd.html` (lo usan también las tablas de SI vs SO). `
 | 15 | Donut roto con SO neto negativo; BU sin normalizar | Media | ✅ |
 | 16 | Detección de columnas por subcadena sin validar (devolvía 0 en silencio y quedaba cacheado) | Media | 🟡 las **obligatorias** se validan con mensaje claro y se prefiere coincidencia exacta; las opcionales siguen por subcadena |
 | 17 | `posId` duplicados (≈30) sumaban la misma venta varias veces en el mapa | Alta | ✅ `dup:1` y venta 0 en los repetidos |
-| 18 | Cabecera: 7 llamadas + overlay global + Leaflet/Choices bloqueantes; `actualizar()` hasta 5 veces | Alta | ✅ ver §6 |
+| 18 | Cabecera: 7 llamadas + overlay global + Leaflet/Choices bloqueantes; `actualizar()` hasta 5 veces | Alta | ✅ ver §7 |
 | 19 | `limpiarCache()` no borraba `so_detalle_NN`/`so_sku_NN` | Baja | ✅ registro de claves de Drive |
 | 20 | Caché: trozo de 90.000 **caracteres** puede pasar 100 KB con tildes → `putAll` fallaba en silencio | Media | ✅ JSON ASCII / trozo de 30.000 si hay no-ASCII; ahora se registra en el log |
 
@@ -106,7 +155,7 @@ Helper único en `JsVentasMtd.html` (lo usan también las tablas de SI vs SO). `
 - ISDIN (SAP 1) entra al total porque CUMPLIMIENTO lo incluye; si se quiere excluir del KPI hay que decidirlo con Finanzas.
 - La hoja `CUMPLIMIENTO` guarda una **tabla dinámica** en las columnas `O:R` (por KAM). El código **no** la lee; los totales por KAM de la pantalla se recalculan (y coinciden: Angélica Monsalve 7.314 M / plan 7.249 M / 100,9 % en la fecha de la auditoría).
 
-## 6. Rendimiento: qué cambió
+## 7. Rendimiento: qué cambió
 
 | Antes | Ahora |
 |---|---|
@@ -116,10 +165,10 @@ Helper único en `JsVentasMtd.html` (lo usan también las tablas de SI vs SO). `
 | `boot()` repintaba el mapa en cada respuesta (hasta 5 veces) | 1 vez al tener puntos+bricks+ventas y 1 al llegar las asignaciones; `actualizar()` no repinta con otra pestaña visible |
 | MTD: 2 llamadas, 2 `openById`, `getDataRange()` de hojas de 25 columnas, objetos con claves repetidas | 1 ejecución, 1 `openById`, solo las columnas necesarias, payload con diccionarios/arreglos (≈ −60/70 %) |
 | `getPuntosJson`/`getBricksJson`/`getAsignacionesJson` leían la hoja **entera en cada carga** | Caché 6 h (`conCache_`) |
-| Primer usuario con caché fría esperaba la lectura | `calentarCache()` + trigger cada 15 min (ver §7) |
+| Primer usuario con caché fría esperaba la lectura | `calentarCache()` + trigger cada 15 min (ver §8) |
 | N usuarios con caché fría → N lecturas simultáneas | `LockService`: el segundo encuentra la caché ya llena |
 
-## 7. Operación y despliegue
+## 8. Operación y despliegue
 
 1. `clasp push` — suben **juntos** `Code.js` y los 6 `.html` (`Index`, `Estilos`, `JsNucleo`, `JsFiltros`, `JsMapa`, `JsPaneles`) **más** `JsVentasMtd` y `JsSIvsSO`. Un push parcial rompe la plantilla (ver CLAUDE.md).
 2. Crear **nueva versión** del deployment (o probar en la URL `/dev`).
@@ -142,19 +191,19 @@ Helper único en `JsVentasMtd.html` (lo usan también las tablas de SI vs SO). `
 ```
 SI vs SO v2: `{v:2, clientes:[[sap,nombre,kam,canal]], productos:[[id,nombre,bu,marca]], filas:[[mes,iCli,iProd,si,siU,so,soU,inv,invU,tieneInv]], meta}`.
 
-## 8. Pruebas (sin Apps Script ni navegador)
+## 9. Pruebas (sin Apps Script ni navegador)
 
 Viven en `tests/` (fuera de `Apps Script/` para que `clasp` no las suba). Requieren solo Node:
 
 ```bash
 node tests/test_servidor_mtd.js     # Code.js con hojas simuladas: caché, forzar, fechas/zona, columnas, dup de POS ID
-node tests/test_cliente_mtd.js      # JsVentasMtd: KPI, corte YTD (−28,9 % → +1,9 %), filtros que propagan, orden
-node tests/test_cliente_sivso.js    # JsSIvsSO: INV, Δ al mismo corte, Prom SO calendario, donut
+node tests/test_cliente_mtd.js      # JsVentasMtd: KPI, corte YTD (−28,9 % → +1,9 %), filtros que propagan, filtrado cruzado, orden
+node tests/test_cliente_sivso.js    # JsSIvsSO: INV, Δ al mismo corte, Prom SO calendario, donut, filtrado cruzado (producto/cliente/mes/BU), chips
 node tests/chequeo_sintaxis_html.js # un error de sintaxis en UN Js*.html rompe toda la web app
 ```
 Los casos usan los **números reales** de la auditoría (sep-2026). Para ver la interfaz: `python construir_preview.py` (modo mock; ver CLAUDE.md).
 
-## 9. Evidencia de la conciliación (sep-2026, tomada de las hojas reales)
+## 10. Evidencia de la conciliación (sep-2026, tomada de las hojas reales)
 
 | Fuente | Σ venta del mes |
 |---|---|

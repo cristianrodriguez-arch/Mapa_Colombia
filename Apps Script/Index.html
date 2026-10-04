@@ -273,6 +273,8 @@
     <div id="mtdEstado" class="mtd-estado"><span class="mtd-spinner"></span>Cargando datos…</div>
 
     <div id="mtdContenido" style="display:none">
+      <!-- Filtros activos (incluye los hechos con clic en tablas y gráficos). Cada chip se quita con ×. -->
+      <div id="mtdChips" class="chips-activos" hidden></div>
       <div class="card mtd-kpi">
         <div class="cifras">
           <div class="bloque">
@@ -320,6 +322,7 @@
           <h2>HISTÓRICO DE VENTAS</h2>
           <span class="sub" id="mtdHistSubtitulo"></span>
         </div>
+        <div class="aviso" id="mtdHistNotaProd" hidden>El histórico no trae producto: sus cifras son de todos los productos de los clientes filtrados.</div>
 
         <div class="card mtd-filtros-historico">
           <input type="hidden" id="histAnioFil">
@@ -365,7 +368,7 @@
               <div class="card mtd-kpi" id="mtdHistKpi"></div>
               <div class="card mtd-panel">
                 <h3>Por Trimestre</h3>
-                <div class="hint">Los 4 trimestres del año seleccionado · no depende del filtro de mes/trimestre</div>
+                <div class="hint">Los 4 trimestres del año seleccionado · clic en una barra para ver solo ese trimestre en el histórico</div>
                 <div id="mtdHistGraficoTrimestre"></div>
               </div>
             </div>
@@ -398,21 +401,23 @@
           <button type="button" class="chip-periodo" data-u="#" onclick="sivsoSetUnidad('#')"># Unidades</button>
         </div>
       </div>
+      <!-- Multi-selección con buscador (Selector/Choices, el mismo control de Ventas MTD).
+           Se aplican al elegir; las opciones se calculan en cascada. -->
       <div class="campo">
         <label for="sivsoChannel">Canal</label>
-        <select id="sivsoChannel" onchange="renderSIvsSO()"><option value="TODOS">Todos los canales</option></select>
+        <select id="sivsoChannel" multiple></select>
       </div>
       <div class="campo">
         <label for="sivsoKam">KAM</label>
-        <select id="sivsoKam" onchange="renderSIvsSO()"><option value="TODOS">Todos los KAM</option></select>
+        <select id="sivsoKam" multiple></select>
       </div>
       <div class="campo">
         <label for="sivsoBu">Unidad de negocio</label>
-        <select id="sivsoBu" onchange="renderSIvsSO()"><option value="TODOS">Todas las BU</option></select>
+        <select id="sivsoBu" multiple></select>
       </div>
       <div class="campo">
         <label for="sivsoBrand">Marca</label>
-        <select id="sivsoBrand" onchange="renderSIvsSO()"><option value="TODOS">Todas las marcas</option></select>
+        <select id="sivsoBrand" multiple></select>
       </div>
       <div class="campo">
         <label for="sivsoCliente">Cliente</label>
@@ -420,14 +425,16 @@
                onkeydown="if(event.key==='Enter')renderSIvsSO()" onchange="renderSIvsSO()">
       </div>
       <div class="acciones">
-        <button class="mtd-btn" onclick="renderSIvsSO()">Aplicar Filtros</button>
-        <button class="btn" onclick="sivsoLimpiarFiltros()">Limpiar</button>
+        <button class="btn" onclick="sivsoLimpiarFiltros()" title="Quitar todos los filtros">Limpiar<span
+          class="contador-filtros" id="sivsoContador" hidden>0</span></button>
       </div>
     </div>
 
     <div id="sivsoEstado" class="mtd-estado"><span class="mtd-spinner"></span>Cargando datos…</div>
 
     <div id="sivsoContenido" style="display:none">
+      <!-- Filtros activos (incluye los hechos con clic en tablas, meses y BU). Cada chip se quita con ×. -->
+      <div id="sivsoChips" class="chips-activos" hidden></div>
       <div class="card mtd-kpi">
         <div class="cifras">
           <div class="bloque">
@@ -451,12 +458,12 @@
       <div class="mtd-grid">
         <div class="card mtd-panel">
           <h3>Sell In vs. Sell Out por mes</h3>
-          <div class="hint" id="sivsoHintMensual"></div>
+          <div class="hint" id="sivsoHintMensual"></div><!-- clic en un mes filtra todo el tablero -->
           <div id="sivsoGraficoMensual"></div>
         </div>
         <div class="card mtd-panel">
           <h3>% Participación Sell Out por BU</h3>
-          <div class="hint">Del total filtrado · año seleccionado</div>
+          <div class="hint">Del total filtrado · año seleccionado · clic en una BU de la leyenda para filtrar</div>
           <div id="sivsoDonutBu"></div>
         </div>
       </div>
