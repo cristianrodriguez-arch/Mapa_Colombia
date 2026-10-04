@@ -198,7 +198,11 @@ function irAlPdv(p,i){
 function popupPdv(p,i){
   var v=ventaPDV(p),nm=Object.keys(idxSel).length;
   var h='<div class="popup-pdv"><h3>'+esc(p.name)+
+<<<<<<< HEAD
     '<span class="badge-pot" title="Potencial del PDV">'+esc(p.potencial)+'</span>'+marcaAgenteHtml(p)+'</h3>';
+=======
+    '<span class="badge-pot">'+esc(p.potencial)+'</span>'+marcaAgenteHtml(p)+'</h3>';
+>>>>>>> 480c6f11a8cff4ae98854e1cd19eef456644a996
 
   if(skuSel&&distSku){
     var meta=productosG[skuSel]||{d:skuSel},s=ventaSku(p);
@@ -216,7 +220,11 @@ function popupPdv(p,i){
       h+='<div class="popup-sellout prod"><b>NO vende este producto</b><br>'+
         '<span class="mini">'+esc(meta.d||skuSel)+'</span><br>'+
         'Sell Out total del PDV: '+fd(v.total)+'</div>'}
+<<<<<<< HEAD
   }else if(ventasG[p.posId]&&!p.dup){
+=======
+  }else if(ventasG[p.posId]){
+>>>>>>> 480c6f11a8cff4ae98854e1cd19eef456644a996
     h+='<div class="popup-sellout"><span class="grande">'+fd(v.promedio)+'</span> / mes<br>'+
       '<span class="mini">Promedio sobre '+nm+(nm===1?' mes':' meses')+
       (filtros.bu.length?' · '+esc(filtros.bu.join(', ')):'')+'</span><br>'+
@@ -229,8 +237,12 @@ function popupPdv(p,i){
       .map(function(x){return esc(x.b)+' '+fc(x.a)}).join(' · ')+'<br>';
     h+='<button class="btn-portafolio" onclick="verPortPdv(pdvIdx['+i+'])">'+
       'Ver portafolio (producto a producto)</button>'
+<<<<<<< HEAD
   }else if(p.dup)h+='<div class="popup-sellout"><span class="mini">POS ID repetido en el CRM: su Sell Out se cuenta una sola vez, en el primer PDV que lo usa.</span></div>';
   else h+='<div class="popup-sellout"><span class="mini">Sin Sell Out en el período</span></div>';
+=======
+  }else h+='<div class="popup-sellout"><span class="mini">Sin Sell Out en el período</span></div>';
+>>>>>>> 480c6f11a8cff4ae98854e1cd19eef456644a996
 
   h+=(p.posId?'<b>POS ID:</b> '+esc(p.posId)+'<br>':'')+
     '<b>Dirección:</b> '+esc(p.direccion)+'<br>'+
