@@ -2,7 +2,6 @@
 /* ══════════════════════════════════════════════════════════════════════
    NÚCLEO · configuración, estado global, formatos y carga de datos.
    Todo el filtrado posterior ocurre EN MEMORIA sobre estos arreglos:
-<<<<<<< HEAD
    google.script.run solo se usa al abrir cada pestaña y para los detalles que
    se piden bajo demanda (portafolio, distribución de SKU, conteo de SKUs).
    Tocar un filtro nunca vuelve al servidor.
@@ -21,15 +20,6 @@
 /* muybajo unificado con --error/--accent (rojo de marca): "esto necesita
    atención" es el mismo rojo en cualquier parte de la app, no un tono aparte. */
 var SEM={alto:'#1e8e3e',medio:'#f2b600',bajo:'#ef7d00',muybajo:'#e41f33',sin:'#9ca3af'};
-=======
-   google.script.run solo se usa al arrancar (5 llamadas paralelas) y para
-   los detalles que se piden bajo demanda (portafolio, distribución de SKU,
-   conteo de SKUs). Tocar un filtro nunca vuelve al servidor.
-   ══════════════════════════════════════════════════════════════════════ */
-
-/* ── Paletas (color con significado, nunca decorativo) ──────────────── */
-var SEM={alto:'#1e8e3e',medio:'#f2b600',bajo:'#ef7d00',muybajo:'#d03b3b',sin:'#9ca3af'};
->>>>>>> 480c6f11a8cff4ae98854e1cd19eef456644a996
 var CIUDADES={'BOGOTA':'#2a78d6','BOGOTÁ':'#2a78d6','MEDELLIN':'#008300','MEDELLÍN':'#008300',
   'CALI':'#e87ba4','CARTAGENA':'#eda100','BARRANQUILLA':'#8b5cf6'};
 var FMT=new Intl.NumberFormat('es-CO');
@@ -66,7 +56,6 @@ var modoColor='rendimiento';
 
 var listo={puntos:false,bricks:false,ventas:false,port:false,asignaciones:false};
 var asignado=false;
-<<<<<<< HEAD
 /* Ciclo de vida del mapa: 'no' → 'cargando' → 'listo' ('error' si falla el CDN).
    mapaSucio = hubo datos nuevos mientras otra pestaña estaba visible; se repinta
    una sola vez al volver a Mapa (actualizar() recrea todos los marcadores). */
@@ -103,8 +92,6 @@ function cargarLib(nombre,cb){
   s.onload=function(){fin(true)};s.onerror=function(){fin(false)};
   setTimeout(function(){fin(false)},20000);          // CDN colgado: no esperar para siempre
   document.head.appendChild(s)}
-=======
->>>>>>> 480c6f11a8cff4ae98854e1cd19eef456644a996
 
 /* ── Utilidades de entorno ──────────────────────────────────────────── */
 function esGas(){return typeof google!=='undefined'&&google.script&&google.script.run}
@@ -112,7 +99,6 @@ function me(e){return e&&e.message?e.message:String(e)}
 function avisar(m,g){var c=document.getElementById('avisos');c.style.display='flex';
   var d=document.createElement('div');d.className='aviso'+(g?' grave':'');d.innerText=m;c.appendChild(d)}
 
-<<<<<<< HEAD
 /* ══════════════ Arranque diferido del mapa ═════════════════════════ */
 function programarMapa(){
   if(mapaEstado!=='no')return;
@@ -143,9 +129,6 @@ function iniciarMapa(){
       setTimeout(function(){if(typeof sivsoPrefetch==='function')sivsoPrefetch()},2000)})})}
 
 /* ══════════════ Carga de datos del mapa ═════════════════════════════ */
-=======
-/* ══════════════ Carga de datos ══════════════════════════════════════ */
->>>>>>> 480c6f11a8cff4ae98854e1cd19eef456644a996
 function cargarDatos(){
   if(!esGas()){setTimeout(cargarMock,250);return}
   google.script.run.withSuccessHandler(function(j){recPuntos(JSON.parse(j))})
@@ -184,18 +167,14 @@ function recPort(p){
   validarSku();listo.port=true;boot()}
 function recAsignaciones(p){asignacionesG=p.pdv||{};listo.asignaciones=true;boot()}
 
-<<<<<<< HEAD
 /* boot() lo llama cada una de las 5 respuestas. Antes disparaba actualizar()
    en TODAS (hasta 5 corridas completas que recreaban todos los marcadores);
    ahora una sola cuando puntos+bricks+ventas están listos y otra cuando llegan
    las asignaciones (las necesitan los badges y el filtro de agente). */
-=======
->>>>>>> 480c6f11a8cff4ae98854e1cd19eef456644a996
 function boot(){
   actOverlay();
   if(listo.bricks&&listo.puntos&&!asignado){
     asignarBricks();dibujarBricks();asignado=true;
-<<<<<<< HEAD
     // En un mapa oculto (0x0) fitBounds calcularía un zoom absurdo: el
     // ResizeObserver de JsMapa reencuadra cuando la pestaña se hace visible.
     if(map&&map.getSize().x>0&&bbBricks&&bbBricks.isValid())map.fitBounds(bbBricks,{padding:[30,30]})}
@@ -207,15 +186,6 @@ function boot(){
 
 function actOverlay(){
   var o=document.getElementById('overlay');if(!o)return;
-=======
-    if(bbBricks&&bbBricks.isValid())map.fitBounds(bbBricks,{padding:[30,30]})}
-  if(listo.puntos)actualizar();
-  // El portafolio depende de idxSel (definido en recVentas): esperar ambos.
-  if(listo.port&&listo.ventas)dibujarPort()}
-
-function actOverlay(){
-  var o=document.getElementById('overlay');
->>>>>>> 480c6f11a8cff4ae98854e1cd19eef456644a996
   if(listo.puntos&&listo.bricks&&listo.ventas&&listo.port&&listo.asignaciones){o.style.display='none';return}
   var f=[];if(!listo.puntos)f.push('PDV');if(!listo.bricks)f.push('bricks');
   if(!listo.ventas)f.push('Sell Out');if(!listo.port)f.push('portafolio');
@@ -226,16 +196,10 @@ function actOverlay(){
 function abrirDiag(){document.getElementById('modalDiag').style.display='flex';
   var p=document.getElementById('diagTexto');
   if(!esGas()){p.innerText='Solo disponible dentro de Apps Script.';return}
-<<<<<<< HEAD
   var mtd=(typeof mtdTextoConciliacion==='function')?mtdTextoConciliacion():'';
   p.innerText=mtd+'Consultando…';
   google.script.run.withSuccessHandler(function(j){p.innerText=mtd+JSON.stringify(JSON.parse(j),null,2)})
     .withFailureHandler(function(e){p.innerText=mtd+'Error: '+me(e)}).getDiagnosticoJson()}
-=======
-  p.innerText='Consultando…';
-  google.script.run.withSuccessHandler(function(j){p.innerText=JSON.stringify(JSON.parse(j),null,2)})
-    .withFailureHandler(function(e){p.innerText='Error: '+me(e)}).getDiagnosticoJson()}
->>>>>>> 480c6f11a8cff4ae98854e1cd19eef456644a996
 function cerrarDiag(){document.getElementById('modalDiag').style.display='none'}
 
 /* ══════════════ Datos de prueba (solo fuera de Apps Script) ══════════

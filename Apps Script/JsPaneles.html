@@ -11,12 +11,9 @@ var TOPE_TABLA_RAIL=100, TOPE_TABLA_MODAL=500;
 /* ══════════════ Ciclo de actualización ══════════════════════════════ */
 function actualizar(){
   if(!listo.puntos)return;
-<<<<<<< HEAD
   // Con otra pestaña visible no se recrean los marcadores del mapa: se marca
   // sucio y mapaAlEntrar() repinta una sola vez al volver a "Mapa".
   if(mtdVistaActiva!=='mapa'||mapaEstado!=='listo'){mapaSucio=true;return}
-=======
->>>>>>> 480c6f11a8cff4ae98854e1cd19eef456644a996
   var vis=visibles(),vv=vis.map(ventaPDV);
 
   // Agregados por brick (Sell Out, Sell Out conectado y cobertura de agente).
@@ -313,11 +310,7 @@ function brickInfoHtml(b){
       '<span class="mini">Sell Out del período · '+FMT.format(agg.pdvs.length)+' PDV</span></div>'+
       '<b>Top PDV:</b><ol>';
     agg.pdvs.slice(0,5).forEach(function(x){
-<<<<<<< HEAD
       h+='<li>'+esc(x.p.name)+' <span class="badge-pot" title="Potencial del PDV">'+esc(x.p.potencial)+'</span>'+
-=======
-      h+='<li>'+esc(x.p.name)+' <span class="badge-pot">'+esc(x.p.potencial)+'</span>'+
->>>>>>> 480c6f11a8cff4ae98854e1cd19eef456644a996
         marcaAgenteHtml(x.p)+'<br><span class="mini">'+fd(x.v.total)+'</span></li>'});
     h+='</ol>';
     if(agg.pdvs.length>5)h+='<span class="mini">+ '+FMT.format(agg.pdvs.length-5)+' más</span>';

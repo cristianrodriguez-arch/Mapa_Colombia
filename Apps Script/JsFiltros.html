@@ -15,25 +15,17 @@
    lo que quedaría al elegir esa opción.
 
    La UI son <select multiple> nativos mejorados con Choices.js. Si el CDN
-<<<<<<< HEAD
    está bloqueado, `choicesListo()` da false y se usan los <select>
-=======
-   está bloqueado, `CHOICES_OK` queda en false y se usan los <select>
->>>>>>> 480c6f11a8cff4ae98854e1cd19eef456644a996
    nativos: el resto de la lógica no cambia porque siempre se lee/escribe
    contra el mismo objeto `filtros`.
    ══════════════════════════════════════════════════════════════════════ */
 
 var DIMS_PDV=['grupo','channel','region','poblacion','potencial'];
-<<<<<<< HEAD
 var SELECTORES={};
 /* Choices.js llega por CDN de forma ASÍNCRONA (cargarLib en JsNucleo): ya no se
    puede decidir al parsear el archivo. Se consulta en el momento de construir
    cada Selector. */
 function choicesListo(){return typeof Choices==='function'}
-=======
-var SELECTORES={},CHOICES_OK=(typeof Choices==='function');
->>>>>>> 480c6f11a8cff4ae98854e1cd19eef456644a996
 
 var CFG_SELECTORES=[
   {dim:'mes',       id:'fMes',       multi:true},
@@ -75,15 +67,11 @@ function contarFiltros(){var n=0;
   Object.keys(filtros).forEach(function(d){n+=(filtros[d]||[]).length});
   return n+(skuSel?1:0)}
 function actContador(){var e=document.getElementById('contadorFiltros');
-<<<<<<< HEAD
   var n=contarFiltros();
   if(e){e.innerText=FMT.format(n);e.hidden=!n}
   var mv=document.getElementById('contadorFiltrosMv');
   if(mv){mv.innerText=FMT.format(n);mv.hidden=!n}
   if(typeof sincronizarChips==='function')sincronizarChips()}
-=======
-  if(e)e.innerText=FMT.format(contarFiltros())}
->>>>>>> 480c6f11a8cff4ae98854e1cd19eef456644a996
 
 function limpiarFiltros(){
   Object.keys(filtros).forEach(function(d){setFiltro(d,[])});
@@ -93,7 +81,6 @@ function limpiarFiltros(){
   Object.keys(SELECTORES).forEach(function(d){SELECTORES[d].fijar()});
   actualizar();dibujarPort();refDet();actProducto()}
 
-<<<<<<< HEAD
 /* ══════════════ Filtros bajo demanda (chips + "+ Nuevo filtro") ════════════
    Solo cambia qué controles se ven: el motor (setFiltro/pasa/DIMS_PDV) y los
    Selector de Choices siguen siendo los mismos y viven siempre en el DOM, así
@@ -215,8 +202,6 @@ function alternarPopFiltros(ev){
 /* El "\u2713" solo cierra el selector: los filtros ya se aplican en vivo. */
 function confirmarFiltros(){cerrarPopFiltros()}
 
-=======
->>>>>>> 480c6f11a8cff4ae98854e1cd19eef456644a996
 /* Clic en una barra de una gráfica: añade o quita ese valor (como Power BI). */
 function alternarFiltro(dim,val){
   var a=(filtros[dim]||[]).slice(),i=a.indexOf(val);
@@ -239,7 +224,6 @@ function recalcIdx(){idxSel={};
   if(!filtros.mes.length){mesesD.forEach(function(m,i){idxSel[i]=1});return}
   mesesD.forEach(function(m,i){if(fset.mes&&fset.mes[m])idxSel[i]=1})}
 
-<<<<<<< HEAD
 /* Los presets se calculan contra la fecha real del sistema, no contra el último
    mes con datos: si el ETL va retrasado, YTD/MTD lo dejan ver (salen vacíos y
    avisan) en vez de disimularlo. mesesD viene en formato 'YYYY-MM'. */
@@ -282,18 +266,6 @@ function aplicarPreset(v,silent){
     setFiltro('mes',[]);
     if(SELECTORES.mes)SELECTORES.mes.fijar()}
   if(el)el.value=v;
-=======
-function aplicarPreset(v,silent){
-  var el=document.getElementById('fPreset');if(el)el.value=v;
-  if(v!=='PERS'){
-    var sel=[],n=mesesD.length;
-    if(v==='U3'||v==='U6'){var k=(v==='U3'?3:6);sel=mesesD.slice(Math.max(0,n-k))}
-    else if(v==='ANIO'){var a=String(new Date().getFullYear());
-      sel=mesesD.filter(function(m){return m.indexOf(a)===0});
-      if(sel.length===n)sel=[]}               // si el año actual es todo, no filtra
-    setFiltro('mes',sel);
-    if(SELECTORES.mes)SELECTORES.mes.fijar()}
->>>>>>> 480c6f11a8cff4ae98854e1cd19eef456644a996
   recalcIdx();
   if(!silent&&listo.puntos){actualizar();dibujarPort();refDet();actProducto()}}
 
@@ -355,16 +327,11 @@ function sumarSerie(s){var u=0,a=0;(s||[]).forEach(function(t){
   if(idxSel[t[0]]){u+=t[1];a+=t[2]}});return{unidades:u,total:a}}
 function sumarSerieTotal(s){var a=0;(s||[]).forEach(function(t){a+=t[2]});return a}
 
-<<<<<<< HEAD
 /* `p.dup` (lo marca getPuntosJson): el POS ID está repetido en el CRM y la venta
    pertenece SOLO al primer PDV que lo usa. Sin esto, cada fila repetida sumaba la
    misma venta otra vez en los KPI, el mapa y los rankings. */
 function ventaPDV(p){
   var bus=(p.posId&&!p.dup)?ventasG[p.posId]:null;var u=0,a=0,mc={};
-=======
-function ventaPDV(p){
-  var bus=p.posId?ventasG[p.posId]:null;var u=0,a=0,mc={};
->>>>>>> 480c6f11a8cff4ae98854e1cd19eef456644a996
   if(bus)Object.keys(bus).forEach(function(b){
     if(!buActiva(b))return;
     bus[b].forEach(function(t){if(idxSel[t[0]]){u+=t[1];a+=t[2];mc[t[0]]=1}})});
@@ -372,11 +339,7 @@ function ventaPDV(p){
   return{total:a,unidades:u,mesesConDato:Object.keys(mc).length,promedio:n>0?a/n:0}}
 
 function ventaSku(p){
-<<<<<<< HEAD
   if(!distSku||!p.posId||p.dup)return{total:0,unidades:0,mesesConDato:0};
-=======
-  if(!distSku||!p.posId)return{total:0,unidades:0,mesesConDato:0};
->>>>>>> 480c6f11a8cff4ae98854e1cd19eef456644a996
   var s=distSku[p.posId];if(!s)return{total:0,unidades:0,mesesConDato:0};
   var u=0,a=0,mc=0;
   s.forEach(function(t){if(idxSel[t[0]]){u+=t[1];a+=t[2];mc++}});
@@ -387,11 +350,7 @@ function asignacionesDe(p){return(p.posId&&asignacionesG[p.posId])||[]}
 function tieneAgente(p){return asignacionesDe(p).length>0}
 function marcaAgenteTxt(p){return tieneAgente(p)?' 👤':''}
 function tagTipo(tipo){var t=(tipo||'').toUpperCase();if(!t)return'';
-<<<<<<< HEAD
   return'<span class="tag-tipo'+(t==='LAM'?' lam':'')+'" title="Tipo de agente asignado">'+esc(t)+'</span>'}
-=======
-  return'<span class="tag-tipo'+(t==='LAM'?' lam':'')+'">'+esc(t)+'</span>'}
->>>>>>> 480c6f11a8cff4ae98854e1cd19eef456644a996
 function marcaAgenteHtml(p){
   var as=asignacionesDe(p);if(!as.length)return'';
   var detalle=as.map(function(a){return a.delegado+(a.tipo?' ('+a.tipo+')':'')}).join(', ');
@@ -439,27 +398,18 @@ function opcionesDe(dim){
     return{valor:k,etiqueta:k,cnt:c[k]}})}
 
 /* ══════════════ Selector: <select multiple> + Choices.js ════════════ */
-<<<<<<< HEAD
 /* `cfg` admite tres ganchos opcionales para reutilizar el control fuera del
    mapa (lo usa Ventas MTD): ops() → opciones, sel() → arreglo elegido y
    alCambiar(valores). Sin ellos el Selector trabaja contra `filtros` del mapa. */
 function Selector(cfg){
   this.cfg=cfg;this.dim=cfg.dim;this.multi=!!cfg.multi;this.tope=cfg.tope||0;
-=======
-function Selector(cfg){
-  this.dim=cfg.dim;this.multi=!!cfg.multi;this.tope=cfg.tope||0;
->>>>>>> 480c6f11a8cff4ae98854e1cd19eef456644a996
   this.vacio=cfg.vacio||'';this.el=document.getElementById(cfg.id);
   this.todas=[];this.etiquetas={};this.firma='';this.query='';
   this.abierto=false;this.silencio=false;this.ch=null;this.temp=null;this.firmaSel=null;
   if(!this.el)return;
   var self=this;
 
-<<<<<<< HEAD
   if(choicesListo()){
-=======
-  if(CHOICES_OK){
->>>>>>> 480c6f11a8cff4ae98854e1cd19eef456644a996
     this.ch=new Choices(this.el,{
       removeItemButton:this.multi,
       searchEnabled:true,
@@ -495,12 +445,8 @@ function Selector(cfg){
 
 /* Valores elegidos hoy, como mapa (la fuente de verdad es `filtros`). */
 Selector.prototype.seleccion=function(){
-<<<<<<< HEAD
   var m={},arr=this.cfg.sel?(this.cfg.sel()||[]):
     (this.dim==='sku'?(skuSel?[skuSel]:[]):(filtros[this.dim]||[]));
-=======
-  var m={},arr=this.dim==='sku'?(skuSel?[skuSel]:[]):(filtros[this.dim]||[]);
->>>>>>> 480c6f11a8cff4ae98854e1cd19eef456644a996
   arr.forEach(function(v){m[v]=1});return m};
 
 Selector.prototype.valores=function(){
@@ -511,12 +457,8 @@ Selector.prototype.valores=function(){
   return v.filter(function(x){return x!==''&&x!=null&&x!=='__mas__'})};
 
 Selector.prototype.emitir=function(){
-<<<<<<< HEAD
   if(this.cfg.alCambiar)this.cfg.alCambiar(this.valores());
   else cambiarSeleccion(this.dim,this.valores());
-=======
-  cambiarSeleccion(this.dim,this.valores());
->>>>>>> 480c6f11a8cff4ae98854e1cd19eef456644a996
   // El chip que acaba de crear Choices trae el conteo pegado; recortarlo aquí
   // evita esperar al siguiente repintado (que no ocurre si el menú sigue abierto).
   this.recortarChips()};
@@ -525,11 +467,7 @@ Selector.prototype.emitir=function(){
 Selector.prototype.refrescar=function(forzar){
   if(!this.el)return;
   if(this.abierto&&!forzar)return;             // no interrumpir un desplegable abierto
-<<<<<<< HEAD
   var ops=this.cfg.ops?this.cfg.ops():opcionesDe(this.dim),self=this,firma=ops.length+'|';
-=======
-  var ops=opcionesDe(this.dim),self=this,firma=ops.length+'|';
->>>>>>> 480c6f11a8cff4ae98854e1cd19eef456644a996
   for(var i=0;i<ops.length;i++)firma+=ops[i].valor+':'+(ops[i].cnt==null?'':ops[i].cnt)+',';
   firma+='#'+Object.keys(this.seleccion()).sort().join(',');
   if(firma===this.firma&&!forzar)return;
@@ -620,11 +558,7 @@ function cambiarSeleccion(dim,vals){
 
 function iniciarSelectores(){
   CFG_SELECTORES.forEach(function(cfg){SELECTORES[cfg.dim]=new Selector(cfg)});
-<<<<<<< HEAD
   if(!choicesListo())avisar('Choices.js no cargó desde el CDN: los filtros funcionan como '+
-=======
-  if(!CHOICES_OK)avisar('Choices.js no cargó desde el CDN: los filtros funcionan como '+
->>>>>>> 480c6f11a8cff4ae98854e1cd19eef456644a996
     'listas múltiples nativas (Ctrl+clic para elegir varios).')}
 
 function sincronizarSelectores(){
@@ -632,7 +566,6 @@ function sincronizarSelectores(){
   actContador()}
 
 /* ══════════════ Arranque de la interfaz ═════════════════════════════ */
-<<<<<<< HEAD
 /* Lo mínimo para pintar la pestaña por defecto. El mapa NO se inicia aquí:
    lo hace iniciarMapa() (JsNucleo) en segundo plano cuando Ventas MTD ya
    está en pantalla, o antes si el usuario abre "Mapa". */
@@ -656,9 +589,6 @@ function iniciarUIBasica(){
 
 /* Interfaz del mapa (la llama iniciarMapa() cuando Leaflet y Choices ya llegaron). */
 function iniciarMapaUI(){
-=======
-function iniciarUI(){
->>>>>>> 480c6f11a8cff4ae98854e1cd19eef456644a996
   // Orden importante: Choices.js primero. Mientras los filtros son <select
   // multiple> nativos la cabecera mide cientos de píxeles y el mapa se queda
   // con una franja de 5 px; Leaflet cachea ese tamaño al construirse.
@@ -666,11 +596,6 @@ function iniciarUI(){
   crearMapa();
   verVista('tabla');
   actContador();
-<<<<<<< HEAD
   pintarDimensiones();
-=======
-  document.addEventListener('keydown',function(e){
-    if(e.key==='Escape'){cerrarDiag();cerrarTabla()}});
->>>>>>> 480c6f11a8cff4ae98854e1cd19eef456644a996
 }
 </script>

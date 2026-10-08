@@ -3,7 +3,6 @@
 <head>
 <base target="_top">
 <meta charset="utf-8">
-<<<<<<< HEAD
 
 <!-- Librerías externas: Leaflet (mapa) y Choices.js (filtros multi-selección) YA NO
      van aquí. Antes eran scripts bloqueantes: la página quedaba en blanco hasta que
@@ -14,28 +13,12 @@
 <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
 <link rel="preconnect" href="https://unpkg.com" crossorigin>
 <meta id="libs-ancla" name="libs-ancla" content="">
-=======
-
-<!-- Mapa -->
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin=""/>
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
-
-<!-- Filtros multi-selección. Si el CDN está bloqueado, JsFiltros.html detecta que
-     window.Choices no existe y deja los <select multiple> nativos funcionando. -->
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/choices.js@10.2.0/public/assets/styles/choices.min.css"/>
-<script src="https://cdn.jsdelivr.net/npm/choices.js@10.2.0/public/assets/scripts/choices.min.js"></script>
->>>>>>> 480c6f11a8cff4ae98854e1cd19eef456644a996
 
 <?!= include('Estilos'); ?>
 </head>
 <body>
 
-<<<<<<< HEAD
 <!-- ═══ Modales ═══════════════════════════════════════════════════════ -->
-=======
-<!-- ═══ Capa de carga y modales ═══════════════════════════════════════ -->
-<div id="overlay" class="overlay"><div class="caja" id="overlayTexto">Cargando datos…</div></div>
->>>>>>> 480c6f11a8cff4ae98854e1cd19eef456644a996
 
 <div id="modalDiag" class="modal" onclick="if(event.target===this)cerrarDiag()">
   <div class="caja">
@@ -76,7 +59,6 @@
       </div>
     </div>
 
-<<<<<<< HEAD
     <button type="button" class="btn btn-filtros-mv" id="btnFiltrosMovil"
             onclick="alternarFiltrosMovil()">Filtros <span class="chev">▾</span>
       <span class="contador-filtros" id="contadorFiltrosMv" hidden>0</span></button>
@@ -123,39 +105,11 @@
         <button type="button" class="btn btn-icono btn-primario" onclick="confirmarFiltros()"
                 title="Listo">✓</button>
       </div>
-=======
-    <div class="filtros" id="barraFiltros">
-      <label class="filtro"><span>Período</span>
-        <select id="fPreset" onchange="aplicarPreset(this.value)">
-          <option value="TODOS">Todos los meses</option>
-          <option value="U3">Últimos 3 meses</option>
-          <option value="U6">Últimos 6 meses</option>
-          <option value="ANIO">Año actual</option>
-          <option value="PERS">Personalizado</option>
-        </select>
-      </label>
-      <label class="filtro"><span>Meses</span><select id="fMes" multiple></select></label>
-      <label class="filtro"><span>Unidad de negocio</span><select id="fBu" multiple></select></label>
-      <label class="filtro"><span>Producto (SKU)</span><select id="fSku"></select></label>
-      <label class="filtro"><span>Cliente</span><select id="fGrupo" multiple></select></label>
-      <label class="filtro"><span>Canal</span><select id="fChannel" multiple></select></label>
-      <label class="filtro"><span>Departamento</span><select id="fRegion" multiple></select></label>
-      <label class="filtro"><span>Ciudad</span><select id="fPoblacion" multiple></select></label>
-      <label class="filtro"><span>Potencial</span><select id="fPotencial" multiple></select></label>
-      <label class="filtro"><span>Agente</span><select id="fAgente" multiple></select></label>
-      <label class="filtro"><span>Brick</span><select id="fBrick" multiple></select></label>
-      <label class="filtro"><span>Punto de venta</span><select id="fPdv" multiple></select></label>
->>>>>>> 480c6f11a8cff4ae98854e1cd19eef456644a996
     </div>
 
     <div class="acciones">
       <button class="btn" onclick="centrarBricks()" title="Encuadrar el mapa en los bricks">Centrar</button>
       <button class="btn" onclick="abrirDiag()" title="Ver qué devolvieron las hojas y el ETL">Diagnóstico</button>
-<<<<<<< HEAD
-=======
-      <button class="btn btn-primario" onclick="limpiarFiltros()">Limpiar filtros<span
-        class="contador-filtros" id="contadorFiltros">0</span></button>
->>>>>>> 480c6f11a8cff4ae98854e1cd19eef456644a996
     </div>
   </header>
 
@@ -164,7 +118,6 @@
        activa. La vista oculta lleva [hidden] (display:none), así que no genera
        caja ni consume fila, y la visible siempre recibe el 1fr. ── -->
   <nav class="mtdtabs-top" role="tablist">
-<<<<<<< HEAD
     <button class="mtdtab-top activo" id="btnVistaVentasMtd" role="tab"
             onclick="mostrarVistaSuperior('ventasmtd')">📊 Ventas MTD</button>
     <button class="mtdtab-top" id="btnVistaSIvsSO" role="tab"
@@ -174,15 +127,6 @@
   </nav>
 
   <div id="vistaMapa" hidden>
-=======
-    <button class="mtdtab-top activo" id="btnVistaMapa" role="tab"
-            onclick="mostrarVistaSuperior('mapa')">🗺️ Mapa</button>
-    <button class="mtdtab-top" id="btnVistaVentasMtd" role="tab"
-            onclick="mostrarVistaSuperior('ventasmtd')">📊 Ventas MTD</button>
-  </nav>
-
-  <div id="vistaMapa">
->>>>>>> 480c6f11a8cff4ae98854e1cd19eef456644a996
     <div class="avisos" id="avisos"></div>
 
     <div class="cuerpo">
@@ -205,11 +149,8 @@
         </div>
         <div class="mapa-wrap">
           <div id="map"></div>
-<<<<<<< HEAD
           <!-- Carga del mapa: local a este panel (antes era una capa fija sobre toda la app). -->
           <div id="overlay" class="overlay"><div class="caja" id="overlayTexto">Preparando el mapa…</div></div>
-=======
->>>>>>> 480c6f11a8cff4ae98854e1cd19eef456644a996
           <div class="banda-prod" id="bandaProd">
             <span id="bandaTxt"></span>
             <span class="x" onclick="seleccionarSku('')" title="Salir del análisis de producto">✕</span>
@@ -260,11 +201,7 @@
               </div>
               <div class="bloque" id="bqPort">
                 <h2>Portafolio · Top 12 productos</h2>
-<<<<<<< HEAD
                 <div class="hint">Total país del período · no cambia con el brick/ciudad seleccionado · clic en un producto para analizarlo</div>
-=======
-                <div class="hint">Clic en un producto para analizarlo</div>
->>>>>>> 480c6f11a8cff4ae98854e1cd19eef456644a996
                 <div id="chartPort"></div>
               </div>
               <div class="bloque">
@@ -299,11 +236,7 @@
     </div>
   </div><!-- /#vistaMapa -->
 
-<<<<<<< HEAD
   <div id="vistaVentasMtd">
-=======
-  <div id="vistaVentasMtd" hidden>
->>>>>>> 480c6f11a8cff4ae98854e1cd19eef456644a996
     <div class="mtd-head">
       <h2>INFORME DE VENTAS MTD</h2>
       <span class="sub" id="mtdSubtitulo"></span>
@@ -313,7 +246,6 @@
       </span>
     </div>
 
-<<<<<<< HEAD
     <!-- Un solo juego de filtros gobierna TODA la hoja (KPIs, Por Cliente, Por KAM,
          Por Producto e Histórico). Multi-selección con buscador (Selector/Choices,
          el mismo control del mapa); se aplican al elegir, sin botón "Aplicar". -->
@@ -368,69 +300,15 @@
       <div class="mtd-grid mtd-grid-apilado">
         <div class="card mtd-panel">
           <div class="mtd-panel-cab"><h3>Por Cliente</h3><button class="mtd-btn-csv" onclick="mtdCsvClientes()" title="Descargar lo que muestra la tabla">⬇ CSV</button></div>
-=======
-    <div class="card mtd-filtros">
-      <div class="campo">
-        <label for="mtdCanal">Canal</label>
-        <select id="mtdCanal" onchange="renderVentasMtd()"><option value="TODOS">Todos los canales</option></select>
-      </div>
-      <div class="campo">
-        <label for="mtdKam">KAM</label>
-        <select id="mtdKam" onchange="renderVentasMtd()"><option value="TODOS">Todos los KAM</option></select>
-      </div>
-      <div class="campo">
-        <label for="mtdCliente">Cliente</label>
-        <input type="text" id="mtdCliente" placeholder="Buscar cliente…" autocomplete="off"
-               onkeydown="if(event.key==='Enter')renderVentasMtd()">
-      </div>
-      <div class="acciones">
-        <button class="mtd-btn" onclick="renderVentasMtd()">Aplicar Filtros</button>
-        <button class="btn" onclick="mtdLimpiarFiltros()">Limpiar</button>
-      </div>
-    </div>
-
-    <div id="mtdEstado" class="mtd-estado"><span class="mtd-spinner"></span>Cargando datos…</div>
-
-    <div id="mtdContenido" style="display:none">
-      <div class="card mtd-kpi">
-        <div class="cifras">
-          <div class="bloque">
-            <div class="etq">Venta</div>
-            <div class="num" id="mtdKpiVenta">–</div>
-            <div class="det" id="mtdKpiVentaDet"></div>
-          </div>
-          <div class="bloque">
-            <div class="etq">% Cumplimiento</div>
-            <div class="num pct" id="mtdKpiPct">–</div>
-            <div class="det" id="mtdKpiPctDet"></div>
-          </div>
-          <div class="bloque">
-            <div class="etq">Acumulado año</div>
-            <div class="num" id="mtdKpiAnio">–</div>
-            <div class="det" id="mtdKpiAnioDet"></div>
-          </div>
-        </div>
-        <div class="mtd-barra"><span id="mtdKpiBarra" style="width:0%"></span></div>
-      </div>
-
-      <div class="mtd-grid">
-        <div class="card mtd-panel">
-          <h3>Por Cliente</h3>
->>>>>>> 480c6f11a8cff4ae98854e1cd19eef456644a996
           <div class="hint" id="mtdHintClientes"></div>
           <div class="mtd-scroll"><table class="mtd-tabla" id="mtdTablaClientes"></table></div>
         </div>
         <div class="card mtd-panel">
-<<<<<<< HEAD
           <div class="mtd-panel-cab"><h3>Por KAM</h3><button class="mtd-btn-csv" onclick="mtdCsvKam()" title="Descargar lo que muestra la tabla">⬇ CSV</button></div>
-=======
-          <h3>Por KAM</h3>
->>>>>>> 480c6f11a8cff4ae98854e1cd19eef456644a996
           <div class="hint" id="mtdHintKam"></div>
           <div class="mtd-scroll"><table class="mtd-tabla" id="mtdTablaKam"></table></div>
         </div>
       </div>
-<<<<<<< HEAD
 
       <div class="card mtd-panel">
         <div class="mtd-panel-cab"><h3>Por Producto</h3><button class="mtd-btn-csv" onclick="mtdCsvProductos()" title="Descargar lo que muestra la tabla">⬇ CSV</button></div>
@@ -608,15 +486,6 @@
         <div class="mtd-scroll"><table class="mtd-tabla" id="sivsoTablaClientes"></table></div>
       </div>
     </div>
-=======
-
-      <div class="card mtd-panel">
-        <h3>Por Producto</h3>
-        <div class="hint" id="mtdHintProductos">Hoja PLANTILLA · ΔV-1 % compara contra el mes anterior</div>
-        <div class="mtd-scroll"><table class="mtd-tabla" id="mtdTablaProductos"></table></div>
-      </div>
-    </div>
->>>>>>> 480c6f11a8cff4ae98854e1cd19eef456644a996
   </div>
 </div>
 
@@ -626,11 +495,7 @@
 <?!= include('JsMapa');    ?>
 <?!= include('JsPaneles'); ?>
 <?!= include('JsVentasMtd'); ?>
-<<<<<<< HEAD
 <?!= include('JsSIvsSO'); ?>
 <script>iniciarUIBasica();</script>
-=======
-<script>iniciarUI();cargarDatos();</script>
->>>>>>> 480c6f11a8cff4ae98854e1cd19eef456644a996
 </body>
 </html>
