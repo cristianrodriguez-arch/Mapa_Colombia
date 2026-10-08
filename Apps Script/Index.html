@@ -46,6 +46,11 @@
   </div>
 </div>
 
+<!-- Fotos de Yoobic: "Últimas fotos" de un PDV e historial antes/después (JsYoobic). -->
+<div id="modalYb" class="modal" onclick="if(event.target===this)ybCerrarModal()">
+  <div class="caja caja-yb" id="ybModal"></div>
+</div>
+
 <!-- ═══ Layout: cabecera · avisos · (mapa | panel derecho) ════════════ -->
 <div class="app">
 
@@ -124,6 +129,8 @@
             onclick="mostrarVistaSuperior('sivso')">🔁 SI vs SO</button>
     <button class="mtdtab-top" id="btnVistaMapa" role="tab"
             onclick="mostrarVistaSuperior('mapa')">🗺️ Mapa</button>
+    <button class="mtdtab-top" id="btnVistaYoobic" role="tab"
+            onclick="mostrarVistaSuperior('yoobic')">🏪 Yoobic · Perfect Store</button>
   </nav>
 
   <div id="vistaMapa" hidden>
@@ -140,6 +147,13 @@
               <option value="conectado">Sell Out conectado</option>
               <option value="asignado">Cobertura de agente</option>
               <option value="ciudad">Ciudad</option>
+              <optgroup label="Perfect Store (Yoobic)">
+                <option value="ps_global">Global Perfect Store</option>
+                <option value="ps_disp">Disponibilidad de producto</option>
+                <option value="ps_lineal">Espacio lineal</option>
+                <option value="ps_perm">Visibilidad permanente</option>
+                <option value="ps_temp">Visibilidad de campaña</option>
+              </optgroup>
             </select>
           </label>
           <label><input type="checkbox" id="togBricks" checked onchange="alternarBricks()"> Polígonos</label>
@@ -487,6 +501,147 @@
       </div>
     </div>
   </div>
+
+  <!-- ═══ Yoobic · Perfect Store (JsYoobic.html) ═══
+       Filtros al estilo Yoobic: Fecha (relativo/absoluto) + Sitio, Usuario y
+       Cliente fijos + "+ Añadir filtro" para el resto. Tres sub-pestañas. -->
+  <div id="vistaYoobic" hidden>
+    <div class="mtd-head">
+      <h2>PERFECT STORE · YOOBIC</h2>
+      <span class="sub">Ejecución en punto de venta · Disponibilidad 40 · Lineal 25 · Vis. permanente 20 · Vis. campaña 15</span>
+      <span class="acc">
+        <span class="sub" id="ybActualizado"></span>
+        <button class="btn" onclick="ybActualizar()">Actualizar</button>
+      </span>
+    </div>
+
+    <div class="card mtd-filtros yb-filtros">
+      <div class="campo yb-campo-fecha">
+        <label for="ybFechaModo">Fecha</label>
+        <div class="yb-fecha-fila">
+          <select id="ybFechaModo" onchange="ybCambiarFecha()">
+            <option value="todo">Todas las fechas</option>
+            <optgroup label="Relativo">
+              <option value="d1">Hoy</option>
+              <option value="d7">Últimos 7 días</option>
+              <option value="d30">Últimos 30 días</option>
+              <option value="d90">Últimos 90 días</option>
+              <option value="d365">Últimos 365 días</option>
+            </optgroup>
+            <optgroup label="Absoluto">
+              <option value="en">En (fecha exacta)</option>
+              <option value="intervalo">Intervalo</option>
+              <option value="antes">Antes de</option>
+              <option value="despues">Después de</option>
+            </optgroup>
+          </select>
+          <input type="date" id="ybFechaD1" hidden onchange="ybCambiarFecha()">
+          <input type="date" id="ybFechaD2" hidden onchange="ybCambiarFecha()">
+        </div>
+      </div>
+      <div class="yb-campos" id="ybCampos"></div>
+      <div class="acciones">
+        <div class="pop-anclaje">
+          <button type="button" class="btn btn-nuevo" onclick="ybAlternarPop(event)">+ Añadir filtro</button>
+          <div class="pop-filtros yb-pop" id="ybPop" hidden><div class="pop-lista" id="ybPopLista"></div></div>
+        </div>
+        <button class="btn" onclick="ybLimpiarFiltros()" title="Quitar todos los filtros">Limpiar<span
+          class="contador-filtros" id="ybContador" hidden>0</span></button>
+      </div>
+    </div>
+
+    <div id="ybEstado" class="mtd-estado"><span class="mtd-spinner"></span>Cargando Yoobic…</div>
+
+    <div id="ybContenido" style="display:none">
+      <div id="ybChips" class="chips-activos" hidden></div>
+
+      <div class="yb-subbarra">
+        <div class="tabs yb-subtabs" id="ybSubtabs">
+          <button class="tab activa" data-v="resumen" onclick="ybVerSub('resumen')">Resumen Perfect Store</button>
+          <button class="tab" data-v="agotados" onclick="ybVerSub('agotados')">Agotados</button>
+          <button class="tab" data-v="fotos" onclick="ybVerSub('fotos')">Fotos</button>
+        </div>
+        <div class="yb-alcance">
+          <span class="chips-etq">Considerar</span>
+          <div class="chips-periodo" id="ybAlcanceChips">
+            <button type="button" class="chip-periodo activo" data-a="ultima" onclick="ybSetAlcance('ultima')">Última encuesta por PDV</button>
+            <button type="button" class="chip-periodo" data-a="todas" onclick="ybSetAlcance('todas')">Todas las encuestas</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Sub-pestaña: Resumen -->
+      <section id="ybSubResumen">
+        <div class="card yb-kpis-card">
+          <div class="yb-kpis" id="ybKpis"></div>
+          <div class="hint" id="ybHintKpis"></div>
+        </div>
+        <div class="mtd-grid">
+          <div class="card mtd-panel">
+            <h3>Global Perfect Store por mes</h3>
+            <div class="hint">Promedio de todas las encuestas de cada mes · color = nivel · pasa el cursor sobre una columna para ver los 4 pilares</div>
+            <div id="ybEvol"></div>
+            <div class="mtd-scroll yb-scroll-corto"><table class="mtd-tabla" id="ybTablaMes"></table></div>
+          </div>
+          <div class="yb-col-der">
+            <div class="card mtd-panel">
+              <h3>Global por cliente</h3>
+              <div class="hint">Clic para añadir o quitar del filtro</div>
+              <div id="ybBarCliente"></div>
+            </div>
+            <div class="card mtd-panel">
+              <h3>Global por delegado</h3>
+              <div class="hint">Quien llenó la encuesta · clic para filtrar</div>
+              <div id="ybBarDelegado"></div>
+            </div>
+          </div>
+        </div>
+        <div class="card mtd-panel">
+          <h3>Puntuación por pilar · PDV</h3>
+          <div class="hint" id="ybHintPdv"></div>
+          <div class="mtd-scroll"><table class="mtd-tabla" id="ybTablaPdv"></table></div>
+        </div>
+      </section>
+
+      <!-- Sub-pestaña: Agotados -->
+      <section id="ybSubAgotados" hidden>
+        <div class="card mtd-kpi">
+          <div class="cifras" id="ybAgotKpis"></div>
+          <div class="hint" id="ybHintAgot" style="margin-top:8px"></div>
+        </div>
+        <div class="mtd-grid">
+          <div class="card mtd-panel">
+            <h3>Productos más agotados</h3>
+            <div class="hint">N.º de PDV donde el producto está agotado · clic para filtrar por ese producto</div>
+            <div id="ybBarAgotProd"></div>
+          </div>
+          <div class="card mtd-panel">
+            <h3>Agotados por ciudad · zona</h3>
+            <div class="hint">Dónde actuar primero · clic para filtrar por la ciudad</div>
+            <div id="ybBarAgotZona"></div>
+          </div>
+        </div>
+        <div class="card mtd-panel">
+          <div class="mtd-panel-cab">
+            <h3>Tabla de agotados</h3>
+            <div class="chips-periodo" id="ybAgotChips">
+              <button type="button" class="chip-periodo activo" data-v="pdv" onclick="ybSetVistaAgot('pdv')">Por PDV</button>
+              <button type="button" class="chip-periodo" data-v="detalle" onclick="ybSetVistaAgot('detalle')">Detalle PDV × producto</button>
+            </div>
+            <button class="mtd-btn-csv" onclick="ybCsvAgotados()" title="Descargar lo que muestra la tabla">⬇ CSV</button>
+          </div>
+          <div class="hint" id="ybHintTablaAgot"></div>
+          <div class="mtd-scroll yb-scroll-alto"><table class="mtd-tabla" id="ybTablaAgot"></table></div>
+        </div>
+      </section>
+
+      <!-- Sub-pestaña: Fotos -->
+      <section id="ybSubFotos" hidden>
+        <div class="hint" id="ybHintFotos"></div>
+        <div id="ybGaleria"></div>
+      </section>
+    </div>
+  </div>
 </div>
 
 <!-- ═══ Lógica (módulos) ══════════════════════════════════════════════ -->
@@ -496,6 +651,7 @@
 <?!= include('JsPaneles'); ?>
 <?!= include('JsVentasMtd'); ?>
 <?!= include('JsSIvsSO'); ?>
+<?!= include('JsYoobic'); ?>
 <script>iniciarUIBasica();</script>
 </body>
 </html>

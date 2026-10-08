@@ -183,6 +183,7 @@ function cerrarPopFiltros(){
 function panelFiltrosMovilActual(){
   if(mtdVistaActiva==='ventasmtd')return document.querySelector('#vistaVentasMtd .mtd-filtros');
   if(mtdVistaActiva==='sivso')return document.querySelector('#vistaSIvsSO .mtd-filtros');
+  if(mtdVistaActiva==='yoobic')return document.querySelector('#vistaYoobic .mtd-filtros');
   return document.getElementById('barraFiltros')}
 function alternarFiltrosMovil(){
   var el=panelFiltrosMovilActual();if(!el)return;
@@ -578,10 +579,13 @@ function iniciarUIBasica(){
   // que pasaría si el usuario acabara de hacer clic en esa pestaña.
   mostrarVistaSuperior('ventasmtd');
   document.addEventListener('keydown',function(e){
-    if(e.key==='Escape'){cerrarDiag();cerrarTabla();cerrarPopFiltros()}});
+    if(e.key==='Escape'){cerrarDiag();cerrarTabla();cerrarPopFiltros();
+      if(typeof ybCerrarModal==='function'){ybCerrarModal();ybCerrarPop()}}});
   document.addEventListener('click',function(e){
     var pop=document.getElementById('popFiltros');
     if(pop&&!pop.hidden&&(!e.target.closest||!e.target.closest('.pop-anclaje')))cerrarPopFiltros();
+    var ybPop=document.getElementById('ybPop');
+    if(ybPop&&!ybPop.hidden&&(!e.target.closest||!e.target.closest('.pop-anclaje')))ybPop.hidden=true;
     var panel=panelFiltrosMovilActual();
     if(panel&&panel.classList.contains('abierto')&&e.target.id!=='btnFiltrosMovil'&&
        (!e.target.closest||!e.target.closest('.mtd-filtros, #barraFiltros')))cerrarFiltrosMovil()});

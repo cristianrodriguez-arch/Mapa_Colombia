@@ -126,7 +126,9 @@ function iniciarMapa(){
       mapaEstado='listo';
       cargarDatos();
       // Con el mapa ya en marcha se precarga SI vs SO (la caché del servidor está tibia).
-      setTimeout(function(){if(typeof sivsoPrefetch==='function')sivsoPrefetch()},2000)})})}
+      setTimeout(function(){if(typeof sivsoPrefetch==='function')sivsoPrefetch()},2000);
+      // …y Yoobic: el popup de cada PDV y las capas Perfect Store lo usan.
+      setTimeout(function(){if(typeof ybPrefetch==='function')ybPrefetch()},2600)})})}
 
 /* ══════════════ Carga de datos del mapa ═════════════════════════════ */
 function cargarDatos(){
@@ -175,6 +177,8 @@ function boot(){
   actOverlay();
   if(listo.bricks&&listo.puntos&&!asignado){
     asignarBricks();dibujarBricks();asignado=true;
+    // Yoobic necesita los PDV (Cliente/Ciudad del CRM) y su brick (→ Zona).
+    if(typeof ybAlCargarMapa==='function')ybAlCargarMapa();
     // En un mapa oculto (0x0) fitBounds calcularía un zoom absurdo: el
     // ResizeObserver de JsMapa reencuadra cuando la pestaña se hace visible.
     if(map&&map.getSize().x>0&&bbBricks&&bbBricks.isValid())map.fitBounds(bbBricks,{padding:[30,30]})}

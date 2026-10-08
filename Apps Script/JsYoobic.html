@@ -1,0 +1,913 @@
+<script>
+/* ══════════ JsYoobic · pestaña "Yoobic" (Perfect Store) + capas del mapa ══════════
+   Datos: getYoobicJson() (misiones, puntajes oficiales de Yoobic, disponibilidad
+   por producto, tiendas cruzadas con Direcciones) y, bajo demanda,
+   getYoobicFotosJson() (historial de fotos). Ver la sección YOOBIC de Code.js.
+
+   Igual que el resto del visor, TODO el filtrado ocurre en el navegador: tocar
+   un filtro nunca vuelve al servidor.
+
+   Conceptos que se repiten:
+     · Misión = una encuesta Perfect Store en un PDV en una fecha (fila de la hoja).
+     · "Última encuesta por PDV" (alcance por defecto): para KPIs, ranking,
+       agotados y el mapa se toma, de cada PDV, su encuesta más reciente DENTRO
+       de los filtros. "Todas las encuestas" promedia/lista todas.
+     · Nivel (semáforo) = puntaje ÷ máximo del pilar, con umbrales ABSOLUTOS
+       (YB_UMBRALES), no cuartiles: un 90 % es "alto" aunque todos estén altos.
+     · Agotado = respuesta "No" en una columna de disponibilidad.
+
+   Enlace con el mapa: cada tienda de Yoobic se ata a su PDV de puntosG por
+   Id de cuenta (15 primeros caracteres del Id de Salesforce) o, si no, por el
+   POS de la hoja Direcciones. De ahí salen Cliente/Departamento/Ciudad (los
+   mismos del mapa) y el brick → Zona.
+   ═════════════════════════════════════════════════════════════════════ */
+
+var ybData=null,ybCargando=false,ybCbs=[],ybErr='';
+var ybFotosData=null,ybFotosCargando=false,ybFotosCbs=[];
+var YB_PILARES=[],ybGrupos=[],ybProductos=[],ybTiendas=[],ybMis=[],ybTiposFoto=[];
+var ybPorId15={},ybPorPos={},ybVer=0;
+
+/* Umbrales del semáforo (fracción del puntaje máximo del pilar). */
+var YB_UMBRALES={alto:.85,medio:.70,bajo:.50};
+function ybNivel(pct){
+  if(pct==null||!isFinite(pct))return'sin';
+  if(pct>=YB_UMBRALES.alto)return'alto';if(pct>=YB_UMBRALES.medio)return'medio';
+  if(pct>=YB_UMBRALES.bajo)return'bajo';return'muybajo'}
+function ybColorPct(pct){return SEM[ybNivel(pct)]}
+
+/* ── Formatos ── */
+function ybNum(v,dec){if(v==null||!isFinite(v))return'–';
+  return v.toLocaleString('es-CO',{minimumFractionDigits:dec==null?1:dec,maximumFractionDigits:dec==null?1:dec})}
+function ybPctTxt(p){return p==null||!isFinite(p)?'–':Math.round(p*100)+' %'}
+function ybFechaTxt(f){if(!f)return'';var p=f.split('-');return p[2]+'/'+p[1]+'/'+p[0]}
+function ybHoyIso(){var d=new Date(),dos=function(n){return(n<10?'0':'')+n};
+  return d.getFullYear()+'-'+dos(d.getMonth()+1)+'-'+dos(d.getDate())}
+function ybRestarDias(iso,n){var p=iso.split('-'),d=new Date(Number(p[0]),Number(p[1])-1,Number(p[2]));
+  d.setDate(d.getDate()-n);var dos=function(x){return(x<10?'0':'')+x};
+  return d.getFullYear()+'-'+dos(d.getMonth()+1)+'-'+dos(d.getDate())}
+
+/* ══════════ Carga ══════════ */
+function ybCargar(forzar,cb){
+  if(cb)ybCbs.push(cb);
+  if(ybData&&!forzar){ybVaciarCbs(true);return}
+  if(ybCargando)return;
+  ybCargando=true;ybErr='';
+  if(!esGas()){setTimeout(function(){ybRecibir(ybDatosDemo())},300);return}
+  google.script.run
+    .withSuccessHandler(function(j){try{ybRecibir(JSON.parse(j))}catch(e){ybFallo(e)}})
+    .withFailureHandler(ybFallo).getYoobicJson(forzar===true)}
+
+function ybVaciarCbs(ok){var cbs=ybCbs;ybCbs=[];
+  cbs.forEach(function(f){try{f(ok)}catch(e){console.error(e)}})}
+
+function ybFallo(e){
+  ybCargando=false;ybErr=me(e);ybVaciarCbs(false);
+  var est=document.getElementById('ybEstado');
+  if(est){est.style.display='block';
+    est.innerHTML='<b>No pude cargar Yoobic.</b><br>'+esc(ybErr)+
+      '<br><span class="mini">Revisa las hojas \u201cYoobic\u201d y \u201cDirecciones con sus cuentas CO (Appsheets)\u201d del MAESTRO PDV\u2019s.</span>'}}
+
+function ybRecibir(d){
+  ybCargando=false;ybErr='';
+  ybExpandir(d);ybEnriquecer();
+  ybVaciarCbs(true);
+  if(mtdVistaActiva==='yoobic')ybMostrarContenido();
+  ybRefrescarMapa()}
+
+/* Fotos: segundo endpoint, solo cuando se necesitan (galería o "Ver fotos"). */
+function ybCargarFotos(forzar,cb){
+  if(cb)ybFotosCbs.push(cb);
+  if(ybFotosData&&!forzar){ybVaciarFotos(true);return}
+  if(ybFotosCargando)return;
+  ybFotosCargando=true;
+  var fin=function(d){ybFotosCargando=false;ybFotosData=ybExpandirFotos(d);ybVaciarFotos(true)};
+  if(!esGas()){setTimeout(function(){fin(ybFotosDemo())},250);return}
+  google.script.run
+    .withSuccessHandler(function(j){try{fin(JSON.parse(j))}catch(e){ybFotosCargando=false;ybVaciarFotos(false,e)}})
+    .withFailureHandler(function(e){ybFotosCargando=false;ybVaciarFotos(false,e)})
+    .getYoobicFotosJson(forzar===true)}
+function ybVaciarFotos(ok,err){var cbs=ybFotosCbs;ybFotosCbs=[];
+  cbs.forEach(function(f){try{f(ok,err)}catch(e){console.error(e)}})}
+
+/* Payload compacto → objetos. Las misiones quedan ordenadas de la más reciente
+   a la más antigua: así "la primera que aparece de cada PDV" es su última encuesta. */
+function ybExpandir(d){
+  d=d||{};ybData=d;ybVer++;
+  YB_PILARES=(d.pilares||[]).map(function(p){return{k:p.k,etiqueta:p.etiqueta,max:p.max||100}});
+  ybGrupos=d.grupos||[];ybTiposFoto=d.tiposFoto||[];
+  ybProductos=(d.productos||[]).map(function(p,i){return{i:i,nombre:p[0],g:p[1],grupo:ybGrupos[p[1]]||''}});
+  ybTiendas=(d.tiendas||[]).map(function(t,i){
+    var o={nombre:t[1]||t[0],cliente:t[2]||'',depto:t[3]||'',ciudad:t[4]||'',dir:t[5]||'',lat:t[6],lng:t[7]};
+    return{i:i,id:String(t[0]),id15:String(t[0]).slice(0,15),pos:t[8]||'',enDir:!!t[9],o:o,p:null,
+      nombre:o.nombre,cliente:o.cliente||'Sin cliente',depto:o.depto||'Sin departamento',
+      ciudad:o.ciudad||'Sin ciudad',dir:o.dir,lat:o.lat,lng:o.lng,brick:'',zona:'Sin zona'}});
+  var dl=d.delegados||[],cp=d.campanas||[];
+  ybMis=(d.misiones||[]).map(function(m,i){
+    return{i:i,t:ybTiendas[m[0]],fecha:m[1],mes:String(m[1]).slice(0,7),del:dl[m[2]]||'Sin delegado',
+      s:[m[3],m[4],m[5],m[6],m[7]],disp:m[8]||'',camp:cp[m[9]]||'',clave:m[10]}})
+    .filter(function(m){return m.t&&m.fecha});
+  ybMis.sort(function(a,b){return a.fecha<b.fecha?1:(a.fecha>b.fecha?-1:a.i-b.i)});
+  ybPorId15={};ybPorPos={};
+  ybTiendas.forEach(function(t){if(!ybPorId15[t.id15])ybPorId15[t.id15]=t;if(t.pos&&!ybPorPos[t.pos])ybPorPos[t.pos]=t});
+  ybCacheMapa=null;ybPrepararFiltros()}
+
+/* Atributos de cada tienda: los del PDV del mapa si existe (mismos nombres que en
+   el resto del visor), si no, los de la hoja Direcciones. Se repite cuando el
+   mapa termina de cargar (puntos y bricks llegan después que Yoobic). */
+function ybEnriquecer(){
+  if(!ybData)return;
+  var porId={},porPos={},zonas={};
+  (typeof puntosG!=='undefined'?puntosG:[]).forEach(function(p){
+    if(p.id){var k=String(p.id).slice(0,15);if(!porId[k])porId[k]=p}
+    if(p.posId&&!porPos[p.posId])porPos[p.posId]=p});
+  (typeof bricksG!=='undefined'?bricksG:[]).forEach(function(b){zonas[b.brickId]=b.zona||b.ciudad||''});
+  var hayGeom=typeof geomB!=='undefined'&&geomB&&geomB.length;
+  function util(v,vacio){return v&&v!==vacio?v:''}
+  ybTiendas.forEach(function(t){
+    var p=porId[t.id15]||(t.pos&&porPos[t.pos])||null,o=t.o;t.p=p;
+    t.nombre=(p&&p.name)||o.nombre;
+    t.cliente=(p&&util(p.grupo,'Sin Grupo'))||o.cliente||'Sin cliente';
+    t.depto=(p&&util(p.region,'Sin Región'))||o.depto||'Sin departamento';
+    t.ciudad=(p&&util(p.poblacion,'Sin Población'))||o.ciudad||'Sin ciudad';
+    t.dir=(p&&util(p.direccion,'Sin Dirección'))||o.dir||'';
+    t.lat=p?p.lat:o.lat;t.lng=p?p.lng:o.lng;
+    t.brick=(p&&p._brick)||((hayGeom&&t.lat!=null&&t.lng!=null)?pip(t.lng,t.lat):'')||'';
+    t.zona=(t.brick&&zonas[t.brick])||'Sin zona'});
+  ybVer++;ybCacheMapa=null}
+
+/* Lo llama boot() (JsNucleo) cuando puntos y bricks ya están asignados. */
+function ybAlCargarMapa(){
+  if(!ybData)return;
+  ybEnriquecer();ybPrepararFiltros();
+  if(mtdVistaActiva==='yoobic'&&document.getElementById('ybContenido').style.display!=='none')ybRender()}
+
+/* ══════════ Vista de nivel superior ══════════ */
+function ybAlEntrar(){
+  if(ybData){ybMostrarContenido();return}
+  var est=document.getElementById('ybEstado');
+  if(!ybErr&&est){est.style.display='block';est.innerHTML='<span class="mtd-spinner"></span>Cargando Yoobic…'}
+  if(ybErr&&!ybCargando){ybErr='';ybCargar(true)}else ybCargar(false)}
+
+/* Precarga en segundo plano (la llama iniciarMapa): el popup del mapa y las
+   capas Perfect Store la necesitan. */
+function ybPrefetch(){if(!ybData&&!ybCargando)ybCargar(false)}
+
+function ybActualizar(){
+  ybFotosData=null;
+  var est=document.getElementById('ybEstado');
+  document.getElementById('ybContenido').style.display='none';
+  est.style.display='block';est.innerHTML='<span class="mtd-spinner"></span>Releyendo la hoja Yoobic…';
+  ybCargar(true)}
+
+var ybSelCreados=false;
+function ybMostrarContenido(){
+  document.getElementById('ybEstado').style.display='none';
+  document.getElementById('ybContenido').style.display='block';
+  var m=ybData&&ybData.meta||{};
+  document.getElementById('ybActualizado').innerText=
+    m.actualizadoEn?('Datos leídos de la hoja: '+new Date(m.actualizadoEn).toLocaleString('es-CO')):'';
+  ybConstruirCampos();
+  ybRender();
+  cargarLib('choices',function(){ybCrearSelectores()})}
+
+/* ══════════ Filtros (modelo de Yoobic: "+ Añadir filtro") ══════════
+   ybFiltros = {dim:[valores]} — arreglo vacío = sin filtrar; OR dentro de una
+   dimensión, AND entre dimensiones. Se cambia SOLO con setYbFiltro().
+   Dimensiones de MISIÓN (filtran encuestas): cliente, tienda, del, depto,
+   ciudad, zona, brick, camp. Dimensiones de PRODUCTO (filtran qué columnas de
+   disponibilidad cuentan): grupo, producto. De FOTO: tipoFoto. La Fecha va
+   aparte (ybFecha) con los modos relativos/absolutos de Yoobic.            */
+var YB_DIMS=[
+  {dim:'tienda',  etq:'Sitio (PDV)',        fijo:true, tope:300},
+  {dim:'del',     etq:'Usuario (Delegado)', fijo:true},
+  {dim:'cliente', etq:'Cliente',            fijo:true},
+  {dim:'camp',    etq:'Campaña'},
+  {dim:'depto',   etq:'Departamento'},
+  {dim:'ciudad',  etq:'Ciudad'},
+  {dim:'zona',    etq:'Zona'},
+  {dim:'brick',   etq:'Brick'},
+  {dim:'grupo',   etq:'Grupo de producto'},
+  {dim:'producto',etq:'Producto',           tope:300},
+  {dim:'tipoFoto',etq:'Tipo de foto'}];
+var YB_DIMS_MISION=['tienda','del','cliente','camp','depto','ciudad','zona','brick'];
+var ybFiltros={},ybFset={},ybVisibles={},YB_SEL={};
+YB_DIMS.forEach(function(c){ybFiltros[c.dim]=[];ybFset[c.dim]=null;if(c.fijo)ybVisibles[c.dim]=true});
+var ybFecha={modo:'todo',d1:'',d2:''};
+var ybAlcance='ultima';          // 'ultima' | 'todas'
+var ybSub='resumen';             // 'resumen' | 'agotados' | 'fotos'
+
+function ybEtqDim(dim){for(var i=0;i<YB_DIMS.length;i++)if(YB_DIMS[i].dim===dim)return YB_DIMS[i].etq;return dim}
+
+function setYbFiltro(dim,arr){
+  arr=(arr||[]).filter(function(v){return v!==''&&v!=null&&v!=='__mas__'});
+  ybFiltros[dim]=arr;
+  if(!arr.length){ybFset[dim]=null;return}
+  var m={};arr.forEach(function(v){m[v]=1});ybFset[dim]=m}
+
+function ybValor(m,dim){
+  var t=m.t;
+  switch(dim){
+    case'tienda':return t.id;case'del':return m.del;case'cliente':return t.cliente;
+    case'camp':return m.camp;case'depto':return t.depto;case'ciudad':return t.ciudad;
+    case'zona':return t.zona;case'brick':return t.brick||'Sin brick'}
+  return''}
+
+/* Rango de fechas [desde, hasta] (ISO, inclusive) del filtro de Fecha. */
+function ybRangoFecha(){
+  var f=ybFecha,hoy=ybHoyIso();
+  switch(f.modo){
+    case'd1':return[hoy,hoy];
+    case'd7':return[ybRestarDias(hoy,6),hoy];
+    case'd30':return[ybRestarDias(hoy,29),hoy];
+    case'd90':return[ybRestarDias(hoy,89),hoy];
+    case'd365':return[ybRestarDias(hoy,364),hoy];
+    case'en':return f.d1?[f.d1,f.d1]:null;
+    case'intervalo':return(f.d1||f.d2)?[f.d1||'0000-00-00',f.d2||'9999-99-99']:null;
+    case'antes':return f.d1?['0000-00-00',ybRestarDias(f.d1,1)]:null;
+    case'despues':return f.d1?[ybRestarDias(f.d1,-1),'9999-99-99']:null}
+  return null}
+
+function ybPasa(m,ig,rango){
+  if(ig!=='fecha'&&rango&&(m.fecha<rango[0]||m.fecha>rango[1]))return false;
+  for(var i=0;i<YB_DIMS_MISION.length;i++){var d=YB_DIMS_MISION[i];
+    if(d===ig)continue;var s=ybFset[d];if(s&&!s[ybValor(m,d)])return false}
+  return true}
+
+/* Misiones que pasan todos los filtros (menos `ig`). Más reciente primero. */
+function ybFiltradas(ig){
+  var r=ybRangoFecha();
+  return ybMis.filter(function(m){return ybPasa(m,ig,r)})}
+
+/* La última encuesta de cada PDV dentro de la lista (que ya viene ordenada). */
+function ybUltimas(lista){
+  var visto={},out=[];
+  lista.forEach(function(m){if(!visto[m.t.id]){visto[m.t.id]=1;out.push(m)}});
+  return out}
+function ybBase(lista){return ybAlcance==='ultima'?ybUltimas(lista):lista}
+
+/* Productos que cuentan según los filtros de grupo/producto. */
+function ybProductosActivos(){
+  return ybProductos.filter(function(p){
+    if(ybFset.grupo&&!ybFset.grupo[String(p.g)])return false;
+    if(ybFset.producto&&!ybFset.producto[String(p.i)])return false;
+    return true})}
+
+/* Opciones en cascada (lo que dejan los DEMÁS filtros), con conteo de PDV. */
+function ybOpciones(dim){
+  if(dim==='grupo')return ybGrupos.map(function(g,i){
+    var n=ybProductos.filter(function(p){return p.g===i}).length;
+    return{valor:String(i),etiqueta:g,cnt:n}}).filter(function(o){return o.cnt>0});
+  if(dim==='producto')return ybProductos.filter(function(p){return!ybFset.grupo||ybFset.grupo[String(p.g)]})
+    .map(function(p){return{valor:String(p.i),etiqueta:p.nombre+' · '+p.grupo}});
+  if(dim==='tipoFoto')return ybTiposFoto.map(function(t,i){return{valor:String(i),etiqueta:t}});
+  var cnt={},etq={};
+  ybFiltradas(dim).forEach(function(m){var v=ybValor(m,dim);if(v==null||v==='')return;
+    if(!cnt[v])cnt[v]={};cnt[v][m.t.id]=1;
+    if(dim==='tienda')etq[v]=m.t.nombre+' · '+m.t.ciudad});
+  return Object.keys(cnt).sort(function(a,b){return(etq[a]||a).localeCompare(etq[b]||b,'es')})
+    .map(function(v){return{valor:v,etiqueta:etq[v]||v,cnt:Object.keys(cnt[v]).length}})}
+
+/* Descarta selecciones que ya no existen tras recargar los datos. */
+function ybPrepararFiltros(){
+  YB_DIMS_MISION.forEach(function(d){
+    if(!ybFiltros[d].length)return;
+    var ok={};ybMis.forEach(function(m){ok[ybValor(m,d)]=1});
+    setYbFiltro(d,ybFiltros[d].filter(function(v){return ok[v]}))});
+  if(ybSelCreados)ybSincronizar(true)}
+
+/* Cada dimensión tiene su caja en la barra (oculta hasta que se agrega). */
+function ybConstruirCampos(){
+  var cont=document.getElementById('ybCampos');if(!cont||cont.childNodes.length)return;
+  cont.innerHTML=YB_DIMS.map(function(c){
+    return'<div class="campo yb-campo" data-dim="'+c.dim+'"'+(ybVisibles[c.dim]?'':' hidden')+'>'+
+      '<label for="ybSel_'+c.dim+'"><span>'+esc(c.etq)+'</span>'+
+      (c.fijo?'':'<button type="button" class="chip-x" title="Quitar este filtro" onclick="ybQuitarDim(event,\''+c.dim+'\')">\u2715</button>')+
+      '</label><select id="ybSel_'+c.dim+'" multiple></select></div>'}).join('')}
+
+function ybCrearSelectores(){
+  if(ybSelCreados)return;ybSelCreados=true;
+  YB_DIMS.forEach(function(c){
+    YB_SEL[c.dim]=new Selector({dim:c.dim,id:'ybSel_'+c.dim,multi:true,tope:c.tope||400,
+      ops:function(){return ybOpciones(c.dim)},
+      sel:function(){return ybFiltros[c.dim]},
+      alCambiar:function(v){ybCambiarFiltro(c.dim,v)}})});
+  ybSincronizar(true)}
+
+function ybSincronizar(forzar){
+  Object.keys(YB_SEL).forEach(function(d){
+    if(!ybVisibles[d]&&!forzar)return;
+    if(forzar)YB_SEL[d].fijar();else YB_SEL[d].refrescar(false)})}
+
+function ybCambiarFiltro(dim,vals){
+  setYbFiltro(dim,vals);
+  if(dim==='grupo'&&ybFiltros.producto.length){   // producto debe pertenecer al grupo
+    setYbFiltro('producto',ybFiltros.producto.filter(function(i){var p=ybProductos[Number(i)];
+      return!ybFset.grupo||(p&&ybFset.grupo[String(p.g)])}));
+    if(YB_SEL.producto)YB_SEL.producto.fijar()}
+  ybRender();ybSincronizar(false)}
+
+/* Clic en una barra / fila: agrega o quita el valor (como en el resto del visor). */
+function ybAlternar(dim,val){
+  var a=ybFiltros[dim].slice(),i=a.indexOf(val);
+  if(i===-1)a.push(val);else a.splice(i,1);
+  setYbFiltro(dim,a);ybMostrarDim(dim);
+  ybRender();if(YB_SEL[dim])YB_SEL[dim].fijar();ybSincronizar(false)}
+
+function ybMostrarDim(dim){
+  ybVisibles[dim]=true;
+  var caja=document.querySelector('.yb-campo[data-dim="'+dim+'"]');
+  if(caja)caja.hidden=false;
+  if(YB_SEL[dim])YB_SEL[dim].refrescar(true)}
+
+function ybQuitarDim(ev,dim){
+  if(ev){ev.preventDefault();ev.stopPropagation()}
+  delete ybVisibles[dim];
+  var caja=document.querySelector('.yb-campo[data-dim="'+dim+'"]');if(caja)caja.hidden=true;
+  if(ybFiltros[dim].length){setYbFiltro(dim,[]);if(YB_SEL[dim])YB_SEL[dim].fijar();ybRender();ybSincronizar(false)}
+  else ybActualizarContador()}
+
+function ybLimpiarFiltros(){
+  YB_DIMS.forEach(function(c){setYbFiltro(c.dim,[]);
+    if(!c.fijo){delete ybVisibles[c.dim];var caja=document.querySelector('.yb-campo[data-dim="'+c.dim+'"]');if(caja)caja.hidden=true}});
+  ybFecha={modo:'todo',d1:'',d2:''};ybPintarFecha();
+  ybRender();ybSincronizar(true)}
+
+/* Popover "+ Añadir filtro" (lista de dimensiones que aún no están en la barra). */
+function ybAlternarPop(ev){
+  if(ev)ev.stopPropagation();
+  var pop=document.getElementById('ybPop');if(!pop)return;
+  if(!pop.hidden){pop.hidden=true;return}
+  var libres=YB_DIMS.filter(function(c){return!ybVisibles[c.dim]});
+  document.getElementById('ybPopLista').innerHTML=libres.length?libres.map(function(c){
+    return'<button type="button" class="pop-op" onclick="ybAgregarDim(\''+c.dim+'\')">'+esc(c.etq)+'</button>'}).join(''):
+    '<div class="pop-vacio">Ya están todos los filtros en la barra</div>';
+  pop.hidden=false}
+function ybCerrarPop(){var pop=document.getElementById('ybPop');if(pop)pop.hidden=true}
+function ybAgregarDim(dim){ybMostrarDim(dim);ybCerrarPop();ybActualizarContador()}
+
+/* ── Fecha (relativo / absoluto, como en Yoobic) ── */
+function ybCambiarFecha(){
+  ybFecha.modo=document.getElementById('ybFechaModo').value;
+  ybFecha.d1=document.getElementById('ybFechaD1').value;
+  ybFecha.d2=document.getElementById('ybFechaD2').value;
+  ybPintarFecha();ybRender();ybSincronizar(false)}
+function ybPintarFecha(){
+  var m=ybFecha.modo,d1=document.getElementById('ybFechaD1'),d2=document.getElementById('ybFechaD2');
+  document.getElementById('ybFechaModo').value=m;
+  d1.hidden=['en','intervalo','antes','despues'].indexOf(m)===-1;d2.hidden=m!=='intervalo';
+  d1.value=ybFecha.d1;d2.value=ybFecha.d2;
+  d1.title=m==='intervalo'?'Desde':'Fecha';d2.title='Hasta'}
+function ybFechaEtq(){
+  var f=ybFecha,s=document.getElementById('ybFechaModo'),o=s&&s.options[s.selectedIndex];
+  var base=o?o.text:f.modo;
+  if(f.modo==='intervalo')return'Fecha: '+(f.d1?ybFechaTxt(f.d1):'…')+' – '+(f.d2?ybFechaTxt(f.d2):'…');
+  if(['en','antes','despues'].indexOf(f.modo)!==-1)return'Fecha: '+base.toLowerCase()+' '+(f.d1?ybFechaTxt(f.d1):'…');
+  return'Fecha: '+base}
+
+function ybSetAlcance(a){ybAlcance=a;
+  document.querySelectorAll('#ybAlcanceChips .chip-periodo').forEach(function(b){
+    b.classList.toggle('activo',b.getAttribute('data-a')===a)});
+  ybRender()}
+
+function ybActualizarContador(){
+  var n=(ybFecha.modo!=='todo'&&ybRangoFecha())?1:0;
+  YB_DIMS.forEach(function(c){n+=ybFiltros[c.dim].length});
+  var b=document.getElementById('ybContador');if(b){b.innerText=n;b.hidden=!n}}
+
+function ybNombreValor(dim,v){
+  if(dim==='tienda'){for(var i=0;i<ybTiendas.length;i++)if(ybTiendas[i].id===v)return ybTiendas[i].nombre;return v}
+  if(dim==='grupo')return ybGrupos[Number(v)]||v;
+  if(dim==='producto'){var p=ybProductos[Number(v)];return p?p.nombre:v}
+  if(dim==='tipoFoto')return ybTiposFoto[Number(v)]||v;
+  return v}
+
+function ybPintarChips(){
+  var items=[];
+  if(ybFecha.modo!=='todo'&&ybRangoFecha())items.push({etq:ybFechaEtq(),dim:'fecha',valor:''});
+  YB_DIMS.forEach(function(c){ybFiltros[c.dim].forEach(function(v){
+    items.push({etq:c.etq+': '+ybNombreValor(c.dim,v),dim:c.dim,valor:v})})});
+  mtdPintarChips('ybChips',items,function(it){
+    if(it.dim==='fecha'){ybFecha={modo:'todo',d1:'',d2:''};ybPintarFecha();ybRender();ybSincronizar(false);return}
+    ybAlternar(it.dim,it.valor)},ybLimpiarFiltros)}
+
+/* ══════════ Render ══════════ */
+function ybVerSub(v){
+  ybSub=v;
+  ['resumen','agotados','fotos'].forEach(function(k){
+    var s=document.getElementById('ybSub'+k.charAt(0).toUpperCase()+k.slice(1));if(s)s.hidden=(k!==v)});
+  document.querySelectorAll('#ybSubtabs .tab').forEach(function(b){
+    b.classList.toggle('activa',b.getAttribute('data-v')===v)});
+  // Fotos muestra TODO el historial: "Última encuesta / Todas" no aplica ahí.
+  var al=document.querySelector('.yb-alcance');if(al)al.hidden=(v==='fotos');
+  ybRender()}
+
+function ybRender(){
+  if(!ybData)return;
+  ybActualizarContador();ybPintarChips();
+  var lista=ybFiltradas(null);
+  if(ybSub==='resumen')ybRenderResumen(lista);
+  else if(ybSub==='agotados')ybRenderAgotados(lista);
+  else ybRenderFotos(lista)}
+
+/* Promedio de cada pilar (ignora puntajes vacíos; 0 sí cuenta). */
+function ybPromedios(lista){
+  var suma=[0,0,0,0,0],n=[0,0,0,0,0];
+  lista.forEach(function(m){m.s.forEach(function(v,i){if(v!=null){suma[i]+=v;n[i]++}})});
+  return suma.map(function(s,i){return n[i]?s/n[i]:null})}
+
+/* Disponibilidad de una misión sobre los productos activos. */
+function ybDispMision(m,prods){
+  var si=0,no=0,ag=[];
+  prods.forEach(function(p){var c=m.disp.charAt(p.i);
+    if(c==='1')si++;else if(c==='0'){no++;ag.push(p)}});
+  return{si:si,no:no,pct:(si+no)?si/(si+no):null,agotados:ag}}
+
+function ybCeldaPuntaje(v,max){
+  if(v==null)return'<span class="yb-nd">–</span>';
+  var pct=v/max;
+  return'<span class="yb-pt" title="'+ybNum(v)+' de '+max+' ('+ybPctTxt(pct)+')"><i style="background:'+ybColorPct(pct)+'"></i>'+ybNum(v)+'</span>'}
+
+function ybRenderResumen(lista){
+  var base=ybBase(lista),prom=ybPromedios(base),prods=ybProductosActivos();
+  var tiendas={};lista.forEach(function(m){tiendas[m.t.id]=1});
+  var si=0,no=0;base.forEach(function(m){var d=ybDispMision(m,prods);si+=d.si;no+=d.no});
+
+  // KPIs: Global grande + 4 pilares (valor / máximo y barra de nivel)
+  var h='';
+  YB_PILARES.forEach(function(p,i){
+    var v=prom[i],pct=v==null?null:v/p.max;
+    h+='<div class="yb-kpi'+(i===0?' yb-kpi-global':'')+'">'+
+      '<div class="etq" title="'+esc(p.etiqueta)+'">'+esc(p.etiqueta)+'</div>'+
+      '<div class="num"><span style="color:'+(v==null?'var(--muted)':ybColorPct(pct))+'">'+ybNum(v)+'</span>'+
+      '<span class="de"> / '+p.max+'</span></div>'+
+      '<div class="yb-pista"><span style="width:'+(pct==null?0:Math.min(100,Math.round(pct*100)))+'%;background:'+ybColorPct(pct)+'"></span></div>'+
+      '<div class="det">'+ybPctTxt(pct)+' del máximo</div></div>'});
+  h+='<div class="yb-kpi yb-kpi-meta"><div class="etq">Cobertura</div>'+
+    '<div class="det"><b>'+FMT.format(Object.keys(tiendas).length)+'</b> PDV evaluados</div>'+
+    '<div class="det"><b>'+FMT.format(lista.length)+'</b> encuestas</div>'+
+    '<div class="det"><b>'+ybPctTxt((si+no)?si/(si+no):null)+'</b> disponibilidad · <b>'+FMT.format(no)+'</b> agotados</div></div>';
+  document.getElementById('ybKpis').innerHTML=h;
+  document.getElementById('ybHintKpis').innerText=(ybAlcance==='ultima'?
+    'Promedio de la ÚLTIMA encuesta de cada PDV dentro de los filtros':'Promedio de TODAS las encuestas dentro de los filtros')+
+    ' · puntajes oficiales de Yoobic · semáforo: ≥ 85 % alto · 70–85 % medio · 50–70 % bajo · < 50 % muy bajo';
+
+  ybRenderEvolucion(lista);
+
+  // Global por cliente y por delegado (clic = filtrar)
+  ybBarrasDim('ybBarCliente','cliente',base,function(m){return m.t.cliente},12);
+  ybBarrasDim('ybBarDelegado','del',base,function(m){return m.del},12);
+
+  // Ranking de PDV
+  var filas=ybUltimas(lista).map(function(m){var d=ybDispMision(m,prods);
+    return{m:m,id:m.t.id,pdv:m.t.nombre,cliente:m.t.cliente,ciudad:m.t.ciudad,fecha:m.fecha,del:m.del,
+      g:m.s[0],d:m.s[1],l:m.s[2],p:m.s[3],t:m.s[4],ag:d.no,disp:d.pct}});
+  var P=YB_PILARES;
+  mtdTabla({id:'ybTablaPdv',filas:filas,orden:{k:'g',dir:'asc'},vacio:'Sin encuestas con los filtros actuales',
+    columnas:[
+      {k:'pdv',t:'PDV',tipo:'txt',celda:function(f,th){return'<td data-th="'+esc(th)+'" class="txt"><b>'+esc(f.pdv)+'</b><span class="sub">'+esc(f.cliente)+' · '+esc(f.ciudad)+'</span></td>'}},
+      {k:'fecha',t:'Última encuesta',tipo:'txt',celda:function(f,th){return'<td data-th="'+esc(th)+'">'+ybFechaTxt(f.fecha)+'</td>'}},
+      {k:'del',t:'Delegado',tipo:'txt',celda:function(f,th){return'<td data-th="'+esc(th)+'" class="txt">'+esc(f.del)+'</td>'}},
+      {k:'g',t:'Global',celda:function(f,th){return'<td data-th="'+esc(th)+'">'+ybCeldaPuntaje(f.g,P[0].max)+'</td>'}},
+      {k:'d',t:'Disponib.',celda:function(f,th){return'<td data-th="'+esc(th)+'">'+ybCeldaPuntaje(f.d,P[1].max)+'</td>'}},
+      {k:'l',t:'Lineal',celda:function(f,th){return'<td data-th="'+esc(th)+'">'+ybCeldaPuntaje(f.l,P[2].max)+'</td>'}},
+      {k:'p',t:'Vis. perm.',celda:function(f,th){return'<td data-th="'+esc(th)+'">'+ybCeldaPuntaje(f.p,P[3].max)+'</td>'}},
+      {k:'t',t:'Vis. campaña',celda:function(f,th){return'<td data-th="'+esc(th)+'">'+ybCeldaPuntaje(f.t,P[4].max)+'</td>'}},
+      {k:'ag',t:'Agotados',celda:function(f,th){return'<td data-th="'+esc(th)+'"'+(f.ag?' class="yb-rojo"':'')+'>'+FMT.format(f.ag)+'</td>'}},
+      {k:'fotos',t:'',tipo:'txt',v:function(){return null},celda:function(f){
+        return'<td><button type="button" class="mtd-btn-csv" onclick="event.stopPropagation();ybAbrirFotos('+f.m.t.i+')">📷 Fotos</button></td>'}}],
+    clic:{valor:function(f){return f.id},activo:function(f){return!!(ybFset.tienda&&ybFset.tienda[f.id])},
+      haySel:function(){return!!ybFset.tienda},alClic:function(v){ybAlternar('tienda',v)},
+      titulo:'Clic para filtrar por este PDV'}});
+  document.getElementById('ybHintPdv').innerText=FMT.format(filas.length)+' PDV · última encuesta de cada uno · ordenado del peor al mejor Global (clic en un encabezado para reordenar)'}
+
+/* Columnas por mes: promedio Global de TODAS las encuestas del mes (evolución),
+   color = nivel, etiqueta directa encima. Debajo, la tabla mes × pilar. */
+function ybRenderEvolucion(lista){
+  var porMes={};
+  lista.forEach(function(m){(porMes[m.mes]=porMes[m.mes]||[]).push(m)});
+  var meses=Object.keys(porMes).sort();
+  var c=document.getElementById('ybEvol');
+  if(!meses.length){c.innerHTML='<div class="hint">Sin encuestas con los filtros actuales</div>';
+    mtdVacio('ybTablaMes','Sin datos');return}
+  if(meses.length>18)meses=meses.slice(-18);
+  var P=YB_PILARES,filas=meses.map(function(k){var pr=ybPromedios(porMes[k]);
+    return{mes:k,n:porMes[k].length,pdv:ybUltimas(porMes[k]).length,g:pr[0],d:pr[1],l:pr[2],p:pr[3],t:pr[4]}});
+  var h='<div class="yb-cols">';
+  filas.forEach(function(f){var pct=f.g==null?null:f.g/P[0].max;
+    h+='<div class="yb-col" title="'+esc(em(f.mes))+'\nGlobal '+ybNum(f.g)+' · Disp. '+ybNum(f.d)+' · Lineal '+ybNum(f.l)+
+      ' · Vis. perm. '+ybNum(f.p)+' · Vis. campaña '+ybNum(f.t)+'\n'+f.n+' encuestas · '+f.pdv+' PDV">'+
+      '<div class="yb-col-val">'+ybNum(f.g)+'</div>'+
+      '<div class="yb-col-pista"><span style="height:'+(pct==null?0:Math.max(2,Math.round(Math.min(1,pct)*100)))+'%;background:'+ybColorPct(pct)+'"></span></div>'+
+      '<div class="yb-col-etq">'+esc(em(f.mes))+'</div></div>'});
+  c.innerHTML=h+'</div>';
+  filas.reverse();
+  mtdTabla({id:'ybTablaMes',filas:filas,vacio:'Sin datos',
+    columnas:[
+      {k:'mes',t:'Mes',tipo:'txt',celda:function(f,th){return'<td data-th="'+esc(th)+'" class="txt">'+esc(em(f.mes))+'</td>'}},
+      {k:'g',t:'Global',celda:function(f,th){return'<td data-th="'+esc(th)+'">'+ybCeldaPuntaje(f.g,P[0].max)+'</td>'}},
+      {k:'d',t:'Disponib.',celda:function(f,th){return'<td data-th="'+esc(th)+'">'+ybCeldaPuntaje(f.d,P[1].max)+'</td>'}},
+      {k:'l',t:'Lineal',celda:function(f,th){return'<td data-th="'+esc(th)+'">'+ybCeldaPuntaje(f.l,P[2].max)+'</td>'}},
+      {k:'p',t:'Vis. perm.',celda:function(f,th){return'<td data-th="'+esc(th)+'">'+ybCeldaPuntaje(f.p,P[3].max)+'</td>'}},
+      {k:'t',t:'Vis. campaña',celda:function(f,th){return'<td data-th="'+esc(th)+'">'+ybCeldaPuntaje(f.t,P[4].max)+'</td>'}},
+      {k:'n',t:'Encuestas',celda:function(f,th){return'<td data-th="'+esc(th)+'">'+FMT.format(f.n)+'</td>'}}]})}
+
+/* Barras horizontales del promedio Global por una dimensión (clic = filtrar). */
+function ybBarrasDim(id,dim,base,clave,top){
+  var ag={};
+  base.forEach(function(m){var k=clave(m),v=m.s[0];if(v==null)return;
+    var a=ag[k]||(ag[k]={s:0,n:0,pdv:{}});a.s+=v;a.n++;a.pdv[m.t.id]=1});
+  var sel=ybFset[dim],max=(YB_PILARES[0]||{max:100}).max;
+  var datos=Object.keys(ag).map(function(k){var a=ag[k],v=a.s/a.n;
+    return{clave:k,n:v,etq:ybNum(v),pdvs:Object.keys(a.pdv).length}})
+    .sort(function(a,b){return b.n-a.n});
+  pintarBarras(id,datos.map(function(d){return{clave:d.clave,n:d.n,etq:d.etq,
+    clase:sel?(sel[d.clave]?'activa':'apagada'):'',
+    tit:d.clave+': Global '+d.etq+' · '+FMT.format(d.pdvs)+' PDV\n(clic para '+(sel&&sel[d.clave]?'quitarlo del':'añadirlo al')+' filtro)',
+    fn:function(){ybAlternar(dim,d.clave)}}}),{topN:top,vacio:'Sin puntajes con los filtros actuales'});
+  // Las barras toman el color del nivel del promedio (no el rojo de marca).
+  // Mismo recorte que pintarBarras (descarta n<=0) para que los índices coincidan.
+  var filas=document.getElementById(id).querySelectorAll('.barra-fila');
+  datos.filter(function(d){return d.n>0}).slice(0,top||datos.length).forEach(function(d,i){var re=filas[i]&&filas[i].querySelector('.barra-relleno');
+    if(re&&!(sel&&!sel[d.clave]))re.style.background=ybColorPct(d.n/max)})}
+
+/* ══════════ Agotados ══════════ */
+var ybVistaAgot='pdv',ybAgotVista=[];
+function ybSetVistaAgot(v){ybVistaAgot=v;
+  document.querySelectorAll('#ybAgotChips .chip-periodo').forEach(function(b){
+    b.classList.toggle('activo',b.getAttribute('data-v')===v)});
+  ybRender()}
+
+function ybRenderAgotados(lista){
+  var base=ybBase(lista),prods=ybProductosActivos();
+  var detalle=[],porPdv=[],porProd={},porZona={},si=0,no=0,pdvCon=0;
+  base.forEach(function(m){
+    var d=ybDispMision(m,prods);si+=d.si;no+=d.no;
+    if(!d.no)return;pdvCon++;
+    var t=m.t;
+    porPdv.push({m:m,id:t.id,fecha:m.fecha,depto:t.depto,ciudad:t.ciudad,zona:t.zona,cliente:t.cliente,
+      pdv:t.nombre,del:m.del,n:d.no,pct:d.pct,lista:d.agotados});
+    // Fuera de Bogotá la zona ES la ciudad: "MEDELLIN · MEDELLIN" no aporta.
+    var zk=(t.zona==='Sin zona'||normTxt(t.zona)===normTxt(t.ciudad))?t.ciudad:t.ciudad+' · '+t.zona;
+    porZona[zk]=(porZona[zk]||0)+d.no;
+    d.agotados.forEach(function(p){
+      porProd[p.i]=(porProd[p.i]||0)+1;
+      detalle.push({id:t.id,fecha:m.fecha,depto:t.depto,ciudad:t.ciudad,zona:t.zona,cliente:t.cliente,
+        pdv:t.nombre,del:m.del,grupo:p.grupo,producto:p.nombre,pi:p.i})})});
+
+  document.getElementById('ybAgotKpis').innerHTML=
+    '<div class="bloque"><div class="etq">Agotados</div><div class="num yb-rojo">'+FMT.format(no)+'</div>'+
+      '<div class="det">PDV × producto con respuesta "No"</div></div>'+
+    '<div class="bloque"><div class="etq">PDV con agotados</div><div class="num">'+FMT.format(pdvCon)+
+      '</div><div class="det">de '+FMT.format(base.length)+' '+(ybAlcance==='ultima'?'PDV evaluados':'encuestas')+'</div></div>'+
+    '<div class="bloque"><div class="etq">Disponibilidad</div><div class="num" style="color:'+ybColorPct((si+no)?si/(si+no):null)+'">'+
+      ybPctTxt((si+no)?si/(si+no):null)+'</div><div class="det">'+FMT.format(si)+' de '+FMT.format(si+no)+' respuestas con stock</div></div>';
+  document.getElementById('ybHintAgot').innerText=(ybAlcance==='ultima'?
+    'Según la ÚLTIMA encuesta de cada PDV':'Según TODAS las encuestas')+
+    ' · '+FMT.format(prods.length)+' de '+FMT.format(ybProductos.length)+' productos (filtra por Grupo de producto o Producto en "+ Añadir filtro")';
+
+  var selP=ybFset.producto;
+  var datosP=Object.keys(porProd).map(function(i){return{i:i,n:porProd[i]}}).sort(function(a,b){return b.n-a.n});
+  pintarBarras('ybBarAgotProd',datosP.map(function(d){var p=ybProductos[Number(d.i)];
+    return{clave:p.nombre,n:d.n,etq:FMT.format(d.n)+' PDV',
+      clase:'brecha'+(selP?(selP[d.i]?' activa':' apagada'):''),
+      tit:p.nombre+' ('+p.grupo+'): agotado en '+d.n+' PDV\n(clic para filtrar)',
+      fn:function(){ybAlternar('producto',String(d.i))}}}),{topN:15,vacio:'Sin agotados con los filtros actuales 🎉'});
+  var datosZ=Object.keys(porZona).map(function(k){return{clave:k,n:porZona[k]}}).sort(function(a,b){return b.n-a.n});
+  pintarBarras('ybBarAgotZona',datosZ.map(function(d){var ciudad=d.clave.split(' · ')[0];
+    return{clave:d.clave,n:d.n,etq:FMT.format(d.n),clase:'brecha',
+      tit:d.clave+': '+d.n+' agotados\n(clic para filtrar por la ciudad)',fn:function(){ybAlternar('ciudad',ciudad)}}}),
+    {topN:12,vacio:'Sin agotados con los filtros actuales'});
+
+  if(ybVistaAgot==='pdv'){
+    ybAgotVista=porPdv;
+    mtdTabla({id:'ybTablaAgot',filas:porPdv,orden:{k:'n',dir:'desc'},vacio:'Sin agotados con los filtros actuales',
+      columnas:[
+        {k:'pdv',t:'PDV',tipo:'txt',celda:function(f,th){return'<td data-th="'+esc(th)+'" class="txt"><b>'+esc(f.pdv)+'</b><span class="sub">'+esc(f.cliente)+'</span></td>'}},
+        {k:'depto',t:'Departamento',tipo:'txt',celda:function(f,th){return'<td data-th="'+esc(th)+'" class="txt">'+esc(f.depto)+'</td>'}},
+        {k:'ciudad',t:'Ciudad',tipo:'txt',celda:function(f,th){return'<td data-th="'+esc(th)+'" class="txt">'+esc(f.ciudad)+'</td>'}},
+        {k:'zona',t:'Zona',tipo:'txt',celda:function(f,th){return'<td data-th="'+esc(th)+'" class="txt">'+esc(f.zona)+'</td>'}},
+        {k:'del',t:'Delegado',tipo:'txt',celda:function(f,th){return'<td data-th="'+esc(th)+'" class="txt">'+esc(f.del)+'</td>'}},
+        {k:'fecha',t:'Fecha',tipo:'txt',celda:function(f,th){return'<td data-th="'+esc(th)+'">'+ybFechaTxt(f.fecha)+'</td>'}},
+        {k:'n',t:'Agotados',celda:function(f,th){return'<td data-th="'+esc(th)+'" class="yb-rojo"><b>'+FMT.format(f.n)+'</b></td>'}},
+        {k:'pct',t:'Disponib.',celda:function(f,th){return'<td data-th="'+esc(th)+'"><span style="color:'+ybColorPct(f.pct)+'">'+ybPctTxt(f.pct)+'</span></td>'}},
+        {k:'lista',t:'Productos agotados',tipo:'txt',v:function(f){return f.lista.length},celda:function(f){
+          var ps=f.lista.slice(0,8).map(function(p){return'<span class="yb-pill" title="'+esc(p.grupo)+'">'+esc(p.nombre)+'</span>'}).join('');
+          if(f.lista.length>8)ps+='<span class="yb-pill yb-pill-mas">+'+(f.lista.length-8)+'</span>';
+          return'<td class="txt yb-pills">'+ps+'</td>'}}],
+      clic:{valor:function(f){return f.id},activo:function(f){return!!(ybFset.tienda&&ybFset.tienda[f.id])},
+        haySel:function(){return!!ybFset.tienda},alClic:function(v){ybAlternar('tienda',v)},titulo:'Clic para filtrar por este PDV'}});
+  }else{
+    ybAgotVista=detalle;
+    mtdTabla({id:'ybTablaAgot',filas:detalle,orden:{k:'fecha',dir:'desc'},vacio:'Sin agotados con los filtros actuales',
+      columnas:[
+        {k:'fecha',t:'Fecha',tipo:'txt',celda:function(f,th){return'<td data-th="'+esc(th)+'">'+ybFechaTxt(f.fecha)+'</td>'}},
+        {k:'depto',t:'Departamento',tipo:'txt',celda:function(f,th){return'<td data-th="'+esc(th)+'" class="txt">'+esc(f.depto)+'</td>'}},
+        {k:'ciudad',t:'Ciudad',tipo:'txt',celda:function(f,th){return'<td data-th="'+esc(th)+'" class="txt">'+esc(f.ciudad)+'</td>'}},
+        {k:'zona',t:'Zona',tipo:'txt',celda:function(f,th){return'<td data-th="'+esc(th)+'" class="txt">'+esc(f.zona)+'</td>'}},
+        {k:'cliente',t:'Cliente',tipo:'txt',celda:function(f,th){return'<td data-th="'+esc(th)+'" class="txt">'+esc(f.cliente)+'</td>'}},
+        {k:'pdv',t:'PDV',tipo:'txt',celda:function(f,th){return'<td data-th="'+esc(th)+'" class="txt"><b>'+esc(f.pdv)+'</b></td>'}},
+        {k:'del',t:'Delegado',tipo:'txt',celda:function(f,th){return'<td data-th="'+esc(th)+'" class="txt">'+esc(f.del)+'</td>'}},
+        {k:'grupo',t:'Grupo',tipo:'txt',celda:function(f,th){return'<td data-th="'+esc(th)+'" class="txt">'+esc(f.grupo)+'</td>'}},
+        {k:'producto',t:'Producto agotado',tipo:'txt',celda:function(f,th){return'<td data-th="'+esc(th)+'" class="txt yb-rojo">'+esc(f.producto)+'</td>'}}]})}
+  document.getElementById('ybHintTablaAgot').innerText=ybVistaAgot==='pdv'?
+    FMT.format(porPdv.length)+' PDV con al menos un agotado · clic en una fila para filtrar por ese PDV':
+    FMT.format(detalle.length)+' filas PDV × producto agotado'}
+
+function ybCsvAgotados(){
+  if(ybVistaAgot==='pdv'){
+    mtdDescargarCsv(ybAgotVista.map(function(f){var o={};Object.keys(f).forEach(function(k){o[k]=f[k]});
+      o.productos=f.lista.map(function(p){return p.nombre}).join(', ');o.fecha=ybFechaTxt(f.fecha);
+      o.disp=f.pct==null?'':Math.round(f.pct*100)+'%';return o}),
+      [{clave:'pdv',titulo:'PDV'},{clave:'cliente',titulo:'Cliente'},{clave:'depto',titulo:'Departamento'},
+       {clave:'ciudad',titulo:'Ciudad'},{clave:'zona',titulo:'Zona'},{clave:'del',titulo:'Delegado'},
+       {clave:'fecha',titulo:'Fecha'},{clave:'n',titulo:'Agotados'},{clave:'disp',titulo:'Disponibilidad'},
+       {clave:'productos',titulo:'Productos agotados'}],'yoobic_agotados_pdv_'+mtdCsvFecha()+'.csv');
+  }else{
+    mtdDescargarCsv(ybAgotVista.map(function(f){var o={};Object.keys(f).forEach(function(k){o[k]=f[k]});
+      o.fecha=ybFechaTxt(f.fecha);return o}),
+      [{clave:'fecha',titulo:'Fecha'},{clave:'depto',titulo:'Departamento'},{clave:'ciudad',titulo:'Ciudad'},
+       {clave:'zona',titulo:'Zona'},{clave:'cliente',titulo:'Cliente'},{clave:'pdv',titulo:'PDV'},
+       {clave:'del',titulo:'Delegado'},{clave:'grupo',titulo:'Grupo'},{clave:'producto',titulo:'Producto agotado'}],
+      'yoobic_agotados_detalle_'+mtdCsvFecha()+'.csv')}}
+
+/* ══════════ Fotos ══════════ */
+/* Payload de fotos → {clave: [{tipo, n, url}]} con la URL completa y el
+   ordinal dentro del tipo ("Foto - Planograma ISDIN - 2", como en Yoobic). */
+function ybExpandirFotos(d){
+  d=d||{};var pre=d.prefijo||'',out={};
+  if(d.tipos&&d.tipos.length)ybTiposFoto=d.tipos;
+  Object.keys(d.fotos||{}).forEach(function(k){var cnt={};
+    out[k]=(d.fotos[k]||[]).map(function(f){var t=f[0];cnt[t]=(cnt[t]||0)+1;
+      var u=String(f[1]||'');
+      return{tipo:t,n:cnt[t],url:(u.indexOf('http')===0||u.indexOf('data:')===0)?u:pre+u}})});
+  return{fotos:out,prefijo:pre}}
+
+/* Miniatura: las URL de Yoobic son de Cloudinary (/image/upload/...): se pide
+   una versión reducida; si el servidor no la acepta, onerror cae a la original. */
+function ybMiniatura(url){
+  var marca='/image/upload/';var i=url.indexOf(marca);
+  if(url.indexOf('http')!==0||i===-1)return url;
+  return url.slice(0,i+marca.length)+'c_fill,w_420,h_315,q_auto/'+url.slice(i+marca.length)}
+function ybImg(url,clase){
+  return'<img class="'+(clase||'')+'" loading="lazy" src="'+esc(ybMiniatura(url))+'" data-full="'+esc(url)+
+    '" onerror="if(this.src!==this.dataset.full){this.src=this.dataset.full}" alt="">'}
+
+function ybFotosDe(m){return(ybFotosData&&ybFotosData.fotos[m.clave])||[]}
+function ybTituloFoto(f){return(ybTiposFoto[f.tipo]||'Foto')+' - '+f.n}
+
+var YB_PAGINA=48,ybFotosMostrar=YB_PAGINA,ybFotosFirma='',ybGalItems=[];
+/* Los onclick llevan un ÍNDICE, nunca la clave de misión: una clave con comillas
+   rompería el JavaScript del atributo (esc() las vuelve &#39; y el navegador las
+   decodifica antes de ejecutar). */
+function ybClicGaleria(ix){var it=ybGalItems[ix];if(it)ybAbrirHistorial(it.m.t.i,it.f.tipo,it.m.clave)}
+function ybRenderFotos(lista){
+  var cont=document.getElementById('ybGaleria');
+  if(!ybFotosData){
+    cont.innerHTML='<div class="mtd-estado"><span class="mtd-spinner"></span>Cargando fotos…</div>';
+    ybCargarFotos(false,function(ok,err){
+      if(!ok){cont.innerHTML='<div class="mtd-estado"><b>No pude cargar las fotos.</b><br>'+esc(me(err))+'</div>';return}
+      if(ybSub==='fotos')ybRender()});
+    return}
+  var firma=ybVer+'|'+lista.length+'|'+JSON.stringify(ybFiltros)+JSON.stringify(ybFecha);
+  if(firma!==ybFotosFirma){ybFotosFirma=firma;ybFotosMostrar=YB_PAGINA}
+  var tipos=ybFset.tipoFoto,items=[];
+  lista.forEach(function(m){ybFotosDe(m).forEach(function(f){
+    if(tipos&&!tipos[String(f.tipo)])return;items.push({m:m,f:f})})});
+  document.getElementById('ybHintFotos').innerText=FMT.format(items.length)+' fotos de '+
+    FMT.format(ybUltimas(lista).length)+' PDV · más recientes primero · clic en una foto para ver su historial y comparar antes / después';
+  if(!items.length){cont.innerHTML='<div class="mtd-vacio">Sin fotos con los filtros actuales</div>';return}
+  var h='<div class="yb-galeria">';
+  ybGalItems=items;
+  items.slice(0,ybFotosMostrar).forEach(function(it,ix){var m=it.m,t=m.t,f=it.f;
+    h+='<div class="yb-foto" tabindex="0" onclick="ybClicGaleria('+ix+')" onkeydown="if(event.key===\'Enter\')ybClicGaleria('+ix+')">'+
+      '<div class="yb-foto-img">'+ybImg(f.url)+'</div>'+
+      '<div class="yb-foto-cuerpo">'+
+        '<div class="yb-foto-usr"><span class="yb-avatar">'+esc((m.del||'?').charAt(0))+'</span>'+esc(m.del)+'</div>'+
+        '<div class="yb-foto-pdv">'+esc(t.nombre)+'</div>'+
+        '<div class="yb-foto-dir">'+esc(t.dir||t.ciudad)+'</div>'+
+        '<div class="yb-foto-tit">'+esc(ybTituloFoto(f))+'</div>'+
+        '<div class="yb-foto-fecha">'+ybFechaTxt(m.fecha)+(m.s[0]!=null?' · Global <b style="color:'+ybColorPct(m.s[0]/YB_PILARES[0].max)+'">'+ybNum(m.s[0])+'</b>':'')+'</div>'+
+      '</div></div>'});
+  h+='</div>';
+  if(items.length>ybFotosMostrar)h+='<div class="yb-mas"><button class="btn" onclick="ybFotosMostrar+=YB_PAGINA;ybRender()">Ver más ('+
+    FMT.format(items.length-ybFotosMostrar)+' restantes)</button></div>';
+  cont.innerHTML=h}
+
+/* ── Modal de fotos ──
+   ybAbrirFotos(i)          → "Últimas fotos" de la tienda i (lo usa el popup del mapa).
+   ybAbrirHistorial(i,t,k)  → historial de un tipo de foto y comparación antes/después. */
+var ybModal={tienda:null,tipo:0,antes:'',despues:'',modo:'ultimas'};
+
+function ybMisionesDeTienda(t){return ybMis.filter(function(m){return m.t===t})}
+
+function ybAbrirModal(html){
+  var mo=document.getElementById('modalYb');mo.style.display='flex';
+  document.getElementById('ybModal').innerHTML=html}
+function ybCerrarModal(){var mo=document.getElementById('modalYb');if(mo)mo.style.display='none'}
+
+function ybConFotos(fn){
+  if(ybFotosData){fn();return}
+  ybAbrirModal('<div class="mtd-estado"><span class="mtd-spinner"></span>Cargando fotos…</div>');
+  ybCargarFotos(false,function(ok,err){
+    if(!ok){ybAbrirModal('<h3>Fotos</h3><div class="mtd-estado">No pude cargar las fotos: '+esc(me(err))+'</div>'+
+      '<button class="btn" onclick="ybCerrarModal()">Cerrar</button>');return}
+    fn()})}
+
+function ybAbrirFotos(i){
+  var go=function(){var t=ybTiendas[i];if(!t)return;
+    ybModal={tienda:t,tipo:0,antes:'',despues:'',modo:'ultimas'};ybPintarModal()};
+  if(!ybData){ybCargar(false,function(ok){if(ok)ybConFotos(go)});return}
+  ybConFotos(go)}
+
+function ybAbrirHistorial(i,tipo,clave){
+  ybConFotos(function(){var t=ybTiendas[i];if(!t)return;
+    var mis=ybMisionesDeTienda(t).filter(function(m){return ybFotosDe(m).some(function(f){return f.tipo===tipo})});
+    var actual=mis.filter(function(m){return m.clave===clave})[0]||mis[0];
+    var antes=mis.length>1?mis[mis.length-1]:null;
+    if(antes===actual)antes=mis[1]||null;
+    ybModal={tienda:t,tipo:tipo,antes:antes?antes.clave:'',despues:actual?actual.clave:'',modo:'historial'};
+    ybPintarModal()})}
+
+function ybModalModo(m){ybModal.modo=m;
+  if(m==='historial'&&!ybModal.despues){
+    var mis=ybMisionesDeTienda(ybModal.tienda).filter(function(x){return ybFotosDe(x).some(function(f){return f.tipo===ybModal.tipo})});
+    if(!mis.length){var conFoto=ybMisionesDeTienda(ybModal.tienda).filter(function(x){return ybFotosDe(x).length});
+      if(conFoto.length){ybModal.tipo=ybFotosDe(conFoto[0])[0].tipo;
+        mis=conFoto.filter(function(x){return ybFotosDe(x).some(function(f){return f.tipo===ybModal.tipo})})}}
+    ybModal.despues=mis[0]?mis[0].clave:'';ybModal.antes=mis.length>1?mis[mis.length-1].clave:''}
+  ybPintarModal()}
+function ybModalTipo(v){ybModal.tipo=Number(v);ybModal.antes='';ybModal.despues='';ybModalModo('historial')}
+function ybModalSet(lado,clave){ybModal[lado]=clave;ybPintarModal()}
+function ybModalHito(lado,ix){var m=(ybModal.hitos||[])[ix];if(m)ybModalSet(lado,m.clave)}
+
+var YB_CORTO={global:'Global',disp:'Disponib.',lineal:'Lineal',perm:'Vis. perm.',temp:'Vis. campaña'};
+function ybResumenPilares(m,ref){
+  if(!m)return'';
+  return'<div class="yb-mini-pilares">'+YB_PILARES.map(function(p,i){var v=m.s[i];
+    var d=(ref&&ref!==m&&v!=null&&ref.s[i]!=null)?v-ref.s[i]:null;
+    return'<span class="yb-mini'+(i===0?' g':'')+'" title="'+esc(p.etiqueta)+' (máx. '+p.max+')">'+esc(YB_CORTO[p.k]||p.etiqueta)+
+      ' <b style="color:'+(v==null?'var(--muted)':ybColorPct(v/p.max))+'">'+ybNum(v)+'</b>'+
+      (d!=null&&Math.abs(d)>=.05?'<em class="'+(d>0?'sube':'baja')+'">'+(d>0?'▲ +':'▼ ')+ybNum(d)+'</em>':'')+'</span>'}).join('')+'</div>'}
+
+function ybPintarModal(){
+  var t=ybModal.tienda,mis=ybMisionesDeTienda(t);
+  var cab='<div class="yb-modal-cab"><div><h3>'+esc(t.nombre)+'</h3>'+
+    '<div class="mini">'+esc(t.cliente)+' · '+esc(t.ciudad)+(t.zona&&t.zona!=='Sin zona'?' · '+esc(t.zona):'')+(t.dir?' · '+esc(t.dir):'')+'</div></div>'+
+    '<div class="chips-periodo">'+
+      '<button type="button" class="chip-periodo'+(ybModal.modo==='ultimas'?' activo':'')+'" onclick="ybModalModo(\'ultimas\')">Últimas fotos</button>'+
+      '<button type="button" class="chip-periodo'+(ybModal.modo==='historial'?' activo':'')+'" onclick="ybModalModo(\'historial\')">Historial · antes / después</button>'+
+    '</div><button type="button" class="chip-x yb-cerrar" onclick="ybCerrarModal()" title="Cerrar">✕</button></div>';
+  if(!mis.length){ybAbrirModal(cab+'<div class="mtd-vacio">Este PDV no tiene encuestas Perfect Store.</div>');return}
+  if(ybModal.modo==='ultimas'){
+    var conFoto=mis.filter(function(m){return ybFotosDe(m).length});
+    var m=conFoto[0]||mis[0],fotos=ybFotosDe(m);
+    var h=cab+'<div class="yb-modal-sub">Encuesta del <b>'+ybFechaTxt(m.fecha)+'</b> · '+esc(m.del)+
+      (m!==mis[0]?' <span class="mini">(la encuesta más reciente, del '+ybFechaTxt(mis[0].fecha)+', no tiene fotos)</span>':'')+'</div>'+
+      ybResumenPilares(m,null);
+    if(!fotos.length)h+='<div class="mtd-vacio">La última encuesta no tiene fotos.</div>';
+    else h+='<div class="yb-galeria yb-galeria-modal">'+fotos.map(function(f){
+      return'<a class="yb-foto" href="'+esc(f.url)+'" target="_blank" rel="noopener" title="Abrir en tamaño completo">'+
+        '<div class="yb-foto-img">'+ybImg(f.url)+'</div><div class="yb-foto-cuerpo"><div class="yb-foto-tit">'+esc(ybTituloFoto(f))+'</div></div></a>'}).join('')+'</div>';
+    ybAbrirModal(h);return}
+
+  // Historial de un tipo de foto
+  var tiposT={};mis.forEach(function(m){ybFotosDe(m).forEach(function(f){tiposT[f.tipo]=1})});
+  var conTipo=mis.filter(function(m){return ybFotosDe(m).some(function(f){return f.tipo===ybModal.tipo})});
+  var porClave={};mis.forEach(function(m){porClave[m.clave]=m});
+  var A=porClave[ybModal.antes]||null,D=porClave[ybModal.despues]||conTipo[0]||null;
+  var opcs=function(sel){return'<option value="">—</option>'+conTipo.map(function(m){
+    return'<option value="'+esc(m.clave)+'"'+(m.clave===sel?' selected':'')+'>'+ybFechaTxt(m.fecha)+' · '+esc(m.del)+'</option>'}).join('')};
+  var lado=function(etq,campo,m,ref){
+    var fs=m?ybFotosDe(m).filter(function(f){return f.tipo===ybModal.tipo}):[];
+    return'<div class="yb-lado"><div class="yb-lado-cab"><b>'+etq+'</b><select onchange="ybModalSet(\''+campo+'\',this.value)">'+opcs(m?m.clave:'')+'</select></div>'+
+      (m?ybResumenPilares(m,ref):'')+
+      (fs.length?'<div class="yb-lado-fotos'+(fs.length>1?' varias':'')+'">'+fs.map(function(f){return'<a href="'+esc(f.url)+'" target="_blank" rel="noopener" title="'+esc(ybTituloFoto(f))+' · abrir completa">'+ybImg(f.url,'yb-grande')+'</a>'}).join('')+'</div>':
+        '<div class="mtd-vacio">'+(m?'Sin foto de este tipo':'Elige una fecha')+'</div>')+'</div>'};
+  var h2=cab+'<div class="yb-modal-sub">Tipo de foto <select onchange="ybModalTipo(this.value)">'+
+    Object.keys(tiposT).map(function(k){return'<option value="'+k+'"'+(Number(k)===ybModal.tipo?' selected':'')+'>'+esc(ybTiposFoto[k]||'Foto')+'</option>'}).join('')+
+    '</select> · '+FMT.format(conTipo.length)+' encuestas con este tipo de foto</div>'+
+    '<div class="yb-comparar">'+lado('Antes','antes',A,null)+lado('Después','despues',D,A)+'</div>'+
+    '<div class="yb-linea-tiempo">'+(ybModal.hitos=conTipo.slice().reverse()).map(function(m,ix){
+      var f=ybFotosDe(m).filter(function(x){return x.tipo===ybModal.tipo})[0];
+      var cls=(A&&m.clave===A.clave?' es-a':'')+(D&&m.clave===D.clave?' es-d':'');
+      return'<button type="button" class="yb-hito'+cls+'" onclick="ybModalHito(\'despues\','+ix+')" '+
+        'oncontextmenu="event.preventDefault();ybModalHito(\'antes\','+ix+')" '+
+        'title="Clic: poner en Después · clic derecho: poner en Antes">'+(f?ybImg(f.url):'')+
+        '<span>'+ybFechaTxt(m.fecha)+'</span>'+(m.s[0]!=null?'<b style="color:'+ybColorPct(m.s[0]/YB_PILARES[0].max)+'">'+ybNum(m.s[0])+'</b>':'')+'</button>'}).join('')+'</div>'+
+    '<div class="hint">Línea de tiempo de la más antigua a la más reciente · clic = Después · clic derecho = Antes</div>';
+  ybAbrirModal(h2)}
+
+/* ══════════ Integración con el mapa ══════════
+   modoColor 'ps_global' | 'ps_disp' | 'ps_lineal' | 'ps_perm' | 'ps_temp'.
+   Valor de un PDV = su última encuesta (dentro de los meses elegidos en el
+   filtro Período del mapa, si hay); valor de un brick = promedio de sus PDV
+   evaluados. Ambos en % del máximo del pilar → semáforo YB_UMBRALES.        */
+var ybCacheMapa=null;
+function ybModoMapa(){return typeof modoColor==='string'&&modoColor.indexOf('ps_')===0}
+function ybIdxPilar(){var k=modoColor.slice(3);
+  for(var i=0;i<YB_PILARES.length;i++)if(YB_PILARES[i].k===k)return i;
+  return['global','disp','lineal','perm','temp'].indexOf(k)}
+
+function ybUltimaMapa(){
+  var mes=(typeof filtros!=='undefined'&&filtros.mes)?filtros.mes:[];
+  var firma=ybVer+'|'+mes.join(',');
+  if(ybCacheMapa&&ybCacheMapa.firma===firma)return ybCacheMapa.ult;
+  var ms=null;if(mes.length){ms={};mes.forEach(function(x){ms[x]=1})}
+  var ult={};
+  ybMis.forEach(function(m){if(ms&&!ms[m.mes])return;if(!ult[m.t.id])ult[m.t.id]=m});
+  ybCacheMapa={firma:firma,ult:ult};return ult}
+
+function ybTiendaDe(p){
+  if(!ybData||!p)return null;
+  return(p.id&&ybPorId15[String(p.id).slice(0,15)])||(p.posId&&ybPorPos[p.posId])||null}
+function ybMisionDe(p){var t=ybTiendaDe(p);return t?(ybUltimaMapa()[t.id]||null):null}
+function ybPctPunto(p){
+  var m=ybMisionDe(p);if(!m)return null;var i=ybIdxPilar(),v=m.s[i];
+  return v==null?null:v/(YB_PILARES[i]?YB_PILARES[i].max:100)}
+
+/* {brickId: % promedio} sobre los PDV visibles con encuesta. */
+function ybPorBrick(vis){
+  var ag={};
+  vis.forEach(function(p){if(!p._brick||p.dup)return;var v=ybPctPunto(p);if(v==null)return;
+    var a=ag[p._brick]||(ag[p._brick]={s:0,n:0});a.s+=v;a.n++});
+  var out={};Object.keys(ag).forEach(function(k){out[k]=ag[k].s/ag[k].n});
+  return out}
+
+function ybLeyendaMapa(){
+  if(!ybData)return[[SEM.sin,ybCargando?'Cargando Perfect Store…':'Sin datos de Yoobic']];
+  return[[SEM.alto,'≥ 85 %'],[SEM.medio,'70–85 %'],[SEM.bajo,'50–70 %'],[SEM.muybajo,'< 50 %'],[SEM.sin,'Sin encuesta']]}
+
+/* Al elegir una capa Perfect Store sin datos todavía, se cargan y se repinta. */
+function ybAsegurarMapa(){
+  if(ybData||!ybModoMapa())return;
+  ybCargar(false,function(ok){if(ok&&typeof actualizar==='function')actualizar()})}
+
+function ybRefrescarMapa(){
+  if(typeof mapaEstado==='undefined'||mapaEstado!=='listo')return;
+  if(ybModoMapa()&&typeof actualizar==='function')actualizar()}
+
+/* Bloque Perfect Store del popup de un PDV (popup de 295 px: nombres cortos). */
+var YB_POPUP={disp:'Disponibilidad',lineal:'Espacio lineal',perm:'Vis. permanente',temp:'Vis. campaña'};
+function ybPopupHtml(p){
+  if(!ybData){if(!ybCargando&&!ybErr)ybCargar(false);
+    return ybErr?'':'<div class="popup-ps"><span class="mini">Perfect Store: cargando…</span></div>'}
+  var t=ybTiendaDe(p);
+  if(!t)return'<div class="popup-ps"><span class="mini">Sin encuestas Perfect Store (Yoobic)</span></div>';
+  var m=ybUltimaMapa()[t.id]||ybMisionesDeTienda(t)[0];
+  if(!m)return'<div class="popup-ps"><span class="mini">Sin encuestas Perfect Store en el período</span></div>';
+  var ag=ybDispMision(m,ybProductos);
+  var h='<div class="popup-ps"><div class="ps-cab"><b>Perfect Store</b><span class="mini">'+ybFechaTxt(m.fecha)+' · '+esc(m.del)+'</span></div>';
+  YB_PILARES.forEach(function(pi,i){var v=m.s[i],pct=v==null?null:v/pi.max;
+    if(i===0){h+='<div class="ps-global"><span class="grande" style="color:'+(v==null?'var(--muted)':ybColorPct(pct))+'">'+ybNum(v)+
+      '</span> / '+pi.max+' <span class="mini">Global Perfect Store</span></div>';return}
+    h+='<div class="ps-fila"><span class="ps-nom" title="'+esc(pi.etiqueta)+'">'+esc(YB_POPUP[pi.k]||pi.etiqueta)+'</span>'+
+      '<span class="ps-pista"><span style="width:'+(pct==null?0:Math.min(100,Math.round(pct*100)))+'%;background:'+ybColorPct(pct)+'"></span></span>'+
+      '<b>'+ybNum(v)+'</b><span class="mini">/'+pi.max+'</span></div>'});
+  h+='<div class="ps-agot">'+(ag.no?'<b class="yb-rojo">'+ag.no+' producto'+(ag.no===1?'':'s')+' agotado'+(ag.no===1?'':'s')+'</b>':'Sin agotados')+
+    (ag.pct!=null?' · disponibilidad '+ybPctTxt(ag.pct):'')+'</div>'+
+    '<button class="btn-portafolio" onclick="ybAbrirFotos('+t.i+')">📷 Ver fotos (última encuesta)</button></div>';
+  return h}
+
+/* ══════════ Datos de prueba (solo fuera de Apps Script) ══════════
+   Tiendas atadas a los PDV del mock del mapa (ids 'A'+k de cargarMock). */
+function ybDatosDemo(){
+  var sem=7;function rnd(){sem=(sem*1103515245+12345)%2147483648;return sem/2147483648}
+  var grupos=['Producto BU Foto','Segmento reaplicación (Foto)','Segmento Pediatrics','Coverage',
+    'Producto Isdinceutics','Limpiadores','Producto Derma','Lanzamientos Derma'];
+  var nombres=[['FP FUSION WATER MAGIC SPF50',0],['FP GEL CREAM SPF50',0],['FP AGE REPAIR',0],['FP COMPACT ARENA',0],
+    ['FP INVISIBLE STICK',1],['FP FUSION AIR',1],['FP PEDIATRICS TRANSPARENT',2],['FP PEDIATRICS GEL',2],
+    ['FOTOULTRA ACTIVE UNIFY COLOR',3],['FP FUSION FLUID COLOR',3],['FLAVO-C',4],['MELATONIK',4],['K-OX EYES',4],
+    ['GERMISDIN FACIAL',5],['MICELLAR SOLUTION',5],['UREADIN 10',6],['NUTRADEICA',6],['ACNIBEN GEL',6],['SI-NAILS',6],
+    ['UREADIN HAND REPAIR',7]];
+  var dels=['SEBASTIAN GUTIERREZ','ANA PÉREZ','LUIS GÓMEZ','MARTA RUIZ','JORGE DÍAZ'];
+  var tiendas=[],mis=[],hoy=new Date();
+  for(var k=1;k<=360;k+=2){
+    tiendas.push(['A'+k,'PDV '+k,'','','','',null,null,'',0]);
+    var nm=1+Math.floor(rnd()*4),nivel=.45+rnd()*.5;
+    for(var j=0;j<nm;j++){
+      var d=new Date(hoy.getTime()-Math.floor((j*45+rnd()*40))*86400000);
+      var f=d.getFullYear()+'-'+('0'+(d.getMonth()+1)).slice(-2)+'-'+('0'+d.getDate()).slice(-2);
+      var mej=nivel+(nm-1-j)*0.04;
+      var s=[40,25,20,15].map(function(mx){return Math.round(Math.min(mx,Math.max(0,mx*(mej+(rnd()-.5)*.3)))*10)/10});
+      var disp=nombres.map(function(){var r=rnd();return r<.1?'-':(r<.1+(1-mej)*.45?'0':'1')}).join('');
+      mis.push([tiendas.length-1,f,Math.floor(rnd()*dels.length),Math.round((s[0]+s[1]+s[2]+s[3])*10)/10,
+        s[0],s[1],s[2],s[3],disp,0,'M'+k+'-'+j])}}
+  return{v:1,pilares:[{k:'global',etiqueta:'Global Perfect Store',max:100},{k:'disp',etiqueta:'Disponibilidad de producto',max:40},
+      {k:'lineal',etiqueta:'Espacio lineal',max:25},{k:'perm',etiqueta:'Visibilidad permanente',max:20},
+      {k:'temp',etiqueta:'Visibilidad de campaña/temporal',max:15}],
+    grupos:grupos,productos:nombres,tiposFoto:['Foto - Planograma ISDIN','Foto - Exhibición temporal'],
+    delegados:dels,campanas:['Perfect Store'],tiendas:tiendas,misiones:mis,
+    meta:{actualizadoEn:new Date().toISOString(),misiones:mis.length}}}
+
+function ybFotosDemo(){
+  var fotos={},cols=['#1e8e3e','#f2b600','#ef7d00','#e41f33'];
+  ybMis.forEach(function(m,ix){var lista=[],n=2+(ix%3);
+    for(var i=0;i<n;i++){var tipo=i<2?0:1,g=m.s[0]||0,col=cols[g>=85?0:g>=70?1:g>=50?2:3];
+      var svg='<svg xmlns="http://www.w3.org/2000/svg" width="420" height="315"><rect width="420" height="315" fill="#eef1f4"/>'+
+        '<rect x="40" y="40" width="340" height="200" fill="#fff" stroke="#c9ced6"/>'+
+        [0,1,2,3].map(function(r){return'<rect x="55" y="'+(55+r*45)+'" width="'+Math.round(310*Math.min(1,g/100+.1*r%3/3))+'" height="30" fill="'+col+'" opacity=".75"/>'}).join('')+
+        '<text x="210" y="285" font-family="Arial" font-size="18" text-anchor="middle" fill="#2b2830">'+(tipo?'Exhibición':'Planograma')+' · '+m.fecha+'</text></svg>';
+      lista.push([tipo,'data:image/svg+xml;charset=utf-8,'+encodeURIComponent(svg)])}
+    fotos[m.clave]=lista});
+  return{v:1,prefijo:'https://assets.yoobic.com/image/upload/',tipos:ybTiposFoto,fotos:fotos}}
+</script>

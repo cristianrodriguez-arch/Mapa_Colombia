@@ -264,15 +264,16 @@ function mtdCsvProductos(){
    Convive con verVista() de JsPaneles, que conmuta las pestañas internas del
    rail (Tabla/Análisis/Brick): son niveles distintos y no se pisan. */
 var mtdVistaActiva='ventasmtd';
-var SIVSO_VISTAS=['mapa','ventasmtd','sivso'];
+var SIVSO_VISTAS=['mapa','ventasmtd','sivso','yoobic'];
+var VISTA_SUFIJO={mapa:'Mapa',ventasmtd:'VentasMtd',sivso:'SIvsSO',yoobic:'Yoobic'};   // #vista<X> / #btnVista<X>
 function mostrarVistaSuperior(v){
   mtdVistaActiva=v;
   SIVSO_VISTAS.forEach(function(id){
-    document.getElementById('vista'+(id==='mapa'?'Mapa':id==='ventasmtd'?'VentasMtd':'SIvsSO')).hidden=(id!==v);
-    var btn=document.getElementById('btnVista'+(id==='mapa'?'Mapa':id==='ventasmtd'?'VentasMtd':'SIvsSO'));
+    var vista=document.getElementById('vista'+VISTA_SUFIJO[id]);if(vista)vista.hidden=(id!==v);
+    var btn=document.getElementById('btnVista'+VISTA_SUFIJO[id]);
     if(btn)btn.classList.toggle('activo',id===v)});
   // La barra de filtros de la cabecera es del visor (período, BU, SKU, canal…):
-  // no aplica a Ventas MTD ni a SI vs SO, que tienen sus propios filtros.
+  // no aplica a Ventas MTD, SI vs SO ni Yoobic, que tienen sus propios filtros.
   var bf=document.getElementById('barraFiltros');
   if(bf){bf.hidden=(v!=='mapa');bf.classList.remove('abierto')}
   document.querySelectorAll('.mtd-filtros').forEach(function(mf){mf.classList.remove('abierto')});
@@ -285,7 +286,8 @@ function mostrarVistaSuperior(v){
         map.invalidateSize()},60);
   }
   if(v==='ventasmtd'&&ventasMtdData===null&&!mtdCargando)cargarVentasMtd();
-  if(v==='sivso'&&typeof sivsoAlEntrar==='function')sivsoAlEntrar()}
+  if(v==='sivso'&&typeof sivsoAlEntrar==='function')sivsoAlEntrar();
+  if(v==='yoobic'&&typeof ybAlEntrar==='function')ybAlEntrar()}
 
 /* ── Carga: UNA llamada para toda la pestaña ── */
 function cargarVentasMtd(forzar){

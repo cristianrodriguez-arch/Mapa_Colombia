@@ -1391,6 +1391,378 @@ function verSIvsSO() {
 }
 
 /* ============================================================
+ * YOOBIC — Perfect Store (pestaña "Yoobic" + capas del mapa)
+ * ============================================================
+ * Lee la hoja 'Yoobic' del MAESTRO PDV's (export de las misiones de la
+ * campaña Perfect Store: UNA FILA POR MISIÓN, las preguntas van en columnas)
+ * y la cruza con 'Direcciones con sus cuentas CO (Appsheets)' por
+ *   Yoobic.store_client_id  ↔  Direcciones col. A (Id_cuenta_18).
+ *
+ * Qué columna es qué:
+ *   · Por ENCABEZADO (exacto y luego por fragmento, como el resto del visor):
+ *     store_client_id, date (columna I), user_full_name (columna L = el
+ *     Delegado que llenó la encuesta). Si el encabezado no aparece se usa la
+ *     letra que dio el usuario como respaldo.
+ *   · Por LETRA (rango que fijó el usuario; los nombres de producto salen del
+ *     encabezado de cada columna, no se escriben aquí): los 5 puntajes
+ *     (YOOBIC_PILARES) y los rangos de disponibilidad (YOOBIC_DISPONIBILIDAD).
+ *     Si el formulario de Yoobic cambia y las columnas se corren, se ajustan
+ *     SOLO estas dos constantes. verYoobic() muestra qué encabezado cayó en
+ *     cada letra: correrlo desde el editor tras cualquier cambio de la hoja.
+ *   · Fotos: toda columna cuyo encabezado empiece por "Foto" (p. ej. las
+ *     cuatro "Foto - Planograma ISDIN"); cada celda trae 1+ URLs separadas
+ *     por coma.
+ *
+ * Puntajes: se usan los OFICIALES de Yoobic (score y sub-scores), nunca se
+ * recalculan. Solo como control de calidad se cuenta cuántas misiones tienen
+ * Global ≠ suma de los 4 pilares (meta.calidad.descuadres).
+ *
+ * Dos endpoints (ambos caché 30 min, `forzar` = botón Actualizar):
+ *   getYoobicJson()       misiones + puntajes + disponibilidad + tiendas.
+ *                         Liviano: lo usan la pestaña y el mapa.
+ *   getYoobicFotosJson()  historial de fotos (URLs), se pide solo al abrir
+ *                         la galería o "Ver fotos". Se une por `clave` de misión.
+ */
+
+var NOMBRE_HOJA_YOOBIC      = 'Yoobic';
+var NOMBRE_HOJA_DIRECCIONES = 'Direcciones con sus cuentas CO (Appsheets)';
+
+var CACHE_YOOBIC_CLAVE       = 'yoobic_v1';
+var CACHE_YOOBIC_FOTOS_CLAVE = 'yoobic_fotos_v1';
+var CACHE_YOOBIC_SEGUNDOS    = 1800;   // 30 min
+
+/* Puntuación por pilar (N:R). max = puntaje máximo de la metodología. */
+var YOOBIC_PILARES = [
+  { k: 'global', etiqueta: 'Global Perfect Store',            col: 'N', max: 100 },
+  { k: 'disp',   etiqueta: 'Disponibilidad de producto',      col: 'O', max: 40 },
+  { k: 'lineal', etiqueta: 'Espacio lineal',                  col: 'P', max: 25 },
+  { k: 'perm',   etiqueta: 'Visibilidad permanente',          col: 'Q', max: 20 },
+  { k: 'temp',   etiqueta: 'Visibilidad de campaña/temporal', col: 'R', max: 15 }
+];
+
+/* Disponibilidad de producto por grupo (una columna = un producto, Sí/No). */
+var YOOBIC_DISPONIBILIDAD = [
+  { grupo: 'Producto BU Foto',              rango: 'T:AB' },
+  { grupo: 'Segmento reaplicación (Foto)',  rango: 'AE:AG' },
+  { grupo: 'Segmento Pediatrics',           rango: 'AI:AL' },
+  { grupo: 'Coverage',                      rango: 'AN:AS' },
+  { grupo: 'Producto Isdinceutics',         rango: 'AV:AZ' },
+  { grupo: 'Limpiadores',                   rango: 'BC:BF' },
+  { grupo: 'Producto Derma',                rango: 'BH:BR' },
+  { grupo: 'Lanzamientos Derma',            rango: 'BU:BU' }
+];
+
+/* Respaldo por letra de las columnas que se buscan por encabezado. */
+var YOOBIC_COL_RESPALDO = { fecha: 'I', delegado: 'L' };
+
+/* Prefijo común de las fotos: se quita en el servidor y el cliente lo repone
+   (cada URL pesa ~110 caracteres y hay varias por misión). */
+var YOOBIC_PREFIJO_FOTO = 'https://assets.yoobic.com/image/upload/';
+
+/** 'A' → 0, 'N' → 13, 'AB' → 27 (índice base 0 de la columna). */
+function yoobicColIdx_(letras) {
+  var s = String(letras).trim().toUpperCase(), n = 0;
+  for (var i = 0; i < s.length; i++) n = n * 26 + (s.charCodeAt(i) - 64);
+  return n - 1;
+}
+
+/** 'T:AB' → [19, 20, ..., 27]. */
+function yoobicRango_(rango) {
+  var p = String(rango).split(':'), a = yoobicColIdx_(p[0]), b = yoobicColIdx_(p[1] || p[0]), out = [];
+  for (var i = Math.min(a, b); i <= Math.max(a, b); i++) out.push(i);
+  return out;
+}
+
+/** Abre una hoja del MAESTRO por nombre, tolerando mayúsculas/tildes/espacios. */
+function yoobicHoja_(libro, nombre) {
+  var h = libro.getSheetByName(nombre);
+  if (h) return h;
+  var buscado = mtdNorm_(nombre), hojas = libro.getSheets();
+  for (var i = 0; i < hojas.length; i++) if (mtdNorm_(hojas[i].getName()) === buscado) return hojas[i];
+  return null;
+}
+
+/**
+ * Fecha de la celda 'date' SIN la hora, como 'yyyy-MM-dd' en la zona del libro.
+ * Acepta Date, serial de Sheets, ISO ('2026-10-07T19:12:00Z') y d/m/aaaa [hh:mm].
+ */
+function yoobicFecha_(valor, tz) {
+  if (valor instanceof Date) {
+    return isNaN(valor.getTime()) ? '' : Utilities.formatDate(valor, tz, 'yyyy-MM-dd');
+  }
+  if (typeof valor === 'number' && valor > 20000 && valor < 80000) {
+    var d = new Date(Math.round((valor - 25569) * 86400 * 1000));
+    return d.getUTCFullYear() + '-' + ('0' + (d.getUTCMonth() + 1)).slice(-2) + '-' + ('0' + d.getUTCDate()).slice(-2);
+  }
+  var s = String(valor == null ? '' : valor).trim();
+  var iso = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (iso) return iso[1] + '-' + ('0' + iso[2]).slice(-2) + '-' + ('0' + iso[3]).slice(-2);
+  var dmy = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})/);
+  if (dmy) {
+    var anio = dmy[3].length === 2 ? '20' + dmy[3] : dmy[3];
+    return anio + '-' + ('0' + dmy[2]).slice(-2) + '-' + ('0' + dmy[1]).slice(-2);
+  }
+  return '';
+}
+
+/**
+ * Respuesta de disponibilidad → '1' (hay), '0' (agotado) o '-' (sin respuesta /
+ * no aplica). "No aplica" y "N/A" se revisan ANTES que "No" para no contarlos
+ * como agotados.
+ */
+function yoobicDisp_(v) {
+  if (v === true || v === 1) return '1';
+  if (v === false || v === 0) return '0';
+  var s = mtdNorm_(v);
+  if (!s || s === '-' || s === 'n/a' || s === 'na' || s.indexOf('no aplica') === 0 || s.indexOf('n/a') === 0) return '-';
+  if (s === '1' || s === 'x' || s.indexOf('si') === 0 || s.indexOf('yes') === 0 || s === 'true' || s === 'verdadero') return '1';
+  if (s === '0' || s.indexOf('no') === 0 || s === 'false' || s === 'falso') return '0';
+  return '-';
+}
+
+/** Puntaje numérico o null (celda vacía/texto): null ≠ 0 (un 0 es un puntaje real). */
+function yoobicPuntaje_(v) {
+  if (v === '' || v == null) return null;
+  var n = parseNum_(v);
+  return isNaN(n) ? null : Math.round(n * 100) / 100;
+}
+
+/** Los Id de Salesforce: 18 caracteres = 15 + sufijo de mayúsculas. Se cruza por los 15 primeros. */
+function yoobicId15_(v) {
+  return String(v == null ? '' : v).trim().slice(0, 15);
+}
+
+/** Índice de columna por encabezado exacto (normalizado); si no, por fragmentos; si no, null. */
+function yoobicCol_(headers, exactos, fragmentos) {
+  for (var e = 0; e < exactos.length; e++) {
+    var buscado = mtdNorm_(exactos[e]);
+    for (var i = 0; i < headers.length; i++) if (headers[i] === buscado) return i;
+  }
+  for (var f = 0; f < (fragmentos || []).length; f++) {
+    var fr = mtdNorm_(fragmentos[f]);
+    for (var j = 0; j < headers.length; j++) if (headers[j] && headers[j].indexOf(fr) !== -1) return j;
+  }
+  return null;
+}
+
+/** Columnas de la hoja Yoobic: por encabezado las nombradas, por letra los rangos. */
+function yoobicResolverColumnas_(headersRaw) {
+  var h = headersRaw.map(mtdNorm_);
+  var col = {
+    tienda:   yoobicCol_(h, ['store_client_id', 'store client id'], ['store_client_id', 'client_id']),
+    fecha:    yoobicCol_(h, ['date', 'fecha'], []),
+    delegado: yoobicCol_(h, ['user_full_name', 'user full name'], ['user_full_name']),
+    mision:   yoobicCol_(h, ['mission_id', '_id'], ['mission_id']),
+    nombre:   yoobicCol_(h, ['store_title', 'store_name', 'store', 'site'], ['store_title', 'store_name']),
+    campana:  yoobicCol_(h, ['campaign_title', 'campaign'], ['campaign_title'])
+  };
+  if (col.fecha === null)    col.fecha    = yoobicColIdx_(YOOBIC_COL_RESPALDO.fecha);
+  if (col.delegado === null) col.delegado = yoobicColIdx_(YOOBIC_COL_RESPALDO.delegado);
+  if (col.tienda === null) {
+    throw new Error("En la hoja '" + NOMBRE_HOJA_YOOBIC + "' no encontré la columna store_client_id. " +
+                    'Encabezados: ' + headersRaw.map(String).filter(String).join(' | '));
+  }
+
+  var usadas = {};
+  Object.keys(col).forEach(function(k) { if (col[k] !== null) usadas[col[k]] = 1; });
+  var pilares = YOOBIC_PILARES.map(function(p) {
+    var i = yoobicColIdx_(p.col); usadas[i] = 1;
+    return { k: p.k, idx: i, encabezado: String(headersRaw[i] == null ? '' : headersRaw[i]) };
+  });
+
+  var productos = [];
+  YOOBIC_DISPONIBILIDAD.forEach(function(g, gi) {
+    yoobicRango_(g.rango).forEach(function(i) {
+      if (i >= headersRaw.length) return;
+      var nom = String(headersRaw[i] == null ? '' : headersRaw[i]).trim();
+      if (!nom) return;                         // columna sin encabezado: no es un producto
+      usadas[i] = 1;
+      productos.push({ idx: i, nombre: nom, grupo: gi });
+    });
+  });
+
+  var fotos = [], tipos = [], tipoIdx = {};
+  h.forEach(function(t, i) {
+    // Palabra completa: "Foto - Planograma ISDIN" sí; "Fotoprotector ..." (un producto) no.
+    if (usadas[i] || !/^(fotos?|photos?)([^a-z]|$)/.test(t)) return;
+    var nom = String(headersRaw[i]).trim();
+    if (tipoIdx[nom] === undefined) { tipoIdx[nom] = tipos.length; tipos.push(nom); }
+    fotos.push({ idx: i, tipo: tipoIdx[nom] });
+  });
+
+  return { col: col, pilares: pilares, productos: productos, fotos: fotos, tiposFoto: tipos };
+}
+
+/** Clave estable de una misión para unir puntajes y fotos (dos endpoints, dos cachés). */
+function yoobicClave_(row, col, tienda, fechaCruda) {
+  var mid = col.mision !== null ? String(row[col.mision] == null ? '' : row[col.mision]).trim() : '';
+  if (mid) return mid;
+  var f = fechaCruda instanceof Date ? fechaCruda.getTime() : String(fechaCruda);
+  return tienda + '|' + f + '|' + mtdTexto_(row, col.delegado);
+}
+
+/**
+ * Hoja de Direcciones → {id15: info} SOLO para las tiendas que aparecen en
+ * Yoobic (la hoja tiene miles de cuentas). Id_cuenta_18 = columna A si el
+ * encabezado no se reconoce.
+ */
+function yoobicLeerDirecciones_(libro, ids15) {
+  var hoja = yoobicHoja_(libro, NOMBRE_HOJA_DIRECCIONES), out = {};
+  if (!hoja) return { tiendas: out, aviso: "No se encontró la hoja '" + NOMBRE_HOJA_DIRECCIONES + "'." };
+  var data = hoja.getDataRange().getValues();
+  if (data.length < 2) return { tiendas: out, aviso: 'La hoja de Direcciones está vacía.' };
+  var h = data[0].map(mtdNorm_);
+  var c = {
+    id:       yoobicCol_(h, ['id_cuenta_18', 'id cuenta 18', 'id_cuenta', 'id cuenta'], ['id_cuenta_18', 'id cuenta']),
+    nombre:   yoobicCol_(h, ['nombre de la cuenta', 'nombre'], ['nombre de la cuenta', 'nombre']),
+    cliente:  yoobicCol_(h, ['cliente', 'grupo de compras'], ['grupo de compras', 'cliente', 'chain']),
+    depto:    yoobicCol_(h, ['departamento', 'region'], ['departamento', 'region']),
+    ciudad:   yoobicCol_(h, ['ciudad', 'poblacion'], ['ciudad', 'poblacion']),
+    dir:      yoobicCol_(h, ['direccion', 'direccion completa'], ['direccion', 'calle']),
+    lat:      yoobicCol_(h, ['latitud', 'lat'], ['latitud']),
+    lng:      yoobicCol_(h, ['longitud', 'lng', 'lon'], ['longitud']),
+    pos:      yoobicCol_(h, ['pos_id', 'pos id'], ['oficina farmacia', 'oficina de farmacia'])
+  };
+  if (c.id === null) c.id = 0;
+  for (var i = 1; i < data.length; i++) {
+    var r = data[i], id = yoobicId15_(r[c.id]);
+    if (!id || !ids15[id] || out[id]) continue;
+    var lat = c.lat !== null ? parseNum_(r[c.lat]) : NaN, lng = c.lng !== null ? parseNum_(r[c.lng]) : NaN;
+    out[id] = {
+      nombre: mtdTexto_(r, c.nombre), cliente: mtdTexto_(r, c.cliente), depto: mtdTexto_(r, c.depto),
+      ciudad: mtdTexto_(r, c.ciudad), dir: mtdTexto_(r, c.dir),
+      lat: isNaN(lat) ? null : lat, lng: isNaN(lng) ? null : lng,
+      pos: c.pos !== null ? normalizarPos_(r[c.pos]) : ''
+    };
+  }
+  return { tiendas: out, aviso: '' };
+}
+
+/** Lectura completa de la hoja Yoobic (la usan los dos endpoints). */
+function yoobicLeer_() {
+  var libro = abrirHoja_();
+  var hoja  = yoobicHoja_(libro, NOMBRE_HOJA_YOOBIC);
+  if (!hoja) {
+    throw new Error("No se encontró la hoja '" + NOMBRE_HOJA_YOOBIC + "'. Disponibles: " +
+                    libro.getSheets().map(function(s) { return s.getName(); }).join(' | '));
+  }
+  var tz = libro.getSpreadsheetTimeZone();
+  var data = hoja.getDataRange().getValues();
+  if (data.length < 2) return { libro: libro, tz: tz, data: [], cols: yoobicResolverColumnas_(data[0] || []) };
+  return { libro: libro, tz: tz, data: data.slice(1), cols: yoobicResolverColumnas_(data[0]) };
+}
+
+function getYoobicJson(forzar) {
+  return conCache_(CACHE_YOOBIC_CLAVE, CACHE_YOOBIC_SEGUNDOS, function() {
+    var L = yoobicLeer_(), cols = L.cols, col = cols.col;
+    var tiendas = [], tIdx = {}, delegados = [], dIdx = {}, campanas = [], cIdx = {};
+    var misiones = [], sinTienda = 0, sinFecha = 0, descuadres = 0;
+    function idx(lista, mapa, v) { if (mapa[v] === undefined) { mapa[v] = lista.length; lista.push(v); } return mapa[v]; }
+
+    L.data.forEach(function(r) {
+      var tid = mtdTexto_(r, col.tienda);
+      if (!tid || tid === '-') { sinTienda++; return; }
+      var fecha = yoobicFecha_(r[col.fecha], L.tz);
+      if (!fecha) { sinFecha++; return; }
+      if (tIdx[tid] === undefined) {
+        tIdx[tid] = tiendas.length;
+        tiendas.push({ id: tid, nombre: col.nombre !== null ? mtdTexto_(r, col.nombre) : '' });
+      }
+      var pts = cols.pilares.map(function(p) { return yoobicPuntaje_(r[p.idx]); });
+      if (pts[0] !== null && pts[1] !== null && pts[2] !== null && pts[3] !== null && pts[4] !== null &&
+          Math.abs(pts[0] - (pts[1] + pts[2] + pts[3] + pts[4])) > 1) descuadres++;
+      var disp = cols.productos.map(function(p) { return yoobicDisp_(r[p.idx]); }).join('');
+      misiones.push([
+        tIdx[tid], fecha, idx(delegados, dIdx, mtdTexto_(r, col.delegado) || 'Sin delegado'),
+        pts[0], pts[1], pts[2], pts[3], pts[4], disp,
+        col.campana !== null ? idx(campanas, cIdx, mtdTexto_(r, col.campana) || 'Perfect Store') : 0,
+        yoobicClave_(r, col, tid, r[col.fecha])
+      ]);
+    });
+
+    var ids15 = {};
+    tiendas.forEach(function(t) { ids15[yoobicId15_(t.id)] = 1; });
+    var dir = yoobicLeerDirecciones_(L.libro, ids15), sinCruce = 0;
+    var tiendasOut = tiendas.map(function(t) {
+      var d = dir.tiendas[yoobicId15_(t.id)];
+      if (!d) sinCruce++;
+      d = d || {};
+      return [t.id, d.nombre || t.nombre || t.id, d.cliente || '', d.depto || '', d.ciudad || '',
+              d.dir || '', d.lat == null ? null : d.lat, d.lng == null ? null : d.lng, d.pos || '', d.nombre ? 1 : 0];
+    });
+
+    var texto = jsonAscii_({
+      v: 1,
+      pilares: YOOBIC_PILARES.map(function(p, i) {
+        return { k: p.k, etiqueta: p.etiqueta, max: p.max, encabezado: cols.pilares[i].encabezado };
+      }),
+      grupos: YOOBIC_DISPONIBILIDAD.map(function(g) { return g.grupo; }),
+      productos: cols.productos.map(function(p) { return [p.nombre, p.grupo]; }),
+      tiposFoto: cols.tiposFoto,
+      delegados: delegados,
+      campanas: campanas.length ? campanas : ['Perfect Store'],
+      tiendas: tiendasOut,
+      misiones: misiones,
+      meta: {
+        actualizadoEn: new Date().toISOString(),
+        hoja: NOMBRE_HOJA_YOOBIC, filasLeidas: L.data.length, misiones: misiones.length,
+        sinTienda: sinTienda, sinFecha: sinFecha,
+        tiendas: tiendas.length, tiendasSinCruceDirecciones: sinCruce, avisoDirecciones: dir.aviso,
+        calidad: { descuadres: descuadres }
+      }
+    });
+    return { texto: texto, cachear: misiones.length > 0 };
+  }, forzar === true);
+}
+
+function getYoobicFotosJson(forzar) {
+  return conCache_(CACHE_YOOBIC_FOTOS_CLAVE, CACHE_YOOBIC_SEGUNDOS, function() {
+    var L = yoobicLeer_(), cols = L.cols, col = cols.col, fotos = {}, n = 0;
+    L.data.forEach(function(r) {
+      var tid = mtdTexto_(r, col.tienda);
+      if (!tid || tid === '-' || !yoobicFecha_(r[col.fecha], L.tz)) return;
+      var lista = [];
+      cols.fotos.forEach(function(f) {
+        String(r[f.idx] == null ? '' : r[f.idx]).split(/[\s,;]+/).forEach(function(u) {
+          if (u.indexOf('http') !== 0) return;
+          lista.push([f.tipo, u.indexOf(YOOBIC_PREFIJO_FOTO) === 0 ? u.slice(YOOBIC_PREFIJO_FOTO.length) : u]);
+        });
+      });
+      if (lista.length) { fotos[yoobicClave_(r, col, tid, r[col.fecha])] = lista; n += lista.length; }
+    });
+    var texto = jsonAscii_({ v: 1, prefijo: YOOBIC_PREFIJO_FOTO, tipos: cols.tiposFoto, fotos: fotos,
+                             meta: { actualizadoEn: new Date().toISOString(), fotos: n } });
+    return { texto: texto, cachear: true };
+  }, forzar === true);
+}
+
+function limpiarCacheYoobic() {
+  [CACHE_YOOBIC_CLAVE, CACHE_YOOBIC_FOTOS_CLAVE].forEach(mtdCacheQuitar_);
+  Logger.log('Caché de Yoobic limpiada.');
+  return 'OK';
+}
+
+/**
+ * Diagnóstico manual desde el editor: qué encabezado cayó en cada letra de
+ * YOOBIC_PILARES / YOOBIC_DISPONIBILIDAD y cuántas misiones se leyeron.
+ * Correrlo tras cualquier cambio del formulario de Yoobic.
+ */
+function verYoobic() {
+  var L = yoobicLeer_(), cols = L.cols;
+  Logger.log('Columnas por encabezado: ' + JSON.stringify(cols.col));
+  cols.pilares.forEach(function(p, i) {
+    Logger.log('Pilar ' + YOOBIC_PILARES[i].etiqueta + ' (' + YOOBIC_PILARES[i].col + '): "' + p.encabezado + '"');
+  });
+  YOOBIC_DISPONIBILIDAD.forEach(function(g, gi) {
+    var ps = cols.productos.filter(function(p) { return p.grupo === gi; }).map(function(p) { return p.nombre; });
+    Logger.log('Disponibilidad ' + g.grupo + ' (' + g.rango + '): ' + ps.length + ' productos → ' + ps.join(' | '));
+  });
+  Logger.log('Tipos de foto: ' + cols.tiposFoto.join(' | ') + ' (' + cols.fotos.length + ' columnas)');
+  var d = JSON.parse(getYoobicJson(true));
+  Logger.log('Meta: ' + JSON.stringify(d.meta));
+}
+
+/* ============================================================
  * Calentamiento de caché (para que el primer usuario no espere)
  * ============================================================
  * Con la caché fría cada pestaña lee sus hojas completas (varios segundos).
@@ -1403,6 +1775,7 @@ function calentarCache() {
   var pasos = [
     ['Ventas MTD', function() { return getVentasMtdCompletoJson(true); }],
     ['SI vs SO',   function() { return getSIvsSOJson(true); }],
+    ['Yoobic',     function() { return getYoobicJson(true); }],
     // Las del mapa duran 6 h: solo se llenan si faltan (no se fuerzan cada 15 min).
     ['Puntos',        function() { return getPuntosJson(false); }],
     ['Bricks',        function() { return getBricksJson(false); }],

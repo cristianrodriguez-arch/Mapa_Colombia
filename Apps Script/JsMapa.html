@@ -52,7 +52,13 @@ function reencuadrar(){
   else if(bbBricks&&bbBricks.isValid())map.fitBounds(bbBricks,{padding:[30,30]})}
 
 function centrarBricks(){if(bbBricks&&bbBricks.isValid())map.fitBounds(bbBricks,{padding:[30,30]})}
-function cambiarModo(v){modoColor=v;recolorBricks()}
+/* Las capas Perfect Store ('ps_*') también colorean los PDV, así que repintan
+   todo (actualizar), no solo los polígonos. */
+function cambiarModo(v){
+  var antes=modoColor;modoColor=v;
+  if(typeof ybAsegurarMapa==='function')ybAsegurarMapa();
+  if(String(antes).indexOf('ps_')===0||String(v).indexOf('ps_')===0)actualizar();
+  else recolorBricks()}
 function alternarBricks(){
   if(document.getElementById('togBricks').checked){map.addLayer(bLayer);bLayer.bringToBack()}
   else map.removeLayer(bLayer)}
@@ -129,6 +135,12 @@ function recolorBricks(){
       agSku[p._brick]=(agSku[p._brick]||0)+ventaSku(p).total});
     escala=crearEscala(Object.keys(agSku).map(function(k){return agSku[k]}));
     bricksG.forEach(function(b){pinta(b,agSku[b.brickId]||0,.35)});
+  }else if(typeof ybModoMapa==='function'&&ybModoMapa()){
+    // Perfect Store: % del máximo del pilar, promedio de los PDV evaluados del
+    // brick, semáforo de umbrales absolutos (no cuartiles). -1 = sin encuesta.
+    var ps=ybData?ybPorBrick(visibles()):{};
+    escala=function(v){return v<0?SEM.sin:ybColorPct(v)};
+    bricksG.forEach(function(b){var v=ps[b.brickId];pinta(b,v==null?-1:Math.max(v,.001),.4)});
   }else if(modoColor==='conectado'){
     escala=crearEscala(Object.keys(agConectado).map(function(k){return agConectado[k]}));
     bricksG.forEach(function(b){pinta(b,agConectado[b.brickId]||0,.35)});
@@ -149,6 +161,8 @@ function renderLey(pc){
   var filas;
   if(modoColor==='ciudad'){
     filas=Object.keys(pc).sort().map(function(k){return[pc[k],k]});
+  }else if(!skuSel&&typeof ybModoMapa==='function'&&ybModoMapa()){
+    filas=ybLeyendaMapa();
   }else{
     var etqSin=skuSel?'Sin este producto':
       modoColor==='conectado'?'Sin Sell Out conectado':
@@ -175,11 +189,14 @@ function dibujarPuntos(vis,vv){
   var escala=crearEscala(valores);
   var mx=valores.reduce(function(m,v){return Math.max(m,v)},0);
   var bb=L.latLngBounds([]);
+  // Capa Perfect Store: el COLOR del PDV es su puntaje del pilar (el tamaño
+  // sigue siendo el Sell Out). Gris = sin encuesta.
+  var modoPs=!modoProd&&typeof ybModoMapa==='function'&&ybModoMapa()&&!!ybData;
 
   vis.forEach(function(p,i){
     var val=valores[i];
     if(modoProd&&val<=0&&!verSin)return;
-    var col=escala(val),r=5;
+    var col=modoPs?ybColorPct(ybPctPunto(p)):escala(val),r=5;
     if(mx>0&&val>0)r=5+11*Math.sqrt(val/mx);
     if(modoProd&&val<=0)r=3.5;
     var mk=L.circleMarker([p.lat,p.lng],{renderer:lienzo,radius:r,
@@ -231,6 +248,9 @@ function popupPdv(p,i){
       'Ver portafolio (producto a producto)</button>'
   }else if(p.dup)h+='<div class="popup-sellout"><span class="mini">POS ID repetido en el CRM: su Sell Out se cuenta una sola vez, en el primer PDV que lo usa.</span></div>';
   else h+='<div class="popup-sellout"><span class="mini">Sin Sell Out en el período</span></div>';
+
+  // Perfect Store (Yoobic): puntaje por pilar de la última encuesta + "Ver fotos".
+  if(typeof ybPopupHtml==='function')h+=ybPopupHtml(p);
 
   h+=(p.posId?'<b>POS ID:</b> '+esc(p.posId)+'<br>':'')+
     '<b>Dirección:</b> '+esc(p.direccion)+'<br>'+

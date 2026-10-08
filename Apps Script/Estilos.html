@@ -339,13 +339,14 @@ html,body{margin:0;padding:0;height:100%;background:var(--lienzo);color:var(--in
    ══════════════════════════════════════════════════════════════════ */
 #vistaMapa{display:flex;flex-direction:column;gap:10px;min-height:0}
 #vistaMapa .cuerpo{flex:1 1 auto;min-height:0}
-#vistaVentasMtd,#vistaSIvsSO{min-height:0;overflow-y:auto;padding:2px}
+#vistaVentasMtd,#vistaSIvsSO,#vistaYoobic{min-height:0;overflow-y:auto;padding:2px}
 /* El [hidden] del navegador es una regla del user-agent y pierde contra el
    display:flex de arriba, que va por ID: sin estas reglas la vista oculta
    se sigue pintando y se superpone con la activa en el grid de .app. */
 #vistaMapa[hidden],
 #vistaVentasMtd[hidden],
-#vistaSIvsSO[hidden]{display:none}
+#vistaSIvsSO[hidden],
+#vistaYoobic[hidden]{display:none}
 .mtdtabs-top{display:flex;gap:6px;align-items:flex-end;padding:0 2px;
   border-bottom:1px solid var(--borde);margin-bottom:10px}
 .mtdtab-top{padding:8px 16px;border:1px solid var(--borde);border-bottom:none;
@@ -616,5 +617,143 @@ html,body{margin:0;padding:0;height:100%;background:var(--lienzo);color:var(--in
   .mtd-tabla td:first-child{font-weight:700;text-align:left;color:var(--ink);padding-bottom:4px}
   .mtd-tabla td:not(:first-child)::before{content:attr(data-th);float:left;font-size:9.5px;
     font-weight:700;text-transform:uppercase;letter-spacing:.03em;color:var(--muted)}
+}
+
+/* ══════════ Yoobic · Perfect Store (JsYoobic.html) ══════════
+   Mismo lenguaje que Ventas MTD / SI vs SO (Zebra BI): etiquetas directas,
+   color SOLO con significado (semáforo SEM del nivel del puntaje; rojo
+   = agotado). Las tarjetas de foto imitan la galería de Yoobic.            */
+.mtd-tabla td.txt{text-align:left;white-space:normal}
+.mtd-tabla td .sub{display:block;font-size:10.5px;color:var(--muted);font-weight:400}
+.yb-rojo{color:var(--sem-muybajo)}
+.yb-nd{color:var(--muted)}
+.yb-pt{display:inline-flex;align-items:center;gap:5px}
+.yb-pt i{width:8px;height:8px;border-radius:50%;display:inline-block}
+
+/* Barra de filtros: Fecha + selectores dinámicos + "+ Añadir filtro". */
+.yb-filtros{align-items:flex-end}
+.yb-campos{display:contents}
+.yb-campo[hidden]{display:none}
+.yb-campo label{display:flex;align-items:center;gap:4px}
+.yb-campo-fecha{flex:0 1 230px;min-width:200px}
+.yb-fecha-fila{display:flex;gap:6px;flex-wrap:wrap}
+.yb-fecha-fila select,.yb-fecha-fila input{padding:6px 7px;border:1px solid var(--borde-2);border-radius:var(--radio);
+  background:var(--surface);color:var(--ink);font-size:12.5px;font-family:inherit}
+.yb-fecha-fila select{flex:1 1 150px}
+.yb-fecha-fila input[hidden]{display:none}
+.yb-pop{left:auto;right:0}
+
+/* Sub-pestañas + alcance (última encuesta / todas). */
+.yb-subbarra{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;flex-wrap:wrap;
+  margin-bottom:12px;border-bottom:1px solid var(--borde)}
+.yb-subtabs{border-bottom:none;padding:0}
+.yb-subtabs .tab{font-size:13px;padding:8px 14px}
+.yb-alcance{display:flex;align-items:center;gap:8px;padding-bottom:6px}
+.yb-alcance[hidden]{display:none}
+.yb-alcance .chips-etq{margin:0}
+.yb-alcance .chip-periodo{padding:4px 10px;font-size:11.5px}
+
+/* KPIs por pilar */
+.yb-kpis-card{padding:14px 16px;margin-bottom:14px}
+.yb-kpis{display:grid;grid-template-columns:1.25fr repeat(4,1fr) 1.15fr;gap:12px}
+.yb-kpi{min-width:0;padding:4px 10px;border-left:1px solid var(--borde)}
+.yb-kpi:first-child{border-left:none;padding-left:0}
+.yb-kpi .etq{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-2);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.yb-kpi .num{font-size:24px;font-weight:700;line-height:1.2;font-variant-numeric:tabular-nums}
+.yb-kpi-global .num{font-size:32px}
+.yb-kpi .de{font-size:12px;font-weight:600;color:var(--muted)}
+.yb-kpi .det{font-size:11px;color:var(--muted);margin-top:2px}
+.yb-kpi .det b{color:var(--ink)}
+.yb-kpi-meta{display:flex;flex-direction:column;gap:2px}
+.yb-pista{height:6px;background:var(--lienzo);border-radius:3px;margin-top:5px;overflow:hidden}
+.yb-pista span{display:block;height:100%;border-radius:3px}
+.yb-col-der{display:flex;flex-direction:column;gap:12px;min-width:0}
+
+/* Columnas por mes (etiqueta directa encima, color = nivel). */
+.yb-cols{display:flex;align-items:flex-end;gap:6px;height:190px;padding:4px 2px 0;margin-bottom:10px;overflow-x:auto}
+.yb-col{flex:1 0 34px;display:flex;flex-direction:column;align-items:center;height:100%;min-width:34px}
+.yb-col-val{font-size:11.5px;font-weight:700;font-variant-numeric:tabular-nums;color:var(--ink)}
+.yb-col-pista{flex:1;width:70%;display:flex;align-items:flex-end;border-bottom:1px solid var(--borde-2)}
+.yb-col-pista span{display:block;width:100%;border-radius:3px 3px 0 0}
+.yb-col-etq{font-size:10.5px;color:var(--muted);margin-top:3px;white-space:nowrap}
+.yb-scroll-corto{max-height:220px}
+.yb-scroll-alto{max-height:560px}
+
+/* Agotados: productos como "pills" */
+.yb-pills{white-space:normal;max-width:520px}
+.yb-pill{display:inline-block;margin:1px 3px 1px 0;padding:1px 7px;border-radius:999px;font-size:10.5px;
+  background:#fdf0f0;color:var(--sem-muybajo);border:1px solid #f6c9ce;white-space:nowrap}
+.yb-pill-mas{background:var(--lienzo);color:var(--ink-2);border-color:var(--borde)}
+
+/* Galería de fotos (tarjetas como en Yoobic) */
+.yb-galeria{display:grid;grid-template-columns:repeat(auto-fill,minmax(215px,1fr));gap:14px}
+.yb-foto{background:var(--surface);border:1px solid var(--borde);border-radius:var(--radio-lg);overflow:hidden;
+  cursor:pointer;box-shadow:var(--sombra);text-decoration:none;color:inherit;display:block}
+.yb-foto:hover,.yb-foto:focus-visible{border-color:var(--accent);outline:none}
+.yb-foto-img{aspect-ratio:4/3;background:var(--lienzo);overflow:hidden}
+.yb-foto-img img{width:100%;height:100%;object-fit:cover;display:block}
+.yb-foto-cuerpo{padding:8px 10px 10px;font-size:12px;line-height:1.35}
+.yb-foto-usr{display:flex;align-items:center;gap:6px;font-weight:600;color:var(--ink);font-size:11.5px;
+  text-transform:uppercase;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.yb-avatar{flex:0 0 18px;height:18px;border-radius:50%;border:1px solid var(--ink-2);display:inline-flex;
+  align-items:center;justify-content:center;font-size:10px;color:var(--ink-2)}
+.yb-foto-pdv{margin-top:4px;color:var(--ink);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.yb-foto-dir{color:var(--muted);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.yb-foto-tit{margin-top:5px;font-weight:700;color:var(--ink)}
+.yb-foto-fecha{color:var(--ink-2);font-size:11.5px}
+.yb-mas{text-align:center;margin:16px 0}
+
+/* Modal de fotos: últimas fotos e historial antes / después */
+.modal .caja.caja-yb{max-width:1100px;max-height:90vh}
+.yb-modal-cab{display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap;margin-bottom:8px}
+.yb-modal-cab>div:first-child{flex:1;min-width:200px}
+.yb-modal-cab h3{margin:0 0 2px}
+.yb-cerrar{width:26px;height:26px;font-size:14px}
+.yb-modal-sub{font-size:12.5px;color:var(--ink-2);margin:6px 0 8px}
+.yb-modal-sub select{padding:4px 6px;border:1px solid var(--borde-2);border-radius:var(--radio);font-family:inherit}
+.yb-galeria-modal{grid-template-columns:repeat(auto-fill,minmax(250px,1fr))}
+.yb-mini-pilares{display:flex;flex-wrap:wrap;gap:4px 12px;font-size:11.5px;color:var(--ink-2);margin:4px 0 10px}
+.yb-mini.g{font-weight:700;color:var(--ink)}
+.yb-mini em{font-style:normal;font-size:10.5px;margin-left:3px}
+.yb-mini em.sube{color:var(--sem-alto)}
+.yb-mini em.baja{color:var(--sem-muybajo)}
+.yb-comparar{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.yb-lado{border:1px solid var(--borde);border-radius:var(--radio-lg);padding:10px;min-width:0}
+.yb-lado-cab{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:4px}
+.yb-lado-cab select{max-width:65%;padding:4px 6px;border:1px solid var(--borde-2);border-radius:var(--radio);font-family:inherit;font-size:12px}
+.yb-lado a{display:block}
+.yb-lado-fotos{display:grid;gap:6px}
+.yb-lado-fotos.varias{grid-template-columns:repeat(2,minmax(0,1fr))}
+img.yb-grande{width:100%;max-height:40vh;object-fit:contain;background:var(--lienzo);border-radius:var(--radio);display:block}
+.yb-lado-fotos.varias img.yb-grande{max-height:24vh}
+.yb-linea-tiempo{display:flex;gap:8px;overflow-x:auto;padding:10px 2px 4px;margin-top:10px;border-top:1px solid var(--borde)}
+.yb-hito{flex:0 0 96px;display:flex;flex-direction:column;align-items:center;gap:2px;padding:4px;border:2px solid transparent;
+  border-radius:var(--radio);background:var(--surface);cursor:pointer;font-family:inherit;font-size:10.5px;color:var(--ink-2)}
+.yb-hito img{width:86px;height:64px;object-fit:cover;border-radius:4px;display:block}
+.yb-hito:hover{border-color:var(--borde-2)}
+.yb-hito.es-a{border-color:var(--ink-2)}
+.yb-hito.es-d{border-color:var(--accent)}
+
+/* Bloque Perfect Store del popup del mapa */
+.popup-ps{margin:8px 0;padding:8px 9px;border:1px solid var(--borde);border-radius:var(--radio);background:var(--surface-2)}
+.popup-ps .ps-cab{display:flex;justify-content:space-between;align-items:baseline;gap:6px;margin-bottom:2px}
+.popup-ps .ps-global .grande{font-size:20px;font-weight:700;font-variant-numeric:tabular-nums}
+.popup-ps .ps-fila{display:grid;grid-template-columns:118px 1fr auto auto;align-items:center;gap:5px;font-size:11.5px;margin-top:3px}
+.popup-ps .ps-nom{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--ink-2)}
+.popup-ps .ps-pista{height:6px;background:var(--lienzo);border-radius:3px;overflow:hidden}
+.popup-ps .ps-pista span{display:block;height:100%}
+.popup-ps .ps-agot{font-size:11.5px;margin-top:5px}
+.popup-ps .btn-portafolio{margin-top:6px}
+
+@media(max-width:1100px){
+  .yb-kpis{grid-template-columns:repeat(3,1fr)}
+  .yb-kpi:nth-child(4){border-left:none;padding-left:0}
+}
+@media(max-width:700px){
+  .yb-kpis{grid-template-columns:1fr 1fr}
+  .yb-kpi{border-left:none;padding-left:0}
+  .yb-comparar{grid-template-columns:1fr}
+  .yb-galeria{grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
 }
 </style>
