@@ -37,7 +37,8 @@ done
 echo "PRUEBAS: $n/$n OK"
 
 # 3. ¿Alguien editó en el editor web (o hizo clasp push sin git push)? Cada archivo del
-#    proyecto en Google debe coincidir con GitHub (origin/main) o con lo nuestro (HEAD).
+#    proyecto en Google debe coincidir con GitHub (origin/main), con lo nuestro (HEAD) o
+#    con lo que subimos con /probar (.git/probar_ultimo).
 if [ $pisar = 0 ]; then
   tmp=$(mktemp -d)
   sed 's/"rootDir": *"[^"]*"/"rootDir": "."/' .clasp.json > "$tmp/.clasp.json"
@@ -56,6 +57,9 @@ if [ $pisar = 0 ]; then
         igual=1; break
       fi
     done
+    # Lo que subiste tú con /probar no es un cambio ajeno.
+    [ $igual = 0 ] && [ -f ".git/probar_ultimo/$nombre" ] &&
+      cmp -s <(tr -d '\r' < "$f") <(tr -d '\r' < ".git/probar_ultimo/$nombre") && igual=1
     [ $igual = 1 ] || desfase="$desfase  $nombre"$'\n'
   done
   rm -rf "$tmp"
@@ -80,6 +84,7 @@ if ! salida=$(clasp push --force 2>&1); then
   exit 1
 fi
 echo "CLASP PUSH: OK"
+rm -rf .git/probar_ultimo   # lo probado con /probar ya quedó subido de verdad
 if ! git push --quiet origin main 2>&1; then
   echo "PARADO: GitHub rechazó el push (seguramente el compañero subió algo justo ahora). Volver a ejecutar /finalizar."
   exit 1
