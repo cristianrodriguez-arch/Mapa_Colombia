@@ -49,7 +49,7 @@ var mesesD=[],busD=[],idxSel={},conteoSkuG={};
    los valores se combinan con OR. `sku` es la excepción: uno solo, porque
    dispara una consulta de distribución al servidor.                      */
 var filtros={grupo:[],channel:[],region:[],poblacion:[],potencial:[],
-             agente:[],brick:[],pdv:[],bu:[],mes:[]};
+             agente:[],brick:[],zona:[],pdv:[],bu:[],mes:[]};
 var fset={};                         /* espejo de `filtros` como mapas O(1) */
 var skuSel='',distSku=null,cargandoSku=false;
 var modoColor='rendimiento';
@@ -59,7 +59,7 @@ var asignado=false;
 /* Ciclo de vida del mapa: 'no' → 'cargando' → 'listo' ('error' si falla el CDN).
    mapaSucio = hubo datos nuevos mientras otra pestaña estaba visible; se repinta
    una sola vez al volver a Mapa (actualizar() recrea todos los marcadores). */
-var mapaEstado='no',mapaSucio=false,pintadoBase=false,pintadoAsig=false,portDibujado=false;
+var mapaEstado='no',mapaSucio=false,pintadoBase=false,pintadoAsig=false;
 
 /* ── Carga de librerías externas bajo demanda ───────────────────────────
    Leaflet y Choices.js ya no son <script> bloqueantes del <head>: cargarLib()
@@ -147,6 +147,7 @@ function cargarDatos(){
 
 function recPuntos(p){
   puntosG=(p.puntos||[]).filter(function(x){return x.posId&&x.posId!=='0'});
+  puntosG.forEach(function(x){x.poblacion=normGeo(x.poblacion);x.region=normGeo(x.region)});
   listo.puntos=true;boot()}
 function recBricks(p){bricksG=p.bricks||[];listo.bricks=true;boot()}
 function recVentas(p){
@@ -185,8 +186,7 @@ function boot(){
   if(listo.puntos&&listo.bricks&&listo.ventas){
     if(!pintadoBase){pintadoBase=true;pintadoAsig=listo.asignaciones;actualizar()}
     else if(listo.asignaciones&&!pintadoAsig){pintadoAsig=true;actualizar()}}
-  // El portafolio depende de idxSel (definido en recVentas): esperar ambos.
-  if(listo.port&&listo.ventas&&!portDibujado){portDibujado=true;dibujarPort()}}
+}
 
 function actOverlay(){
   var o=document.getElementById('overlay');if(!o)return;
@@ -219,8 +219,8 @@ function cargarMock(){
   var GRUPOS=['BELLA PIEL','LA REBAJA','CRUZ VERDE','FARMATODO','COPIDROGAS','INDEPENDIENTE'];
   var CANALES=['Ph Independents','Corporations','Chains','Dermo'];
   var POTS=['AA','A','B','C'];
-  var AGS=[{delegado:'Ana Pérez',tipo:'VM'},{delegado:'Luis Gómez',tipo:'LAM'},
-           {delegado:'Marta Ruiz',tipo:'VM'},{delegado:'Jorge Díaz',tipo:'LAM'}];
+  var AGS=[{delegado:'Ana Pérez',team:'VM'},{delegado:'Luis Gómez',team:'LAM'},
+           {delegado:'Marta Ruiz',team:'VM'},{delegado:'Jorge Díaz',team:'LAM'}];
   var BUS=['FOTO','DERMA','CORPORAL'];
   var meses=[];for(var m=1;m<=9;m++)meses.push('2026-'+(m<10?'0':'')+m);
   var puntos=[],bricks=[],ventas={},asig={},k=0;
@@ -243,7 +243,7 @@ function cargarMock(){
         region:ci.dep,poblacion:ci.c,potencial:POTS[Math.floor(rnd()*4)],
         afinidad:'',direccion:'Cl '+(10+k%90)+' # '+(1+k%40),brickCrm:''});
       if(rnd()<0.62){var a=AGS[Math.floor(rnd()*AGS.length)];
-        asig[pos]=[{delegado:a.delegado,team:ci.c,tipo:a.tipo,cuentaId:'',cuentaNombre:''}]}
+        asig[pos]=[{delegado:a.delegado,team:a.team,tipo:'Farmacia/Parafarmacia',cuentaId:'',cuentaNombre:''}]}
       if(rnd()<0.8){var bu={};
         BUS.forEach(function(b){if(rnd()<0.6)return;var s=[];
           meses.forEach(function(mm,mi){if(rnd()<0.25)return;

@@ -30,19 +30,28 @@
 
 <div id="modalTabla" class="modal" onclick="if(event.target===this)cerrarTabla()">
   <div class="caja caja-tabla">
-    <h3 id="tablaTitulo">Detalle de PDV</h3>
-    <div class="tabla-controles">
-      <label class="mini">Alcance
-        <select id="tablaDim" onchange="cambiarDimTabla(this.value)">
-          <option value="seleccion">Selección actual</option>
-          <option value="brick">Brick</option>
-          <option value="ciudad">Ciudad del brick</option>
-        </select>
-      </label>
+    <div class="tabla-cab-modal">
+      <button class="btn" id="tablaVolver" onclick="volverListaTabla()" hidden>← Volver a la lista</button>
+      <h3 id="tablaTitulo">Detalle de PDV</h3>
       <span class="mini" id="tablaHint"></span>
+      <span class="tabla-acciones">
+        <button class="btn" onclick="descargarTablaPdv()" title="Descarga lo que estás viendo (CSV que abre en Excel)">⬇ Descargar</button>
+        <button class="btn" onclick="cerrarTabla()">Cerrar</button>
+      </span>
     </div>
-    <div class="tabla-wrap"><table class="tab-datos" id="tablaDetalle"></table></div>
-    <button class="btn" style="margin-top:12px" onclick="cerrarTabla()">Cerrar</button>
+    <!-- Mismos filtros del mapa (filtros/setFiltro): geografía fija + "+ Añadir filtro". -->
+    <div class="t-filtros" id="tablaFiltrosBar">
+      <div class="t-campos" id="tablaCampos"></div>
+      <div class="acciones">
+        <div class="pop-anclaje" id="tablaAnadir">
+          <button type="button" class="btn btn-nuevo" onclick="tAlternarPop(event)">+ Añadir filtro</button>
+          <div class="pop-filtros" id="tPop" hidden><div class="pop-lista" id="tPopLista"></div></div>
+        </div>
+        <button class="btn" onclick="tLimpiar()" title="Quitar los filtros de esta barra">Limpiar</button>
+      </div>
+    </div>
+    <div class="tabla-wrap" id="tablaWrap"><table class="tab-datos" id="tablaDetalle"></table></div>
+    <div class="ficha-pdv" id="tablaFicha" hidden></div>
   </div>
 </div>
 
@@ -89,6 +98,7 @@
       <div class="filtro filtro-chip" data-dim="channel" hidden><span><span class="chip-nom">Canal</span><button type="button" class="chip-x" title="Quitar este filtro" onclick="quitarFiltroUI(event,'channel')">✕</button></span><select id="fChannel" multiple></select></div>
       <div class="filtro filtro-chip" data-dim="region" hidden><span><span class="chip-nom">Departamento</span><button type="button" class="chip-x" title="Quitar este filtro" onclick="quitarFiltroUI(event,'region')">✕</button></span><select id="fRegion" multiple></select></div>
       <div class="filtro filtro-chip" data-dim="poblacion" hidden><span><span class="chip-nom">Ciudad</span><button type="button" class="chip-x" title="Quitar este filtro" onclick="quitarFiltroUI(event,'poblacion')">✕</button></span><select id="fPoblacion" multiple></select></div>
+      <div class="filtro filtro-chip" data-dim="zona" hidden><span><span class="chip-nom">Zona</span><button type="button" class="chip-x" title="Quitar este filtro" onclick="quitarFiltroUI(event,'zona')">✕</button></span><select id="fZona" multiple></select></div>
       <div class="filtro filtro-chip" data-dim="potencial" hidden><span><span class="chip-nom">Potencial</span><button type="button" class="chip-x" title="Quitar este filtro" onclick="quitarFiltroUI(event,'potencial')">✕</button></span><select id="fPotencial" multiple></select></div>
       <div class="filtro filtro-chip" data-dim="agente" hidden><span><span class="chip-nom">Agente</span><button type="button" class="chip-x" title="Quitar este filtro" onclick="quitarFiltroUI(event,'agente')">✕</button></span><select id="fAgente" multiple></select></div>
       <div class="filtro filtro-chip" data-dim="brick" hidden><span><span class="chip-nom">Brick</span><button type="button" class="chip-x" title="Quitar este filtro" onclick="quitarFiltroUI(event,'brick')">✕</button></span><select id="fBrick" multiple></select></div>
@@ -141,11 +151,11 @@
       <!-- ── Área central: mapa ── -->
       <main class="card main">
         <div class="barra-mapa">
-          <label>Colorear bricks por
+          <label>Colorear mapa por
             <select id="modoColor" onchange="cambiarModo(this.value)">
               <option value="rendimiento">Rendimiento (Sell Out)</option>
               <option value="conectado">Sell Out conectado</option>
-              <option value="asignado">Cobertura de agente</option>
+              <option value="asignado">Delegado asignado</option>
               <option value="ciudad">Ciudad</option>
               <optgroup label="Perfect Store (Yoobic)">
                 <option value="ps_global">Global Perfect Store</option>
@@ -172,14 +182,17 @@
         </div>
       </main>
 
-      <!-- ── Panel derecho: KPIs arriba, tabla y análisis abajo ── -->
+      <!-- ── Divisor arrastrable mapa | panel (iniciarDivisor en JsPaneles) ── -->
+      <div class="divisor" id="divisorRail" role="separator" aria-orientation="vertical" tabindex="0"
+           title="Arrastra para cambiar el ancho de la tabla · doble clic: ancho original"></div>
+
+      <!-- ── Panel derecho: KPIs arriba, tabla abajo ── -->
       <aside class="rail">
         <div class="kpis" id="kpis"></div>
 
         <div class="panel">
           <div class="tabs" id="railTabs">
             <button class="tab activa" data-vista="tabla" onclick="verVista('tabla')">Tabla</button>
-            <button class="tab" data-vista="analisis" onclick="verVista('analisis')">Análisis</button>
             <button class="tab" data-vista="brick" onclick="verVista('brick')">Brick</button>
           </div>
 
@@ -188,51 +201,12 @@
             <!-- Vista: tabla de datos del universo filtrado -->
             <section id="vistaTabla">
               <div class="tabla-cab">
-                <h2 style="margin:0;flex:1" id="tablaRailTit">Puntos de venta</h2>
-                <span class="acc mini" style="color:var(--accent);cursor:pointer"
-                      onclick="abrirTabla()">ampliar</span>
+                <h2 class="tabla-rail-tit" id="tablaRailTit">Puntos de venta</h2>
+                <button class="btn btn-mini" onclick="abrirTabla()"
+                        title="Abrir la Tabla Detalle PDV a pantalla completa">⤢ Ampliar</button>
               </div>
               <div class="hint" id="tablaRailHint"></div>
               <table class="tab-datos" id="tablaRail"></table>
-            </section>
-
-            <!-- Vista: gráficas -->
-            <section id="vistaAnalisis" hidden>
-              <div class="bloque" id="bqBrecha" hidden>
-                <h2>Brechas de oportunidad</h2>
-                <div class="hint">PDV de alto volumen que NO venden este producto</div>
-                <div id="chartBrecha"></div>
-              </div>
-              <div class="bloque" id="bqDetalle" hidden>
-                <h2><span id="detTit">Portafolio</span><span class="acc" onclick="cerrarDetalle()">cerrar</span></h2>
-                <div class="hint" id="detHint"></div>
-                <div id="chartDetalle"></div>
-              </div>
-              <div class="bloque">
-                <h2 id="tituloTop">Top 10 PDV por Sell Out</h2>
-                <div class="hint">Clic para localizar en el mapa</div>
-                <div id="chartTop"></div>
-              </div>
-              <div class="bloque" id="bqPort">
-                <h2>Portafolio · Top 12 productos</h2>
-                <div class="hint">Total país del período · no cambia con el brick/ciudad seleccionado · clic en un producto para analizarlo</div>
-                <div id="chartPort"></div>
-              </div>
-              <div class="bloque">
-                <h2>Sell Out por canal</h2>
-                <div class="hint">Clic para añadir o quitar del filtro</div>
-                <div id="chartChannel"></div>
-              </div>
-              <div class="bloque">
-                <h2>Top 10 clientes</h2>
-                <div class="hint">Clic para añadir o quitar del filtro</div>
-                <div id="chartGrupo"></div>
-              </div>
-              <div class="bloque">
-                <h2>Sell Out por departamento</h2>
-                <div class="hint">Clic para añadir o quitar del filtro</div>
-                <div id="chartRegion"></div>
-              </div>
             </section>
 
             <!-- Vista: detalle del brick seleccionado -->
@@ -240,6 +214,11 @@
               <div class="bloque">
                 <h2><span id="brickInfoTit">Brick</span><span class="acc" onclick="abrirTabla()">ampliar</span></h2>
                 <div id="brickInfoBody"></div>
+              </div>
+              <div class="bloque" id="bqDetalle" hidden>
+                <h2><span id="detTit">Portafolio</span><span class="acc" onclick="cerrarDetalle()">cerrar</span></h2>
+                <div class="hint" id="detHint"></div>
+                <div id="chartDetalle"></div>
               </div>
             </section>
 

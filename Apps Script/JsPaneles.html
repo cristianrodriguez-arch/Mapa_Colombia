@@ -5,7 +5,7 @@
    agregados sobre el universo filtrado y repinta TODO de una sola pasada.
    ══════════════════════════════════════════════════════════════════════ */
 
-var vistaActual='tabla',brickPanel=null,tablaDim='seleccion',detActual=null;
+var vistaActual='tabla',brickPanel=null,detActual=null;
 var TOPE_TABLA_RAIL=100, TOPE_TABLA_MODAL=500;
 
 /* ══════════════ Ciclo de actualización ══════════════════════════════ */
@@ -32,23 +32,14 @@ function actualizar(){
   if(skuSel)kpisProducto(vis);else kpisGeneral(vis,vv);
   recolorBricks();
   dibujarPuntos(vis,vv);
-  dibujarTop(vis,vv);
-  barras('chartChannel',agVentas(vis,vv,'channel'),'channel',0);
-  barras('chartGrupo',  agVentas(vis,vv,'grupo'),  'grupo',  10);
-  barras('chartRegion', agVentas(vis,vv,'region'), 'region', 10);
   renderTablaRail(vis,vv);
   refPanelBrick();
-  if(document.getElementById('modalTabla').style.display==='flex')renderTablaModal()}
-
-function agVentas(ps,vv,d){var a={},n={};
-  ps.forEach(function(p,i){a[p[d]]=(a[p[d]]||0)+vv[i].total;n[p[d]]=(n[p[d]]||0)+1});
-  return Object.keys(a).map(function(k){return{clave:k,n:a[k],pdvs:n[k]}})
-    .sort(function(a,b){return b.n-a.n})}
+  if(modalTablaAbierto())renderTablaModal()}
 
 /* ══════════════ Pestañas del panel derecho ══════════════════════════ */
 function verVista(v){
   vistaActual=v;
-  ['tabla','analisis','brick'].forEach(function(k){
+  ['tabla','brick'].forEach(function(k){
     var s=document.getElementById('vista'+k.charAt(0).toUpperCase()+k.slice(1));
     if(s)s.hidden=(k!==v)});
   var tabs=document.querySelectorAll('#railTabs .tab');
@@ -69,9 +60,9 @@ function kpisGeneral(vis,vv){
   var nm=Object.keys(idxSel).length;
   var notaBu=filtros.bu.length?' · '+filtros.bu.join(', '):'';
   document.getElementById('kpis').innerHTML=
-    kpi('Total Sell Out',fc(tot),nm+(nm===1?' mes':' meses')+notaBu)+
-    kpi('Promedio mensual',nm>0?fc(tot/nm):'–','Sell Out por mes')+
-    kpi('Puntos de venta',FMT.format(vis.length),FMT.format(con)+' con Sell Out')+
+    kpi('Sell Out',fc(tot),nm+(nm===1?' mes':' meses')+notaBu)+
+    kpi('Prom. mes',nm>0?fc(tot/nm):'–','Sell Out por mes')+
+    kpi('PDV',FMT.format(vis.length),FMT.format(con)+' con Sell Out')+
     kpi('Unidades',FMT.format(Math.round(uni)),'del período')}
 
 function kpisProducto(vis){
@@ -115,70 +106,12 @@ function pintarBarras(id,datos,ops){
     var n=document.createElement('div');n.className='hint';
     n.innerText='+ '+FMT.format(cv.length-top)+' más ('+fc(r)+')';c.appendChild(n)}}
 
-/* Clic en una barra = añadir/quitar ese valor del filtro de la dimensión. */
-function barras(id,datos,dim,top){
-  var sel=fset[dim];
-  pintarBarras(id,datos.map(function(d){return{clave:d.clave,n:d.n,
-    clase:sel?(sel[d.clave]?'activa':'apagada'):'',
-    tit:d.clave+': '+fd(d.n)+' · '+FMT.format(d.pdvs)+' PDV'+
-        (sel&&sel[d.clave]?'\n(clic para quitarlo del filtro)':'\n(clic para añadirlo al filtro)'),
-    fn:function(){alternarFiltro(dim,d.clave)}}}),
-    {topN:top,vacio:'Sin Sell Out en la selección'})}
-
-/* ══════════════ Top PDV ═════════════════════════════════════════════ */
-function dibujarTop(vis,vv){
-  var dat;
-  if(skuSel&&distSku){
-    dat=vis.map(function(p,i){return{p:p,s:ventaSku(p),idx:i}})
-      .filter(function(x){return x.s.total>0})
-      .sort(function(a,b){return b.s.total-a.s.total}).slice(0,10)
-      .map(function(x){return{clave:x.p.name+marcaAgenteTxt(x.p),n:x.s.total,clase:'prod',
-        tit:x.p.name+' · '+fd(x.s.total)+' · '+FMT.format(Math.round(x.s.unidades))+' und.',
-        fn:function(){irAlPdv(x.p,x.idx)}}});
-  }else{
-    dat=vis.map(function(p,i){return{p:p,v:vv[i],idx:i}})
-      .filter(function(x){return x.v.total>0})
-      .sort(function(a,b){return b.v.total-a.v.total}).slice(0,10)
-      .map(function(x){return{clave:x.p.name+marcaAgenteTxt(x.p),n:x.v.total,
-        tit:x.p.name+' · '+fd(x.v.total)+' · Potencial '+x.p.potencial,
-        fn:function(){irAlPdv(x.p,x.idx);verPortPdv(x.p)}}})}
-  pintarBarras('chartTop',dat,{vacio:'Sin Sell Out en la selección'})}
-
-/* ══════════════ Portafolio global ═══════════════════════════════════ */
-function dibujarPort(){
-  if(!listo.ventas||!listo.port)return;
-  var dat=Object.keys(productosG).map(function(sku){
-    var pr=productosG[sku];
-    if(pr.bu&&!buActiva(pr.bu))return null;
-    var s=sumarSerie(pr.s);
-    return{clave:pr.d||sku,n:s.total,
-      tit:(pr.d||sku)+'\nSKU '+sku+(pr.bu?' · '+pr.bu:'')+'\n'+fd(s.total)+
-        ' · '+FMT.format(Math.round(s.unidades))+' und.\nClic para analizar este producto',
-      fn:function(){seleccionarSku(sku)}}
-  }).filter(Boolean).sort(function(a,b){return b.n-a.n});
-  pintarBarras('chartPort',dat,{topN:12,vacio:'Sin datos'})}
-
-/* ══════════════ Brechas del producto ════════════════════════════════ */
-function actProducto(){
-  var bq=document.getElementById('bqBrecha');
-  if(!skuSel||!distSku){bq.hidden=true;return}
-  var meta=productosG[skuSel]||{d:skuSel};
-  var brechas=visibles().map(function(p,i){return{p:p,i:i,v:ventaPDV(p),s:ventaSku(p)}})
-    .filter(function(x){return x.v.total>0&&x.s.total===0})
-    .sort(function(a,b){return b.v.total-a.v.total}).slice(0,10)
-    .map(function(x){return{clave:x.p.name+marcaAgenteTxt(x.p),n:x.v.total,clase:'brecha',
-      tit:x.p.name+'\nSell Out total: '+fd(x.v.total)+
-        '\nPotencial: '+x.p.potencial+'\nNO vende '+(meta.d||skuSel),
-      fn:function(){irAlPdv(x.p,x.i)}}});
-  pintarBarras('chartBrecha',brechas,{vacio:'Todos los PDV de volumen ya venden el producto'});
-  bq.hidden=false}
-
 /* ══════════════ Detalle de portafolio (bajo demanda) ════════════════ */
 function mostrarDetalle(t,h,p){detActual={t:t,h:h,p:p};
   document.getElementById('bqDetalle').hidden=false;
   document.getElementById('detTit').innerText=t;
   document.getElementById('detHint').innerText=h;
-  refDet();verVista('analisis')}
+  refDet();verVista('brick')}
 function refDet(){
   if(!detActual)return;var ps=detActual.p;
   if(!ps){document.getElementById('chartDetalle').innerHTML='<div class="hint">Consultando…</div>';return}
@@ -193,14 +126,6 @@ function refDet(){
   }).filter(Boolean).sort(function(a,b){return b.n-a.n});
   pintarBarras('chartDetalle',dat,{topN:15,vacio:'Sin ventas en el período'})}
 function cerrarDetalle(){detActual=null;document.getElementById('bqDetalle').hidden=true}
-
-function verPortPdv(p){
-  if(!esGas()){mostrarDetalle('Portafolio · '+p.name,'Modo local (sin servidor)',{});return}
-  mostrarDetalle('Portafolio · '+p.name,'Consultando…',null);
-  google.script.run.withSuccessHandler(function(j){var r=JSON.parse(j);
-      mostrarDetalle('Portafolio · '+p.name,'POS_ID '+r.posId,r.productos||{})})
-    .withFailureHandler(function(e){mostrarDetalle('Portafolio · '+p.name,'Error: '+me(e),{})})
-    .getDetallePdvJson(p.posId)}
 
 function verPortBrick(bid){
   var agg=agBricks[bid];if(!agg||!agg.pdvs.length){avisar('Sin PDV en ese brick.');return}
@@ -239,18 +164,20 @@ function renderTablaRail(vis,vv){
     cuerpo+='<tr onclick="irAlPdv(pdvIdx['+f.i+'],'+f.i+')">'+
       '<td>'+esc(f.p.name)+marcaAgenteHtml(f.p)+'<span class="sub">'+esc(sub)+'</span></td>'+
       '<td class="num">'+c2+'</td><td class="num">'+c3+'</td></tr>'});
+  // TOTAL en <tfoot> fijo al pie del panel (CSS sticky): visible sin bajar.
+  var pie='';
   if(!filas.length)cuerpo='<tr><td colspan="3" class="mini">Sin PDV en la selección</td></tr>';
-  else cuerpo+='<tr class="fila-total"><td>TOTAL · '+FMT.format(filas.length)+' PDV</td>'+
+  else pie='<tfoot><tr class="fila-total"><td>TOTAL · '+FMT.format(filas.length)+' PDV</td>'+
     '<td class="num">'+fd(totJ)+'</td>'+
-    '<td class="num">'+(modoProd?'':FMT.format(Math.round(totU)))+'</td></tr>';
+    '<td class="num">'+(modoProd?'':FMT.format(Math.round(totU)))+'</td></tr></tfoot>';
 
-  document.getElementById('tablaRail').innerHTML='<thead>'+cab+'</thead><tbody>'+cuerpo+'</tbody>';
+  document.getElementById('tablaRail').innerHTML='<thead>'+cab+'</thead><tbody>'+cuerpo+'</tbody>'+pie;
   document.getElementById('tablaRailTit').innerText=
     modoProd?'PDV · producto seleccionado':'Puntos de venta';
   document.getElementById('tablaRailHint').innerText=
     filas.length>TOPE_TABLA_RAIL
       ?('Mostrando los '+TOPE_TABLA_RAIL+' mayores de '+FMT.format(filas.length)+
-        ' · "ampliar" para el detalle completo')
+        ' · "Ampliar" para la Tabla Detalle PDV')
       :'Clic en una fila para ubicarla en el mapa'}
 
 /* ══════════════ Panel de brick ══════════════════════════════════════ */
@@ -263,6 +190,10 @@ function brickUnico(){
 function refPanelBrick(){
   var b=brickUnico(),tab=document.querySelector('#railTabs .tab[data-vista="brick"]');
   if(tab)tab.style.display=b?'':'none';
+  // Sin brick elegido solo queda la tabla: la barra de pestañas sobra y se oculta.
+  var tabs=document.getElementById('railTabs');if(tabs)tabs.style.display=b?'':'none';
+  // El portafolio abierto es del brick anterior: se cierra al cambiar de brick.
+  if(b!==brickPanel)cerrarDetalle();
   if(!b){brickPanel=null;
     document.getElementById('brickInfoBody').innerHTML='';
     if(vistaActual==='brick')verVista('tabla');
@@ -318,79 +249,400 @@ function brickInfoHtml(b){
       esc(b.brickId).replace(/'/g,"\\'")+'\')">Ver portafolio del brick</button>'}
   return h+'</div>'}
 
-/* ══════════════ Tabla ampliada (modal) ══════════════════════════════ */
-function abrirTabla(){
-  var b=brickUnico();
-  var sel=document.getElementById('tablaDim');
-  for(var i=0;i<sel.options.length;i++){
-    var o=sel.options[i];
-    if(o.value!=='seleccion')o.disabled=!b}
-  if(!b)tablaDim='seleccion';
-  sel.value=tablaDim;
-  document.getElementById('modalTabla').style.display='flex';
-  renderTablaModal()}
-function cerrarTabla(){document.getElementById('modalTabla').style.display='none'}
-function cambiarDimTabla(v){tablaDim=v;renderTablaModal()}
+/* ══════════════ Tabla Detalle PDV (modal) ═══════════════════════════
+   Dos vistas en el mismo modal: la "Tabla Detalle PDV" (lista) y, al hacer
+   clic en una fila, la "Ficha PDV" (deep dive). `tablaPdv` != null = se está
+   viendo la ficha; "Volver a la lista" restaura el scroll de la lista.     */
+var tablaFilas=[],tablaTodas=[],tablaTot={total:0,n:0},tablaPdv=null,tablaScroll=0,portPdvG={},conteoPend={};
 
-/* Alcance de la tabla ampliada: la selección tal cual, el brick activo, o
-   todos los bricks de su ciudad (ignorando el filtro de brick).           */
-function filasTablaModal(){
-  var b=brickUnico();
-  if(b&&tablaDim==='ciudad'){
-    var deLaCiudad={};
-    bricksG.forEach(function(x){if((x.ciudad||'')===(b.ciudad||''))deLaCiudad[x.brickId]=1});
-    return puntosG.filter(function(p){return pasa(p,'brick')&&p._brick&&deLaCiudad[p._brick]})}
-  return visibles()}
+/* ── Orden por encabezado (como Ventas MTD) ──────────────────────────────
+   Primer clic: texto A→Z, número mayor→menor; el segundo invierte. Los vacíos
+   (sin encuesta, sin dato) van siempre al final. Orden estable: los empates
+   conservan el orden por Sell Out.                                        */
+function ordenarFilas(filas,col,dir){
+  var m=dir==='asc'?1:-1;
+  return filas.slice().sort(function(a,b){
+    var x=col.v(a),y=col.v(b),nx=x==null||x==='',ny=y==null||y==='';
+    if(nx||ny)return nx===ny?0:(nx?1:-1);
+    return col.txt?m*String(x).localeCompare(String(y),'es',{sensitivity:'base'}):m*(x-y)})}
+function colDe(cols,k){for(var i=0;i<cols.length;i++)if(cols[i].k===k)return cols[i];return cols[0]}
+function alternarOrden(orden,cols,k){
+  if(orden.k===k){orden.dir=orden.dir==='asc'?'desc':'asc';return}
+  orden.k=k;orden.dir=colDe(cols,k).txt?'asc':'desc'}
+function cabOrden(cols,orden,fn){
+  return'<tr>'+cols.map(function(c){var act=orden.k===c.k;
+    return'<th class="ordenable'+(c.txt?'':' num')+(act?' activa':'')+'" onclick="'+fn+'(\''+c.k+'\')" title="'+
+      esc((c.tit?c.tit+' · ':'')+'Clic para ordenar')+'">'+c.etq+
+      '<span class="flecha">'+(act?(orden.dir==='asc'?'▲':'▼'):'')+'</span></th>'}).join('')+'</tr>'}
+
+var COLS_TABLA=[
+  {k:'brick',etq:'Brick',txt:1,v:function(f){return f.brick}},
+  {k:'pdv',etq:'PDV',txt:1,v:function(f){return f.p.name}},
+  {k:'total',etq:'Sell Out $',v:function(f){return f.v.total}},
+  {k:'und',etq:'Sell Out und.',v:function(f){return f.v.unidades}},
+  {k:'ps',etq:'Global PS',tit:'Global Perfect Store (Yoobic): última encuesta del PDV dentro del período',
+    v:function(f){return f.ps}},
+  {k:'asig',etq:'Asignado',txt:1,v:function(f){return f.asig}},
+  {k:'sku',etq:'#SKUs',tit:'SKUs distintos vendidos (histórico)',
+    v:function(f){var n=f.p.posId?conteoSkuG[f.p.posId]:null;return n==null?null:n}}];
+var COLS_PORT=[
+  {k:'d',etq:'Producto',txt:1,v:function(f){return f.d}},
+  {k:'bu',etq:'BU',txt:1,v:function(f){return f.bu}},
+  {k:'total',etq:'Sell Out $',v:function(f){return f.total}},
+  {k:'und',etq:'Und.',v:function(f){return f.unidades}},
+  {k:'pct',etq:'% del PDV',v:function(f){return f.total}}];
+var tablaOrden={k:'total',dir:'desc'},fichaOrden={k:'total',dir:'desc'};
+function ordenarTabla(k){alternarOrden(tablaOrden,COLS_TABLA,k);renderTablaModal()}
+function ordenarFicha(k){alternarOrden(fichaOrden,COLS_PORT,k);renderTablaModal()}
+
+function abrirTabla(){
+  tablaPdv=null;
+  document.getElementById('modalTabla').style.display='flex';
+  tCrearFiltros();
+  renderTablaModal()}
+function cerrarTabla(){tablaPdv=null;tCerrarPop();document.getElementById('modalTabla').style.display='none'}
+function modalTablaAbierto(){return document.getElementById('modalTabla').style.display==='flex'}
+
+/* Ficha de un PDV desde fuera de la tabla (botón del popup del mapa). */
+function abrirFichaPdv(p){
+  abrirTabla();
+  for(var i=0;i<tablaFilas.length;i++)if(tablaFilas[i].p===p){verPdvTabla(i);return}
+  tablaPdv={p:p,rank:null};cargarPortPdv(p);renderTablaModal()}
+
+/* Yoobic llega aparte (pestaña 4): se pide la primera vez que hace falta y al
+   llegar se repinta el modal. */
+function ybListoTabla(){
+  if(typeof ybCargar!=='function')return false;
+  if(!ybData&&!ybErr&&!ybCargando)ybCargar(false,function(){if(modalTablaAbierto())renderTablaModal()});
+  return!!ybData}
+
+function psCelda(g,yb){
+  if(g==null)return yb?'<span class="mini">–</span>':'…';
+  var max=(YB_PILARES[0]||{max:100}).max;
+  return'<b style="color:'+ybColorPct(g/max)+'">'+ybNum(g)+'</b>'}
 
 function renderTablaModal(){
-  var b=brickUnico();
+  var enFicha=!!tablaPdv;
+  document.getElementById('tablaWrap').hidden=enFicha;
+  document.getElementById('tablaFicha').hidden=!enFicha;
+  document.getElementById('tablaFiltrosBar').hidden=enFicha;
+  document.getElementById('tablaVolver').hidden=!enFicha;
+  if(enFicha){renderFichaPdv();return}
+
+  var yb=ybListoTabla();tSincronizar();
   var mapaB={};bricksG.forEach(function(x){mapaB[x.brickId]=x});
-  var filas=filasTablaModal().map(function(p){return{p:p,v:ventaPDV(p)}})
+  var filas=visibles().map(function(p){return{p:p,v:ventaPDV(p)}})
     .sort(function(x,y){return y.v.total-x.v.total});
 
-  var totJ=0,totU=0,totAsig=0;
-  filas.forEach(function(f){totJ+=f.v.total;totU+=f.v.unidades;if(tieneAgente(f.p))totAsig++});
+  var totJ=0,totU=0,totAsig=0,ciudades={},psS=0,psN=0;
+  filas.forEach(function(f,i){f.rank=i+1;totJ+=f.v.total;totU+=f.v.unidades;
+    if(tieneAgente(f.p))totAsig++;
+    var bb=mapaB[f.p._brick];if(bb)ciudades[bb.ciudad||'']=1});
+  // Con una sola ciudad, "CALI, ESTADIO" repite "CALI" en cada fila: basta "ESTADIO".
+  var ciudadUnica=Object.keys(ciudades).length===1?Object.keys(ciudades)[0]:'';
+  filas.forEach(function(f){var p=f.p,bb=mapaB[p._brick],as=asignacionesDe(p);
+    f.brick=(bb&&(ciudadUnica?bb.nombre:(bb.nombreBrick||bb.nombre)))||p._brick||'';
+    f.asig=as.length?as[0].delegado:'';
+    var m=yb?ybMisionDe(p):null;f.ps=m&&m.s[0]!=null?m.s[0]:null;
+    if(f.ps!=null){psS+=f.ps;psN++}});
+  filas=ordenarFilas(filas,colDe(COLS_TABLA,tablaOrden.k),tablaOrden.dir);
+  tablaTodas=filas;
 
   var muestra=filas.slice(0,TOPE_TABLA_MODAL),ids=[],cuerpo='';
-  muestra.forEach(function(f){
+  tablaFilas=muestra;tablaTot={total:totJ,n:filas.length};
+  muestra.forEach(function(f,i){
     var p=f.p;if(p.posId)ids.push(p.posId);
-    var bb=mapaB[p._brick];
-    var terr=esc((bb&&(bb.nombreBrick||bb.nombre))||p._brick||'–');
     var nSku=(p.posId&&conteoSkuG[p.posId]!=null)?FMT.format(conteoSkuG[p.posId]):'…';
     var asig=tieneAgente(p)
-      ?asignacionesDe(p).map(function(a){return esc(a.delegado)+tagTipo(a.tipo)}).join('<br>')
+      ?asignacionesDe(p).map(function(a){return esc(a.delegado)+tagTeam(a.team)}).join('<br>')
       :'<span class="mini">Sin asignar</span>';
-    cuerpo+='<tr><td>'+terr+'</td><td>'+esc(p.name)+'</td>'+
+    cuerpo+='<tr onclick="verPdvTabla('+i+')" title="Clic para ver la ficha de este PDV">'+
+      '<td>'+esc(f.brick||'–')+'</td><td>'+esc(p.name)+'</td>'+
       '<td class="num">'+fd(f.v.total)+'</td>'+
       '<td class="num">'+FMT.format(Math.round(f.v.unidades))+'</td>'+
+      '<td class="num">'+psCelda(f.ps,yb)+'</td>'+
       '<td>'+asig+'</td><td class="num">'+nSku+'</td></tr>'});
-  if(!filas.length)cuerpo='<tr><td colspan="6" class="mini">Sin PDV en esta selección</td></tr>';
-  else cuerpo+='<tr class="fila-total"><td colspan="2">TOTAL · '+FMT.format(filas.length)+' PDV</td>'+
+  // El TOTAL va en <tfoot> fijo al pie (CSS sticky): con 500 PDV se ve sin bajar.
+  var pie='';
+  if(!filas.length)cuerpo='<tr><td colspan="7" class="mini">Sin PDV en esta selección</td></tr>';
+  else pie='<tfoot><tr class="fila-total"><td colspan="2">TOTAL · '+FMT.format(filas.length)+' PDV</td>'+
     '<td class="num">'+fd(totJ)+'</td><td class="num">'+FMT.format(Math.round(totU))+'</td>'+
-    '<td>'+FMT.format(totAsig)+' asignados</td><td class="num">—</td></tr>';
+    '<td class="num" title="Promedio de los PDV con encuesta">'+
+      (psN?'prom. '+ybNum(psS/psN)+' · '+FMT.format(psN)+' PDV':'—')+'</td>'+
+    '<td>'+FMT.format(totAsig)+' asignados</td><td class="num">—</td></tr></tfoot>';
 
   document.getElementById('tablaDetalle').innerHTML=
-    '<thead><tr><th>Brick</th><th>PDV</th><th class="num">Sell Out $</th>'+
-    '<th class="num">Sell Out und.</th><th>Asignado</th>'+
-    '<th class="num" title="SKUs distintos vendidos (histórico)">#SKUs</th></tr></thead>'+
-    '<tbody>'+cuerpo+'</tbody>';
-  document.getElementById('tablaTitulo').innerText='Detalle de PDV'+
-    (b&&tablaDim!=='seleccion'?' · '+(tablaDim==='ciudad'?(b.ciudad||''):(b.nombreBrick||b.brickId)):'');
+    '<thead>'+cabOrden(COLS_TABLA,tablaOrden,'ordenarTabla')+'</thead>'+
+    '<tbody>'+cuerpo+'</tbody>'+pie;
+  document.getElementById('tablaTitulo').innerText='Detalle de PDV'+(ciudadUnica?' · '+ciudadUnica:'');
   document.getElementById('tablaHint').innerText=FMT.format(filas.length)+' PDV'+
-    (filas.length>TOPE_TABLA_MODAL?(' · mostrando los '+TOPE_TABLA_MODAL+' mayores'):'');
+    (filas.length>TOPE_TABLA_MODAL?(' · mostrando '+TOPE_TABLA_MODAL):'')+
+    (filas.length?' · clic en un encabezado para ordenar, en un PDV para ver su ficha':'');
   cargarConteoSku(ids)}
 
+function verPdvTabla(i){
+  var f=tablaFilas[i];if(!f)return;
+  tablaScroll=document.getElementById('tablaWrap').scrollTop;
+  tablaPdv={p:f.p,rank:f.rank};
+  cargarPortPdv(f.p);renderTablaModal()}
+function volverListaTabla(){
+  tablaPdv=null;renderTablaModal();
+  document.getElementById('tablaWrap').scrollTop=tablaScroll}
+
+/* ── Ficha PDV ───────────────────────────────────────────────────────── */
+/* Portafolio del PDV en el período y BU filtrados: filas por SKU, mayor a menor. */
+function filasPortafolio(prods){
+  var tot=0,und=0;
+  var filas=Object.keys(prods||{}).map(function(sku){
+    var m=productosG[sku]||{d:sku,bu:''};
+    if(m.bu&&!buActiva(m.bu))return null;
+    var s=sumarSerie(prods[sku]);
+    if(!s.total&&!s.unidades)return null;
+    tot+=s.total;und+=s.unidades;
+    return{sku:sku,d:m.d||sku,bu:m.bu||'',total:s.total,unidades:s.unidades}
+  }).filter(Boolean).sort(function(a,b){return b.total-a.total});
+  return{filas:filas,total:tot,unidades:und}}
+
+function cargarPortPdv(p){
+  var pos=p.posId;if(!pos||p.dup||portPdvG[pos])return;
+  if(!esGas()){portPdvG[pos]={productos:portPdvMock(pos)};return}
+  portPdvG[pos]={cargando:true};
+  google.script.run.withSuccessHandler(function(j){var r=JSON.parse(j);
+      portPdvG[pos]={productos:r.productos||{}};
+      if(tablaPdv&&tablaPdv.p.posId===pos)renderTablaModal()})
+    .withFailureHandler(function(e){portPdvG[pos]={error:me(e)};
+      if(tablaPdv&&tablaPdv.p.posId===pos)renderTablaModal()})
+    .getDetallePdvJson(pos)}
+
+/* Portafolio simulado (solo fuera de Apps Script), determinista por POS_ID. */
+function portPdvMock(pos){
+  var h=0;for(var i=0;i<pos.length;i++)h=(h*31+pos.charCodeAt(i))%9973;
+  var out={};
+  Object.keys(productosG).forEach(function(sku,k){if((h+k)%3===0)return;
+    var f=0.004+((h*(k+3))%17)/1000;
+    out[sku]=productosG[sku].s.map(function(t){return[t[0],Math.round(t[1]*f),Math.round(t[2]*f)]})});
+  return out}
+
+function pctTxt(x){return(Math.round(x*1000)/10).toString().replace('.',',')+' %'}
+
+function renderFichaPdv(){
+  var p=tablaPdv.p,v=ventaPDV(p),mapaB={};
+  bricksG.forEach(function(x){mapaB[x.brickId]=x});
+  var bb=mapaB[p._brick];
+  document.getElementById('tablaTitulo').innerText=p.name;
+  document.getElementById('tablaHint').innerText=tablaPdv.rank
+    ?'Puesto '+FMT.format(tablaPdv.rank)+' de '+FMT.format(tablaTot.n)+' por Sell Out en la lista':'';
+
+  var info=[
+    '<b>Brick:</b> '+esc((bb&&(bb.nombreBrick||bb.nombre))||p._brick||'–'),
+    '<b>Ciudad:</b> '+esc(p.poblacion||'–'),
+    '<b>Cliente:</b> '+esc(p.grupo||'–'),
+    '<b>Canal:</b> '+esc(p.channel||'–'),
+    '<b>Potencial:</b> '+esc(p.potencial||'–'),
+    (p.posId?'<b>POS ID:</b> '+esc(p.posId):'')].filter(Boolean).join(' · ');
+
+  var port=p.posId?portPdvG[p.posId]:null,pf=port&&port.productos?filasPortafolio(port.productos):null;
+  var hist=(p.posId&&conteoSkuG[p.posId]!=null)?conteoSkuG[p.posId]:null;
+  var peso=tablaTot.total>0?v.total/tablaTot.total:0;
+  function kpiF(l,val,nota){return'<div class="ficha-kpi"><div class="kpi-label">'+l+'</div>'+
+    '<div class="kpi-valor">'+val+'</div><div class="kpi-nota">'+(nota||'&nbsp;')+'</div></div>'}
+  var kpis=kpiF('Sell Out $',fd(v.total),'período filtrado')+
+    kpiF('Sell Out und.',FMT.format(Math.round(v.unidades)),
+      v.mesesConDato+' mes'+(v.mesesConDato===1?'':'es')+' con venta')+
+    kpiF('SKUs con venta',pf?FMT.format(pf.filas.length):'…',
+      hist!=null?FMT.format(hist)+' en el histórico':'en el período')+
+    kpiF('Peso en la lista',pctTxt(peso),'de '+fd(tablaTot.total));
+
+  document.getElementById('tablaFicha').innerHTML=
+    '<div class="ficha-info">'+info+'</div>'+
+    (p.dup?'<div class="hint">POS ID repetido en Embrace: su Sell Out se cuenta en el primer PDV que lo usa.</div>':'')+
+    '<div class="ficha-kpis">'+kpis+'</div>'+
+    '<div class="ficha-cuerpo">'+
+      '<section class="ficha-col">'+fichaAtencionHtml(p)+'</section>'+
+      '<section class="ficha-col">'+fichaPortafolioHtml(p,port,pf)+'</section>'+
+    '</div>'}
+
+/* Dos conceptos DISTINTOS, a propósito sin cruzarlos:
+   - Asignado hoy (Embrace, hoja Asignacion): quién tiene el PDV a su cargo ahora.
+   - Historial Perfect Store (Yoobic): quién hizo cada encuesta y cuándo; puede
+     ser alguien que ya no lo tiene asignado.                                */
+function fichaAtencionHtml(p){
+  var yb=typeof ybCargar==='function',t=null,mis=[];
+  if(ybListoTabla()){t=ybTiendaDe(p);mis=t?ybMisionesDeTienda(t):[]}
+  var estadoYb=!yb?'Yoobic no disponible':ybErr?'No se pudo cargar Yoobic':!ybData?'Cargando Yoobic…':'';
+
+  var as=asignacionesDe(p),h='<h4>Asignado hoy (Embrace)</h4>';
+  if(!as.length)h+='<div class="hint">Sin delegado asignado en Embrace.</div>';
+  else{
+    h+='<table class="tab-datos"><thead><tr><th>Delegado</th><th>Equipo</th></tr></thead><tbody>';
+    as.forEach(function(a){
+      h+='<tr><td>'+esc(a.delegado)+'</td><td>'+(tagTeam(a.team)||'<span class="mini">–</span>')+'</td></tr>'});
+    h+='</tbody></table>'}
+
+  h+='<h4>Historial Perfect Store (Yoobic)</h4>';
+  if(estadoYb)return h+'<div class="hint">'+estadoYb+'</div>';
+  if(!mis.length)return h+'<div class="hint">Sin encuestas Perfect Store para este PDV.</div>';
+  var max=(YB_PILARES[0]||{max:100}).max;
+  h+='<table class="tab-datos"><thead><tr><th>Fecha</th><th>Encuesta hecha por</th>'+
+    '<th class="num">Global Perfect Store</th></tr></thead><tbody>';
+  mis.slice(0,8).forEach(function(m){var g=m.s[0];
+    h+='<tr><td>'+ybFechaTxt(m.fecha)+'</td><td>'+esc(m.del)+'</td><td class="num">'+
+      (g==null?'–':'<b style="color:'+ybColorPct(g/max)+'">'+ybNum(g)+'</b> / '+max)+'</td></tr>'});
+  h+='</tbody></table>';
+  if(mis.length>8)h+='<span class="mini">Las 8 más recientes de '+FMT.format(mis.length)+' encuestas</span>';
+  return h+'<button class="btn-portafolio" onclick="ybAbrirFotos('+t.i+')">📷 Ver fotos (última encuesta)</button>'}
+
+function fichaPortafolioHtml(p,port,pf){
+  var h='<h4>Portafolio en el período</h4>';
+  if(!p.posId||p.dup)return h+'<div class="hint">Sin POS ID propio: no hay portafolio que mostrar.</div>';
+  if(!port||port.cargando)return h+'<div class="hint">Consultando…</div>';
+  if(port.error)return h+'<div class="hint">Error: '+esc(port.error)+'</div>';
+  if(!pf.filas.length)return h+'<div class="hint">Sin ventas en el período.</div>';
+  var cuerpo='';
+  ordenarFilas(pf.filas,colDe(COLS_PORT,fichaOrden.k),fichaOrden.dir).forEach(function(f){
+    cuerpo+='<tr><td>'+esc(f.d)+'<span class="sub">SKU '+esc(f.sku)+'</span></td><td>'+esc(f.bu)+'</td>'+
+      '<td class="num">'+fd(f.total)+'</td><td class="num">'+FMT.format(Math.round(f.unidades))+'</td>'+
+      '<td class="num">'+(pf.total>0?pctTxt(f.total/pf.total):'–')+'</td></tr>'});
+  return h+'<div class="tabla-wrap"><table class="tab-datos">'+
+    '<thead>'+cabOrden(COLS_PORT,fichaOrden,'ordenarFicha')+'</thead><tbody>'+cuerpo+'</tbody>'+
+    '<tfoot><tr class="fila-total"><td colspan="2">TOTAL · '+FMT.format(pf.filas.length)+' SKUs</td>'+
+    '<td class="num">'+fd(pf.total)+'</td><td class="num">'+FMT.format(Math.round(pf.unidades))+'</td>'+
+    '<td class="num">100 %</td></tr></tfoot></table></div>'}
+
 /* #SKUs por PDV no viene con los demás endpoints: se pide por lotes solo para
-   las filas visibles y se cachea, para no repetir la consulta al reabrir. */
+   las filas visibles y se cachea, para no repetir la consulta al reabrir.
+   Un PDV sin ventas NO viene en la respuesta: se fija en 0, porque si quedaba
+   vacío cada repintado lo volvía a pedir (bucle de llamadas con el modal
+   abierto). `conteoPend` evita repetir un lote mientras sigue en vuelo.   */
 function cargarConteoSku(ids){
-  var pend=ids.filter(function(id){return id&&conteoSkuG[id]==null});
+  var pend=ids.filter(function(id){return id&&conteoSkuG[id]==null&&!conteoPend[id]});
   if(!pend.length)return;
   if(!esGas()){
     pend.forEach(function(id){conteoSkuG[id]=1+(id.length%6)});renderTablaModal();return}
+  pend.forEach(function(id){conteoPend[id]=1});
   google.script.run.withSuccessHandler(function(j){
-      var r=JSON.parse(j);
-      Object.keys(r.conteo||{}).forEach(function(k){conteoSkuG[k]=r.conteo[k]});
-      renderTablaModal()})
-    .withFailureHandler(function(e){avisar('No pude cargar # SKUs por PDV: '+me(e))})
+      var c=JSON.parse(j).conteo||{};
+      pend.forEach(function(id){delete conteoPend[id];conteoSkuG[id]=c[id]!=null?c[id]:0});
+      if(modalTablaAbierto())renderTablaModal()})
+    .withFailureHandler(function(e){pend.forEach(function(id){delete conteoPend[id]});
+      avisar('No pude cargar # SKUs por PDV: '+me(e))})
     .getConteoSkuJson(pend.join(','))}
+
+/* ── Filtros de la Tabla Detalle PDV ──────────────────────────────────────
+   Son los MISMOS filtros del mapa (`filtros`/`setFiltro`), con el mismo control
+   (Selector + Choices) y la misma cascada: filtrar aquí filtra el mapa y al
+   revés. Reemplazan al antiguo "Alcance". Geografía fija; el resto se agrega
+   con "+ Añadir filtro", como en la cabecera.                               */
+var T_DIMS=[
+  {dim:'region',etq:'Departamento',fijo:1},{dim:'poblacion',etq:'Ciudad',fijo:1},
+  {dim:'zona',etq:'Zona',fijo:1},{dim:'brick',etq:'Brick',fijo:1,tope:400},
+  {dim:'grupo',etq:'Cliente'},{dim:'channel',etq:'Canal'},{dim:'potencial',etq:'Potencial'},
+  {dim:'agente',etq:'Delegado'},{dim:'pdv',etq:'Punto de venta',tope:250}];
+var T_SEL={},tVisibles={};
+function tCrearFiltros(){
+  var cont=document.getElementById('tablaCampos');
+  if(cont&&!cont.childNodes.length){
+    cont.innerHTML=T_DIMS.map(function(c){
+      return'<div class="campo" data-tdim="'+c.dim+'"'+(c.fijo?'':' hidden')+'>'+
+        '<label for="tSel_'+c.dim+'"><span>'+esc(c.etq)+'</span>'+
+        (c.fijo?'':'<button type="button" class="chip-x" title="Quitar este filtro" onclick="tQuitarDim(event,\''+c.dim+'\')">\u2715</button>')+
+        '</label><select id="tSel_'+c.dim+'" multiple></select></div>'}).join('');
+    T_DIMS.forEach(function(c){if(c.fijo)tVisibles[c.dim]=true;
+      T_SEL[c.dim]=new Selector({dim:c.dim,id:'tSel_'+c.dim,multi:true,tope:c.tope||400,
+        ops:function(){return opcionesDe(c.dim)},
+        sel:function(){return filtros[c.dim]||[]},
+        alCambiar:function(v){cambiarSeleccion(c.dim,v)}})});
+    document.addEventListener('click',function(e){
+      var a=document.getElementById('tablaAnadir');if(a&&!a.contains(e.target))tCerrarPop()})}
+  Object.keys(T_SEL).forEach(function(d){T_SEL[d].fijar()})}
+/* En cada repintado: un filtro puesto en la cabecera también aparece aquí. */
+function tSincronizar(){
+  T_DIMS.forEach(function(c){if(!tVisibles[c.dim]&&(filtros[c.dim]||[]).length)tMostrarDim(c.dim)});
+  Object.keys(T_SEL).forEach(function(d){if(tVisibles[d])T_SEL[d].refrescar(false)})}
+function tCaja(dim){return document.querySelector('#tablaCampos .campo[data-tdim="'+dim+'"]')}
+function tMostrarDim(dim){
+  tVisibles[dim]=true;var c=tCaja(dim);if(c)c.hidden=false;
+  if(T_SEL[dim])T_SEL[dim].refrescar(true)}
+function tQuitarDim(ev,dim){
+  if(ev){ev.preventDefault();ev.stopPropagation()}
+  delete tVisibles[dim];var c=tCaja(dim);if(c)c.hidden=true;
+  if(!(filtros[dim]||[]).length)return;
+  setFiltro(dim,[]);if(SELECTORES[dim])SELECTORES[dim].fijar();actualizar()}
+function tLimpiar(){
+  T_DIMS.forEach(function(c){setFiltro(c.dim,[]);if(SELECTORES[c.dim])SELECTORES[c.dim].fijar()});
+  actualizar();Object.keys(T_SEL).forEach(function(d){T_SEL[d].fijar()})}
+function tAlternarPop(ev){
+  if(ev)ev.stopPropagation();
+  var pop=document.getElementById('tPop');if(!pop)return;
+  if(!pop.hidden){pop.hidden=true;return}
+  var libres=T_DIMS.filter(function(c){return!tVisibles[c.dim]});
+  document.getElementById('tPopLista').innerHTML=libres.length?libres.map(function(c){
+    return'<button type="button" class="pop-op" onclick="tAgregarDim(\''+c.dim+'\')">'+esc(c.etq)+'</button>'}).join(''):
+    '<div class="pop-vacio">Ya están todos los filtros en la barra</div>';
+  pop.hidden=false}
+function tCerrarPop(){var pop=document.getElementById('tPop');if(pop)pop.hidden=true}
+function tAgregarDim(dim){tMostrarDim(dim);tCerrarPop()}
+
+/* ── Descargar (CSV que abre bien en Excel: ';' y BOM, vía mtdDescargarCsv) ──
+   La lista sale COMPLETA (no solo las 500 filas que se pintan) y en el orden
+   elegido. En la Ficha PDV se descarga su portafolio.                      */
+function descargarTablaPdv(){
+  if(tablaPdv){descargarFichaPdv();return}
+  var mapaB={};bricksG.forEach(function(x){mapaB[x.brickId]=x});
+  mtdDescargarCsv(tablaTodas.map(function(f){
+      var p=f.p,bb=mapaB[p._brick],n=p.posId?conteoSkuG[p.posId]:null;
+      return{depto:p.region,ciudad:p.poblacion,zona:p._zona||'',
+        brick:bb?(bb.nombreBrick||bb.nombre):'',brickId:p._brick||'',pdv:p.name,pos:p.posId,
+        cliente:p.grupo,canal:p.channel,potencial:p.potencial,
+        so:Math.round(f.v.total),und:Math.round(f.v.unidades),ps:f.ps==null?'':f.ps,
+        asig:asignacionesDe(p).map(function(a){return a.delegado+(a.team?' ('+a.team+')':'')}).join(', '),
+        skus:n==null?'':n}}),
+    [{clave:'depto',titulo:'Departamento'},{clave:'ciudad',titulo:'Ciudad'},{clave:'zona',titulo:'Zona'},
+     {clave:'brick',titulo:'Brick'},{clave:'brickId',titulo:'Brick ID'},{clave:'pdv',titulo:'PDV'},
+     {clave:'pos',titulo:'POS ID'},{clave:'cliente',titulo:'Cliente'},{clave:'canal',titulo:'Canal'},
+     {clave:'potencial',titulo:'Potencial'},{clave:'so',titulo:'Sell Out $'},{clave:'und',titulo:'Sell Out und.'},
+     {clave:'ps',titulo:'Global Perfect Store'},{clave:'asig',titulo:'Asignado'},
+     {clave:'skus',titulo:'#SKUs (histórico)'}],
+    'detalle_pdv_'+mtdCsvFecha()+'.csv')}
+function descargarFichaPdv(){
+  var p=tablaPdv.p,port=p.posId?portPdvG[p.posId]:null;
+  if(!port||!port.productos){alert('El portafolio de este PDV todavía no está disponible.');return}
+  var pf=filasPortafolio(port.productos);
+  mtdDescargarCsv(ordenarFilas(pf.filas,colDe(COLS_PORT,fichaOrden.k),fichaOrden.dir).map(function(f){
+      return{d:f.d,sku:f.sku,bu:f.bu,so:Math.round(f.total),und:Math.round(f.unidades),
+        pct:pf.total>0?Math.round(1000*f.total/pf.total)/10:''}}),
+    [{clave:'d',titulo:'Producto'},{clave:'sku',titulo:'SKU'},{clave:'bu',titulo:'BU'},
+     {clave:'so',titulo:'Sell Out $'},{clave:'und',titulo:'Unidades'},{clave:'pct',titulo:'% del PDV'}],
+    'ficha_pdv_'+(p.posId||'')+'_'+mtdCsvFecha()+'.csv')}
+
+/* ══════════════ Divisor mapa | panel (arrastrable) ══════════════════════
+   El ancho del panel se recuerda por navegador (localStorage es opcional: sin
+   él el divisor funciona igual). Doble clic = ancho original; flechas del
+   teclado = de a 20 px. El mapa se reajusta solo: observarTamano() (JsMapa)
+   vigila .mapa-wrap e invalida el tamaño de Leaflet en cada cambio.        */
+var ANCHO_RAIL_DEF=400,ANCHO_RAIL_MIN=300,MAPA_MIN=360;
+function cuerpoMapa(){return document.querySelector('#vistaMapa .cuerpo')}
+function fijarAnchoRail(px,guardar){
+  var cu=cuerpoMapa();if(!cu)return;
+  var max=Math.max(ANCHO_RAIL_MIN,cu.clientWidth-MAPA_MIN-10);
+  px=Math.round(Math.min(max,Math.max(ANCHO_RAIL_MIN,px)));
+  cu.style.setProperty('--ancho-rail',px+'px');
+  if(guardar)try{localStorage.setItem('visor.anchoRail',String(px))}catch(e){}}
+function iniciarDivisor(){
+  var d=document.getElementById('divisorRail'),cu=cuerpoMapa();if(!d||!cu)return;
+  var ini=0;try{ini=Number(localStorage.getItem('visor.anchoRail'))||0}catch(e){}
+  if(ini>=ANCHO_RAIL_MIN)cu.style.setProperty('--ancho-rail',ini+'px');
+  function ancho(){var r=document.querySelector('#vistaMapa .rail');return r?r.getBoundingClientRect().width:ANCHO_RAIL_DEF}
+  d.addEventListener('pointerdown',function(e){e.preventDefault();d.setPointerCapture(e.pointerId);
+    d.classList.add('arrastrando');document.body.classList.add('redimensionando')});
+  d.addEventListener('pointermove',function(e){if(!d.classList.contains('arrastrando'))return;
+    fijarAnchoRail(cu.getBoundingClientRect().right-e.clientX-5,false)});
+  function soltar(){if(!d.classList.contains('arrastrando'))return;
+    d.classList.remove('arrastrando');document.body.classList.remove('redimensionando');
+    fijarAnchoRail(ancho(),true)}
+  d.addEventListener('pointerup',soltar);d.addEventListener('pointercancel',soltar);
+  d.addEventListener('dblclick',function(){fijarAnchoRail(ANCHO_RAIL_DEF,true)});
+  d.addEventListener('keydown',function(e){
+    var k=e.key==='ArrowLeft'?20:e.key==='ArrowRight'?-20:0;if(!k)return;
+    e.preventDefault();fijarAnchoRail(ancho()+k,true)})}
 </script>

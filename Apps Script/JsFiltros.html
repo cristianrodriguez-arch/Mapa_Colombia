@@ -36,6 +36,7 @@ var CFG_SELECTORES=[
   {dim:'channel',   id:'fChannel',   multi:true},
   {dim:'region',    id:'fRegion',    multi:true},
   {dim:'poblacion', id:'fPoblacion', multi:true},
+  {dim:'zona',      id:'fZona',      multi:true},
   {dim:'potencial', id:'fPotencial', multi:true},
   {dim:'agente',    id:'fAgente',    multi:true},
   {dim:'brick',     id:'fBrick',     multi:true, tope:400},
@@ -54,6 +55,7 @@ function pasa(p,ig){
   for(var i=0;i<DIMS_PDV.length;i++){var d=DIMS_PDV[i];
     if(d===ig)continue;var s=fset[d];if(s&&!s[p[d]])return false}
   if(ig!=='brick'&&fset.brick&&!fset.brick[p._brick||''])return false;
+  if(ig!=='zona'&&fset.zona&&!fset.zona[p._zona||''])return false;
   if(ig!=='pdv'&&fset.pdv&&!(fset.pdv[p.posId]||fset.pdv[p.name]))return false;
   if(ig!=='agente'&&fset.agente){
     var as=asignacionesDe(p),ok=false;
@@ -79,7 +81,7 @@ function limpiarFiltros(){
   var pr=document.getElementById('fPreset');if(pr)pr.value='TODOS';
   recalcIdx();aplicarBandaSku();
   Object.keys(SELECTORES).forEach(function(d){SELECTORES[d].fijar()});
-  actualizar();dibujarPort();refDet();actProducto()}
+  actualizar();refDet()}
 
 /* ══════════════ Filtros bajo demanda (chips + "+ Nuevo filtro") ════════════
    Solo cambia qué controles se ven: el motor (setFiltro/pasa/DIMS_PDV) y los
@@ -94,6 +96,7 @@ var DIMS_OPCIONALES=[
   {dim:'channel',  etiqueta:'Canal'},
   {dim:'region',   etiqueta:'Departamento'},
   {dim:'poblacion',etiqueta:'Ciudad'},
+  {dim:'zona',     etiqueta:'Zona'},
   {dim:'potencial',etiqueta:'Potencial'},
   {dim:'agente',   etiqueta:'Agente'},
   {dim:'brick',    etiqueta:'Brick'},
@@ -131,7 +134,7 @@ function quitarFiltroUI(ev,dim){
   if(!(filtros[dim]||[]).length){actContador();return}
   setFiltro(dim,[]);
   if(SELECTORES[dim])SELECTORES[dim].fijar();
-  actualizar();actProducto()}
+  actualizar()}
 
 function quitarTodosFiltros(){
   Object.keys(filtrosVisibles).slice().forEach(ocultarFiltroUI);
@@ -209,14 +212,14 @@ function alternarFiltro(dim,val){
   if(i>=0)a.splice(i,1);else a.push(val);
   setFiltro(dim,a);
   if(SELECTORES[dim])SELECTORES[dim].fijar();
-  actualizar();actProducto()}
+  actualizar()}
 
 /* Clic en un polígono del mapa: aísla ese brick (y al repetir clic, lo suelta). */
 function aplicarFiltroBrick(id){
   var act=filtros.brick||[];
   setFiltro('brick',(act.length===1&&act[0]===id)?[]:[id]);
   if(SELECTORES.brick)SELECTORES.brick.fijar();
-  actualizar();actProducto();
+  actualizar();
   if((filtros.brick||[]).length===1)verVista('brick')}
 
 /* ══════════════ Período ═════════════════════════════════════════════ */
@@ -268,10 +271,15 @@ function aplicarPreset(v,silent){
     if(SELECTORES.mes)SELECTORES.mes.fijar()}
   if(el)el.value=v;
   recalcIdx();
-  if(!silent&&listo.puntos){actualizar();dibujarPort();refDet();actProducto()}}
+  if(!silent&&listo.puntos){actualizar();refDet()}}
 
 /* ══════════════ Unidad de negocio y producto ════════════════════════ */
 function normBu(b){return String(b||'').trim().toUpperCase()}
+/* Ciudad y departamento del CRM: la misma ciudad llega escrita de varias formas
+   (CALI / Cali / cali) y salía repetida en el filtro. MAYÚSCULAS, sin tildes y
+   con la Ñ conservada: la regla de normalización de todo el proyecto. */
+function normGeo(s){return String(s==null?'':s).trim().replace(/\s+/g,' ').toUpperCase()
+  .replace(/Ñ/g,'\u0001').normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/\u0001/g,'Ñ')}
 function buActiva(b){
   if(!filtros.bu.length)return true;
   var n=normBu(b);
@@ -291,24 +299,19 @@ function aplicarBandaSku(){
   if(skuSel){
     banda.style.display='flex';
     document.getElementById('bandaTxt').innerText='Analizando: '+(meta.d||skuSel)+' · SKU '+skuSel;
-    document.getElementById('bqPort').hidden=true;
-    document.getElementById('tituloTop').innerText='Top 10 PDV del producto';
   }else{
-    banda.style.display='none';
-    document.getElementById('bqPort').hidden=false;
-    document.getElementById('bqBrecha').hidden=true;
-    document.getElementById('tituloTop').innerText='Top 10 PDV por Sell Out'}
+    banda.style.display='none'}
   actContador()}
 
 function seleccionarSku(sku){
   skuSel=sku||'';
   if(SELECTORES.sku)SELECTORES.sku.fijar();
   aplicarBandaSku();
-  if(!skuSel){distSku=null;cargandoSku=false;actualizar();actProducto();return}
-  if(!esGas()){distSku=distSkuMock();actualizar();actProducto();return}
+  if(!skuSel){distSku=null;cargandoSku=false;actualizar();return}
+  if(!esGas()){distSku=distSkuMock();actualizar();return}
   cargandoSku=true;distSku=null;actualizar();
   google.script.run.withSuccessHandler(function(j){
-      var r=JSON.parse(j);distSku=r.pdv||{};cargandoSku=false;actualizar();actProducto()})
+      var r=JSON.parse(j);distSku=r.pdv||{};cargandoSku=false;actualizar()})
     .withFailureHandler(function(e){cargandoSku=false;distSku={};
       avisar('No pude cargar la distribución del producto: '+me(e)+
         '\nVerifica que el ETL generó so_sku_indice.json.',true);actualizar()})
@@ -346,16 +349,60 @@ function ventaSku(p){
   s.forEach(function(t){if(idxSel[t[0]]){u+=t[1];a+=t[2];mc++}});
   return{total:a,unidades:u,mesesConDato:mc}}
 
-/* ══════════════ Asignación de agentes (VM / LAM) ════════════════════ */
+/* ══════════════ Asignación de agentes (VM / LAM) ════════════════════
+   VM/LAM viene de la columna "Team" de la hoja Asignacion (`a.team`). No usar
+   `a.tipo` ("Tipo de registro de cuenta"): es FARMACIA/PARAFARMACIA en todos
+   los PDV y no distingue nada.                                            */
 function asignacionesDe(p){return(p.posId&&asignacionesG[p.posId])||[]}
 function tieneAgente(p){return asignacionesDe(p).length>0}
 function marcaAgenteTxt(p){return tieneAgente(p)?' 👤':''}
-function tagTipo(tipo){var t=(tipo||'').toUpperCase();if(!t)return'';
-  return'<span class="tag-tipo'+(t==='LAM'?' lam':'')+'" title="Tipo de agente asignado">'+esc(t)+'</span>'}
+/* ── Colores por delegado (capa "Delegado asignado" del mapa) ─────────────
+   El color sigue a la PERSONA, no a su puesto en pantalla: se calcula una vez
+   con TODOS los PDV (no con los filtros), así nadie cambia de color al filtrar.
+   Paleta categórica validada (skill dataviz): 8 tonos, nunca se inventa un 9.º.
+   Delegados que comparten ciudad reciben tonos distintos; Bogotá tiene 10
+   (2026-10), así que cuando no alcanzan se reutiliza el tono del vecino con el
+   que menos PDV se cruza, y si es posible de OTRO equipo: el punto de un LAM
+   lleva además anillo, así un VM y un LAM con el mismo tono no se confunden. */
+var PALETA_DELEGADOS=['#2a78d6','#eb6834','#1baf7a','#eda100','#e87ba4','#008300','#4a3aa7','#e34948'];
+var ANILLO_LAM='#1f2937',colorDelG=null,colorDelFirma='';
+function esLam(a){return String(a.team||'').toUpperCase()==='LAM'}
+function coloresDelegados(){
+  var firma=puntosG.length+'|'+Object.keys(asignacionesG).length;
+  if(colorDelG&&colorDelFirma===firma)return colorDelG;
+  var n={},lam={},enCiudad={};          // delegado -> nº PDV ; ciudad -> {delegado: nº PDV}
+  puntosG.forEach(function(p){if(p.dup)return;var c=p.poblacion||'';
+    asignacionesDe(p).forEach(function(a){var d=a.delegado;
+      n[d]=(n[d]||0)+1;lam[d]=esLam(a);
+      var ec=enCiudad[c]||(enCiudad[c]={});ec[d]=(ec[d]||0)+1})});
+  var cruce={};                         // cruce[d][e] = PDV que se pisan en ciudades comunes
+  Object.keys(enCiudad).forEach(function(c){var ec=enCiudad[c],ds=Object.keys(ec);
+    ds.forEach(function(d){ds.forEach(function(e){if(d===e)return;
+      var x=cruce[d]||(cruce[d]={});x[e]=(x[e]||0)+Math.min(ec[d],ec[e])})})});
+  var orden=Object.keys(n).sort(function(a,b){return n[b]-n[a]||(a<b?-1:1)});
+  var slot={};
+  orden.forEach(function(d){var costo=PALETA_DELEGADOS.map(function(){return 0});
+    Object.keys(cruce[d]||{}).forEach(function(e){if(slot[e]==null)return;
+      costo[slot[e]]+=cruce[d][e]*(lam[e]===lam[d]?100:1)});
+    var mejor=0;for(var k=1;k<costo.length;k++)if(costo[k]<costo[mejor])mejor=k;
+    slot[d]=mejor});
+  colorDelG={};orden.forEach(function(d){colorDelG[d]=PALETA_DELEGADOS[slot[d]]});
+  colorDelFirma=firma;return colorDelG}
+/* Punto en la capa "Delegado asignado": relleno = su VM (o su LAM si solo tiene
+   LAM); anillo = el LAM (su tono si comparte el PDV con un VM, oscuro si es el
+   único). Sin asignar = gris. */
+function colorAgente(p){
+  var as=asignacionesDe(p);if(!as.length)return{fill:SEM.sin,ring:null,dels:[]};
+  var col=coloresDelegados(),dels=as.map(function(a){return a.delegado});
+  var vm=as.filter(function(a){return!esLam(a)}),lm=as.filter(esLam);
+  if(vm.length)return{fill:col[vm[0].delegado],ring:lm.length?col[lm[0].delegado]:null,dels:dels};
+  return{fill:col[lm[0].delegado],ring:ANILLO_LAM,dels:dels}}
+function tagTeam(team){var t=(team||'').toUpperCase();if(!t)return'';
+  return'<span class="tag-tipo'+(t==='LAM'?' lam':'')+'" title="Equipo del agente asignado">'+esc(t)+'</span>'}
 function marcaAgenteHtml(p){
   var as=asignacionesDe(p);if(!as.length)return'';
-  var detalle=as.map(function(a){return a.delegado+(a.tipo?' ('+a.tipo+')':'')}).join(', ');
-  var tags=as.map(function(a){return tagTipo(a.tipo)}).join('');
+  var detalle=as.map(function(a){return a.delegado+(a.team?' ('+a.team+')':'')}).join(', ');
+  var tags=as.map(function(a){return tagTeam(a.team)}).join('');
   return'<span class="badge-agente" title="'+esc(detalle)+'">👤</span>'+tags}
 
 /* ══════════════ Opciones de cada desplegable (cascada) ══════════════ */
@@ -381,6 +428,12 @@ function opcionesDe(dim){
     return bricksG.filter(function(b){return cnt[b.brickId]}).map(function(b){
         return{valor:b.brickId,etiqueta:b.nombreBrick||b.nombre||b.brickId,cnt:cnt[b.brickId]}})
       .sort(function(a,b){return b.cnt-a.cnt})}
+
+  // Zona = la del brick del PDV (localidad en Bogotá; en las demás ciudades = la ciudad).
+  if(dim==='zona'){
+    var cz={};
+    puntosG.forEach(function(p){if(!p._zona||!pasa(p,'zona'))return;cz[p._zona]=(cz[p._zona]||0)+1});
+    return Object.keys(cz).sort().map(function(k){return{valor:k,etiqueta:k,cnt:cz[k]}})}
 
   if(dim==='pdv')
     return puntosG.filter(function(p){return pasa(p,'pdv')})
@@ -553,9 +606,9 @@ function cambiarSeleccion(dim,vals){
   setFiltro(dim,vals);
   if(dim==='mes'){recalcIdx();
     var pr=document.getElementById('fPreset');if(pr)pr.value=vals.length?'PERS':'TODOS';
-    actualizar();dibujarPort();refDet();actProducto();return}
-  if(dim==='bu'){validarSku();actualizar();dibujarPort();refDet();actProducto();return}
-  actualizar();actProducto()}
+    actualizar();refDet();return}
+  if(dim==='bu'){validarSku();actualizar();refDet();return}
+  actualizar()}
 
 function iniciarSelectores(){
   CFG_SELECTORES.forEach(function(cfg){SELECTORES[cfg.dim]=new Selector(cfg)});
@@ -578,6 +631,7 @@ function iniciarUIBasica(){
   // misma carga perezosa + el ocultamiento de la barra de filtros del mapa
   // que pasaría si el usuario acabara de hacer clic en esa pestaña.
   mostrarVistaSuperior('ventasmtd');
+  iniciarDivisor();
   document.addEventListener('keydown',function(e){
     if(e.key==='Escape'){cerrarDiag();cerrarTabla();cerrarPopFiltros();
       if(typeof ybCerrarModal==='function'){ybCerrarModal();ybCerrarPop()}}});

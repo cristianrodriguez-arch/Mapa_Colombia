@@ -55,10 +55,12 @@ function centrarBricks(){if(bbBricks&&bbBricks.isValid())map.fitBounds(bbBricks,
 /* Las capas Perfect Store ('ps_*') también colorean los PDV, así que repintan
    todo (actualizar), no solo los polígonos. */
 function cambiarModo(v){
-  var antes=modoColor;modoColor=v;
+  var antes=modoColor;modoColor=v;delResaltado='';
   if(typeof ybAsegurarMapa==='function')ybAsegurarMapa();
-  if(String(antes).indexOf('ps_')===0||String(v).indexOf('ps_')===0)actualizar();
+  if(pintaPuntos(antes)||pintaPuntos(v))actualizar();
   else recolorBricks()}
+/* Las capas Perfect Store y "Delegado asignado" colorean los PUNTOS. */
+function pintaPuntos(m){return String(m).indexOf('ps_')===0||m==='asignado'}
 function alternarBricks(){
   if(document.getElementById('togBricks').checked){map.addLayer(bLayer);bLayer.bringToBack()}
   else map.removeLayer(bLayer)}
@@ -88,8 +90,11 @@ function asignarBricks(){
       if(c[0]<mn[0])mn[0]=c[0];if(c[0]>mx[0])mx[0]=c[0];
       if(c[1]<mn[1])mn[1]=c[1];if(c[1]>mx[1])mx[1]=c[1]})});
     geomB.push({id:b.brickId,polys:polys,bb:[mn[0],mn[1],mx[0],mx[1]]})});
+  var zona={};bricksG.forEach(function(b){zona[b.brickId]=b.zona||''});
   puntosG.forEach(function(p){var crm=(p.brickCrm||'').toUpperCase();
-    if(crm&&ids[crm]){p._brick=ids[crm];return}p._brick=pip(p.lng,p.lat)})}
+    p._brick=(crm&&ids[crm])?ids[crm]:pip(p.lng,p.lat);
+    // Zona del brick (localidad en Bogotá; en las demás ciudades = la ciudad).
+    p._zona=zona[p._brick]||''})}
 
 function pip(x,y){for(var i=0;i<geomB.length;i++){var g=geomB[i],bb=g.bb;
   if(x<bb[0]||x>bb[2]||y<bb[1]||y>bb[3])continue;
@@ -145,10 +150,9 @@ function recolorBricks(){
     escala=crearEscala(Object.keys(agConectado).map(function(k){return agConectado[k]}));
     bricksG.forEach(function(b){pinta(b,agConectado[b.brickId]||0,.35)});
   }else if(modoColor==='asignado'){
-    var pct={};Object.keys(agAsignPorBrick).forEach(function(id){var a=agAsignPorBrick[id];
-      pct[id]=a.total>0?100*a.asignados/a.total:0});
-    escala=crearEscala(Object.keys(pct).map(function(k){return pct[k]}));
-    bricksG.forEach(function(b){pinta(b,pct[b.brickId]||0,.35)});
+    // El color lo llevan los puntos (un tono por delegado): bricks neutros.
+    escala=function(){return SEM.sin};
+    bricksG.forEach(function(b){pinta(b,0,.35)});
   }else{
     escala=crearEscala(Object.keys(agBricks).map(function(id){return agBricks[id].total}));
     bricksG.forEach(function(b){var agg=agBricks[b.brickId];
@@ -163,19 +167,42 @@ function renderLey(pc){
     filas=Object.keys(pc).sort().map(function(k){return[pc[k],k]});
   }else if(!skuSel&&typeof ybModoMapa==='function'&&ybModoMapa()){
     filas=ybLeyendaMapa();
+  }else if(!skuSel&&modoColor==='asignado'){
+    c.innerHTML=leyendaDelegados();return
   }else{
     var etqSin=skuSel?'Sin este producto':
       modoColor==='conectado'?'Sin Sell Out conectado':
-      modoColor==='asignado'?'Sin PDV asignados':'Sin ventas';
-    var etqAlto=modoColor==='asignado'?'Alta cobertura':'Alto';
-    var etqBajo=modoColor==='asignado'?'Baja cobertura':'Muy bajo';
-    filas=[[SEM.alto,etqAlto],[SEM.medio,'Medio'],[SEM.bajo,'Bajo'],
-           [SEM.muybajo,etqBajo],[SEM.sin,etqSin]];
+      'Sin ventas';
+    filas=[[SEM.alto,'Alto'],[SEM.medio,'Medio'],[SEM.bajo,'Bajo'],
+           [SEM.muybajo,'Muy bajo'],[SEM.sin,etqSin]];
   }
   var h='';
   filas.forEach(function(f){
     h+='<span class="item"><span class="swatch" style="background:'+f[0]+'"></span>'+esc(f[1])+'</span>'});
   c.innerHTML=h}
+
+/* Leyenda de "Delegado asignado": los delegados de los PDV visibles, de más a
+   menos PDV, con su tono y equipo. Clic = resaltar sus PDV (los demás se
+   atenúan): con muchos delegados en pantalla algunos tonos se parecen, y el
+   resaltado los separa sin depender solo del color.                       */
+var delResaltado='',leyDelegados=[],TOPE_LEY_DELEGADOS=12;
+function leyendaDelegados(){
+  var col=coloresDelegados(),n={},lam={},sin=0;
+  visibles().forEach(function(p){var as=asignacionesDe(p);if(!as.length){sin++;return}
+    as.forEach(function(a){n[a.delegado]=(n[a.delegado]||0)+1;lam[a.delegado]=esLam(a)})});
+  leyDelegados=Object.keys(n).sort(function(a,b){return n[b]-n[a]||(a<b?-1:1)});
+  var h='';
+  leyDelegados.slice(0,TOPE_LEY_DELEGADOS).forEach(function(d,i){
+    var act=delResaltado===d,ap=delResaltado&&!act;
+    h+='<span class="item ley-clic'+(act?' activo':'')+(ap?' apagado':'')+'" onclick="resaltarDelegado('+i+')"'+
+      ' title="'+esc(d)+': '+n[d]+' PDV · clic para '+(act?'quitar el resaltado':'resaltar sus PDV')+'">'+
+      '<span class="swatch'+(lam[d]?' anillo':'')+'" style="background:'+col[d]+'"></span>'+
+      esc(d)+(lam[d]?' (LAM)':'')+' <span class="mini">'+n[d]+'</span></span>'});
+  if(leyDelegados.length>TOPE_LEY_DELEGADOS)
+    h+='<span class="item mini">+'+(leyDelegados.length-TOPE_LEY_DELEGADOS)+' más · filtra una ciudad para verlos</span>';
+  return h+'<span class="item"><span class="swatch" style="background:'+SEM.sin+'"></span>Sin asignar <span class="mini">'+sin+'</span></span>'}
+function resaltarDelegado(i){var d=leyDelegados[i];if(!d)return;
+  delResaltado=delResaltado===d?'':d;actualizar()}
 
 /* ══════════════ Capa de PDV ═════════════════════════════════════════ */
 /* El radio es ∝ raíz de la venta: así el ÁREA representa la magnitud y los
@@ -192,15 +219,20 @@ function dibujarPuntos(vis,vv){
   // Capa Perfect Store: el COLOR del PDV es su puntaje del pilar (el tamaño
   // sigue siendo el Sell Out). Gris = sin encuesta.
   var modoPs=!modoProd&&typeof ybModoMapa==='function'&&ybModoMapa()&&!!ybData;
+  // Capa "Delegado asignado": color = delegado; anillo = LAM (ver colorAgente).
+  var modoAg=!modoProd&&modoColor==='asignado';
 
   vis.forEach(function(p,i){
     var val=valores[i];
     if(modoProd&&val<=0&&!verSin)return;
-    var col=modoPs?ybColorPct(ybPctPunto(p)):escala(val),r=5;
+    var ag=modoAg?colorAgente(p):null;
+    var col=ag?ag.fill:modoPs?ybColorPct(ybPctPunto(p)):escala(val),r=5;
     if(mx>0&&val>0)r=5+11*Math.sqrt(val/mx);
     if(modoProd&&val<=0)r=3.5;
+    var apagado=!!(ag&&delResaltado&&ag.dels.indexOf(delResaltado)<0);
     var mk=L.circleMarker([p.lat,p.lng],{renderer:lienzo,radius:r,
-      color:'#fff',weight:1,fillColor:col,fillOpacity:(modoProd&&val<=0)?.45:.9});
+      color:ag&&ag.ring?ag.ring:'#fff',weight:ag&&ag.ring?2.5:1,opacity:apagado?.25:1,
+      fillColor:col,fillOpacity:apagado?.12:(modoProd&&val<=0)?.45:.9});
     mk.bindPopup(function(){return popupPdv(p,i)},{maxWidth:300});
     mk.addTo(pLayer);marcIdx[i]=mk;pdvIdx[i]=p;bb.extend([p.lat,p.lng])});
 
@@ -244,9 +276,9 @@ function popupPdv(p,i){
       .filter(function(x){return x.a>0}).sort(function(x,y){return y.a-x.a});
     if(lista.length)h+='<b>Por BU:</b> '+lista.slice(0,4)
       .map(function(x){return esc(x.b)+' '+fc(x.a)}).join(' · ')+'<br>';
-    h+='<button class="btn-portafolio" onclick="verPortPdv(pdvIdx['+i+'])">'+
-      'Ver portafolio (producto a producto)</button>'
-  }else if(p.dup)h+='<div class="popup-sellout"><span class="mini">POS ID repetido en el CRM: su Sell Out se cuenta una sola vez, en el primer PDV que lo usa.</span></div>';
+    h+='<button class="btn-portafolio" onclick="abrirFichaPdv(pdvIdx['+i+'])">'+
+      'Ver ficha del PDV (portafolio, asignación, Perfect Store)</button>'
+  }else if(p.dup)h+='<div class="popup-sellout"><span class="mini">POS ID repetido en Embrace: su Sell Out se cuenta una sola vez, en el primer PDV que lo usa.</span></div>';
   else h+='<div class="popup-sellout"><span class="mini">Sin Sell Out en el período</span></div>';
 
   // Perfect Store (Yoobic): puntaje por pilar de la última encuesta + "Ver fotos".
@@ -259,7 +291,7 @@ function popupPdv(p,i){
     '<b>Departamento:</b> '+esc(p.region)+' · <b>Ciudad:</b> '+esc(p.poblacion)+'<br>'+
     (p._brick?'<b>Brick:</b> '+esc(p._brick)+'<br>':'')+
     (tieneAgente(p)?'<b>Agente:</b> '+esc(asignacionesDe(p).map(function(a){
-      return a.delegado+(a.tipo?' ('+a.tipo+')':'')}).join(', '))+'<br>':'')+
+      return a.delegado+(a.team?' ('+a.team+')':'')}).join(', '))+'<br>':'')+
     '<a class="enlace" href="https://www.google.com/maps?q='+p.lat+','+p.lng+
     '" target="_blank" rel="noopener">Abrir en Google Maps</a></div>';
   return h}

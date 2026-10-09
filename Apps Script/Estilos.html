@@ -37,8 +37,17 @@ html,body{margin:0;padding:0;height:100%;background:var(--lienzo);color:var(--in
 
 /* ── Rejilla general: cabecera / avisos / cuerpo. 100vh, scroll interno ── */
 .app{display:grid;grid-template-rows:auto auto minmax(0,1fr);gap:10px;height:100vh;padding:10px}
-.cuerpo{display:grid;grid-template-columns:minmax(0,1fr) 400px;
-  grid-template-rows:minmax(0,1fr);gap:10px;min-height:0}
+.cuerpo{display:grid;grid-template-columns:minmax(0,1fr) 10px var(--ancho-rail,400px);
+  grid-template-rows:minmax(0,1fr);gap:0;min-height:0}
+/* Divisor arrastrable entre mapa y panel (el hueco de 10 px que antes era gap). */
+.divisor{position:relative;cursor:col-resize;touch-action:none;outline:none}
+.divisor::after{content:'';position:absolute;top:0;bottom:0;left:4px;width:2px;border-radius:2px;
+  background:transparent;transition:background .15s ease}
+.divisor:hover::after,.divisor:focus-visible::after,.divisor.arrastrando::after{background:var(--accent)}
+.divisor::before{content:'';position:absolute;top:50%;left:3px;width:4px;height:28px;margin-top:-14px;
+  border-radius:3px;background:var(--borde-2)}
+body.redimensionando{cursor:col-resize;user-select:none}
+body.redimensionando #map{pointer-events:none}
 .card{background:var(--surface);border:1px solid var(--borde);border-radius:var(--radio-lg);
   box-shadow:var(--sombra)}
 
@@ -141,6 +150,12 @@ html,body{margin:0;padding:0;height:100%;background:var(--lienzo);color:var(--in
 .leyenda-inline{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-left:auto}
 .leyenda-inline .item{display:flex;align-items:center;gap:5px;font-size:11px;color:var(--ink-2)}
 .leyenda-inline .swatch{width:11px;height:11px;border-radius:3px;border:1px solid rgba(17,24,39,.12)}
+/* Leyenda de "Delegado asignado": clic = resaltar; el LAM lleva anillo como su punto. */
+.leyenda-inline .ley-clic{cursor:pointer;border-radius:4px;padding:1px 3px}
+.leyenda-inline .ley-clic:hover{background:var(--lienzo)}
+.leyenda-inline .ley-clic.activo{color:var(--ink);font-weight:700}
+.leyenda-inline .ley-clic.apagado{opacity:.4}
+.leyenda-inline .swatch.anillo{border-radius:50%;box-shadow:0 0 0 2px #1f2937}
 .mapa-wrap{position:relative;flex:1;min-height:0}
 #map{position:absolute;inset:0;border-radius:0 0 var(--radio-lg) var(--radio-lg)}
 .banda-prod{position:absolute;top:10px;left:52px;right:10px;z-index:600;
@@ -157,6 +172,18 @@ html,body{margin:0;padding:0;height:100%;background:var(--lienzo);color:var(--in
    fila que haga falta, sirvan 3 (modo general) o 4 (modo producto). Antes
    las 4 tarjetas eran identicas sin ninguna jerarquia entre ellas. */
 .kpis{display:flex;flex-wrap:wrap;gap:8px;flex-shrink:0}
+/* KPIs del mapa en UNA franja (2026-10-09): las 4 tarjetas ocupaban ~370 px de
+   alto y le quitaban espacio a la tabla, que es lo que de verdad se usa. */
+#kpis{gap:0;background:var(--surface);border:1px solid var(--borde);
+  border-radius:var(--radio);box-shadow:var(--sombra)}
+#kpis .kpi,#kpis .kpi:first-child{flex:1 1 92px;border:none;border-radius:0;box-shadow:none;
+  background:transparent;padding:6px 9px;text-align:left}
+#kpis .kpi+.kpi{border-left:1px solid var(--borde)}
+#kpis .kpi .kpi-valor,#kpis .kpi:first-child .kpi-valor{font-size:16px;margin-top:1px}
+#kpis .kpi:first-child .kpi-valor{color:var(--accent-2)}
+#kpis .kpi:first-child .kpi-label,#kpis .kpi:first-child .kpi-nota{color:inherit;opacity:1}
+#kpis .kpi-label{font-size:9px}
+#kpis .kpi-nota{font-size:9.5px}
 .kpi{flex:1 1 130px;min-width:0;background:var(--surface);border:1px solid var(--borde);
   border-radius:var(--radio);box-shadow:var(--sombra);padding:9px 8px;text-align:center}
 .kpi:first-child{flex-basis:100%;text-align:left;padding:13px 16px;
@@ -181,7 +208,8 @@ html,body{margin:0;padding:0;height:100%;background:var(--lienzo);color:var(--in
   border-bottom:2px solid transparent;margin-bottom:-1px}
 .tab:hover{color:var(--ink)}
 .tab.activa{color:var(--accent);border-bottom-color:var(--accent)}
-.panel-body{flex:1;min-height:0;overflow-y:auto;padding:10px 12px 16px}
+.panel-body{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;padding:10px 12px 16px}
+#tablaRail td:first-child{overflow-wrap:anywhere}
 .bloque{margin-bottom:18px}
 .bloque h2{margin:0 0 6px;font-size:11.5px;font-weight:700;text-transform:uppercase;
   letter-spacing:.04em;color:var(--ink-2)}
@@ -208,7 +236,11 @@ html,body{margin:0;padding:0;height:100%;background:var(--lienzo);color:var(--in
 .barra-fila:hover .barra-relleno{background:var(--accent-2)}
 
 /* ── Tablas ─────────────────────────────────────────────────────────── */
-.tabla-cab{display:flex;align-items:baseline;gap:8px;margin-bottom:6px}
+.tabla-cab{display:flex;align-items:center;gap:8px;margin-bottom:4px}
+/* Encabezado compacto de la tabla del panel: la tabla es lo que importa. */
+.tabla-rail-tit{margin:0;flex:1;font-size:11px;font-weight:700;text-transform:uppercase;
+  letter-spacing:.05em;color:var(--ink-2)}
+.btn-mini{padding:3px 9px;font-size:11.5px}
 .tab-datos{width:100%;border-collapse:collapse;font-size:11.5px}
 .tab-datos th{position:sticky;top:0;z-index:1;background:var(--surface);text-align:left;
   padding:5px 6px;font-size:9.5px;text-transform:uppercase;letter-spacing:.04em;
@@ -222,6 +254,19 @@ html,body{margin:0;padding:0;height:100%;background:var(--lienzo);color:var(--in
 .tab-datos tr.fila-total td{font-weight:700;border-top:2px solid var(--ink);
   border-bottom:none;background:var(--lienzo)}
 .tab-datos tr.fila-total:hover{background:var(--lienzo);cursor:default}
+/* Encabezados ordenables (Tabla Detalle PDV y Ficha PDV) */
+.tab-datos th.ordenable{cursor:pointer;user-select:none}
+.tab-datos th.ordenable:hover{color:var(--ink)}
+.tab-datos th.ordenable.activa{color:var(--ink)}
+.tab-datos th .flecha{display:inline-block;width:10px;margin-left:2px;font-size:8px}
+/* TOTAL fijo al pie de su contenedor con scroll (como el encabezado arriba).
+   Con border-collapse el borde de una celda sticky no viaja con ella: la raya
+   superior se pinta con box-shadow. */
+.tab-datos tfoot tr.fila-total td{position:sticky;bottom:0;z-index:1;border-top:none;
+  box-shadow:inset 0 2px 0 var(--ink)}
+/* El sticky se ancla dentro del padding del .panel-body (16 px abajo): sin este
+   desplazamiento las filas se asomaban por debajo del TOTAL. */
+#tablaRail tfoot tr.fila-total td{bottom:-16px}
 
 /* ── Overlay y modales ──────────────────────────────────────────────── */
 .overlay{position:absolute;inset:0;z-index:1100;display:flex;align-items:center;justify-content:center;
@@ -242,7 +287,41 @@ html,body{margin:0;padding:0;height:100%;background:var(--lienzo);color:var(--in
 .modal h3{margin:0 0 10px;font-size:14.5px}
 .modal pre{background:var(--lienzo);border:1px solid var(--borde);border-radius:var(--radio);
   padding:12px;font-size:11.5px;white-space:pre-wrap;word-break:break-word;margin:0}
-.caja-tabla{max-width:1020px}
+/* Tabla ampliada: ocupa casi toda la pantalla y la tabla todo el alto libre.
+   Antes era 760 px × 58 vh y en un portátil había que deslizar con 15 PDV. */
+#modalTabla{padding:16px}
+.modal .caja.caja-tabla{max-width:none;width:100%;height:100%;max-height:none;
+  display:flex;flex-direction:column;overflow:hidden}
+.caja-tabla .tabla-wrap{flex:1;min-height:0;max-height:none}
+.caja-tabla [hidden]{display:none!important}
+.tabla-cab-modal{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:8px}
+.modal .tabla-cab-modal h3{margin:0}
+.tabla-acciones{margin-left:auto;display:flex;gap:8px}
+/* Barra de filtros de la Tabla Detalle PDV (mismo control que la cabecera). */
+.t-filtros{display:flex;flex-wrap:wrap;gap:8px 10px;align-items:flex-end;margin:0 0 10px}
+.t-campos{display:contents}
+.t-filtros .campo{display:flex;flex-direction:column;gap:3px;min-width:130px;flex:1 1 150px;max-width:230px}
+.t-filtros label{display:flex;align-items:center;gap:4px;font-size:10.5px;text-transform:uppercase;
+  letter-spacing:.04em;color:var(--ink-2)}
+.t-filtros .acciones{display:flex;gap:8px;align-items:flex-end}
+.t-filtros .pop-filtros{left:auto;right:0}
+/* Ficha de un PDV (clic en una fila de la tabla ampliada) */
+.ficha-pdv{flex:1;min-height:0;display:flex;flex-direction:column;gap:10px}
+.ficha-info{font-size:12px;color:var(--ink-2);line-height:1.5}
+.ficha-kpis{display:flex;gap:8px;flex-wrap:wrap}
+.ficha-kpi{flex:1 1 150px;min-width:0;background:var(--surface);border:1px solid var(--borde);
+  border-radius:var(--radio);box-shadow:var(--sombra);padding:8px 10px}
+.ficha-cuerpo{flex:1;min-height:0;display:grid;grid-template-columns:minmax(300px,2fr) 3fr;gap:16px}
+.ficha-col{min-height:0;display:flex;flex-direction:column;gap:6px;overflow:auto}
+.ficha-col h4{margin:4px 0 0;font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--ink-2)}
+.ficha-col .tabla-wrap{flex:1;min-height:0;max-height:none}
+.ficha-col .tab-datos tbody tr:hover{cursor:default}
+.ficha-col .btn-portafolio{flex:none}
+@media(max-width:900px){
+  .ficha-pdv{overflow:auto}
+  .ficha-cuerpo{grid-template-columns:1fr;flex:none}
+  .ficha-col{overflow:visible}
+  .ficha-col .tabla-wrap{max-height:60vh}}
 .tabla-controles{display:flex;align-items:center;gap:14px;margin:6px 0 10px;flex-wrap:wrap}
 .tabla-controles select{padding:4px 6px;border:1px solid var(--borde);border-radius:var(--radio);
   background:var(--surface);color:var(--ink);font-size:12.5px;font-family:inherit}
@@ -296,6 +375,7 @@ html,body{margin:0;padding:0;height:100%;background:var(--lienzo);color:var(--in
    Choices trae `.choices__list[aria-expanded]{width:100%}`, que por especificidad
    (0,2,0) gana a un `.choices__list--dropdown` pelado. */
 .filtros .choices .choices__list--dropdown,
+.t-filtros .choices .choices__list--dropdown,
 .mtd-filtros .choices .choices__list--dropdown{border:1px solid var(--borde);
   border-radius:var(--radio);box-shadow:0 8px 22px rgba(17,24,39,.14);z-index:3000;
   width:270px;min-width:100%;max-width:90vw}
@@ -317,7 +397,8 @@ html,body{margin:0;padding:0;height:100%;background:var(--lienzo);color:var(--in
   .acciones{padding-top:0}
 }
 @media(max-width:1000px){
-  .cuerpo{grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(0,55fr) minmax(0,45fr)}
+  .cuerpo{grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(0,55fr) minmax(0,45fr);gap:10px}
+  .divisor{display:none}
 }
 @media(max-width:780px){
   /* El mapa manda: la leyenda pasa a su propia línea en vez de apretarse
