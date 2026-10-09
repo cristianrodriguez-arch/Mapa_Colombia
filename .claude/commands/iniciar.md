@@ -1,26 +1,28 @@
 ---
-description: Inicio de sesión — sincroniza Git (git pull) y Apps Script (clasp pull)
+description: Inicio — trae lo último de GitHub y Apps Script y resume qué hizo el compañero
 disable-model-invocation: true
-allowed-tools: Bash(git status:*), Bash(git pull:*), Bash(git fetch:*), Bash(git log:*), Bash(git diff:*), Bash(git stash:*), Bash(clasp pull:*), Bash(clasp status:*)
+allowed-tools: Bash(bash .claude/scripts/iniciar.sh:*), Bash(git stash:*), Bash(git checkout:*), Bash(git add:*), Bash(git commit:*)
 ---
 
-Rutina de INICIO de trabajo. Ejecuta los pasos en orden, desde la raíz del repo (donde está `.clasp.json`), y detente a preguntar si algo no cuadra. Responde en español.
+Resultado de la sincronización (ya ejecutada):
 
-1. **Estado local**: `git status --short`.
-   - Si hay cambios sin commitear, NO sigas: muéstralos y pregunta si hacer `git stash`, commitearlos o abortar.
+!`bash .claude/scripts/iniciar.sh`
 
-2. **Git primero** (el repo es la fuente de verdad): `git pull --rebase origin main`.
-   - Si hay conflicto, para y explica qué archivos chocan; no lo resuelvas sin preguntar.
-   - Resume en 1–3 líneas qué trajo (`git log --oneline ORIG_HEAD..HEAD`), indicando quién hizo cada commit.
+Responde en español y breve. No leas archivos ni ejecutes nada más salvo que arriba haya un PARADO o un DESFASE: el resumen sale solo de los mensajes de commit.
 
-3. **Apps Script después**: `clasp pull`.
-   - Si falla por autenticación, dile al usuario que ejecute `clasp login` con la cuenta que tiene acceso al proyecto y para ahí.
+**Si hubo commits nuevos**, resúmelos agrupados por persona, en lenguaje claro (qué cambió en el visor o en los datos y para qué), sin hashes ni nombres de archivo salvo que importen. Si algún commit trae "Ojo:", ponlo primero. Formato:
 
-4. **Comprobar desfase**: `git status --short` y `git diff --stat`.
-   - Sin cambios → todo sincronizado.
-   - Con cambios → alguien editó en el editor web de Apps Script (o hizo `clasp push` sin `git push`). Muestra el diff resumido y pregunta:
-     a) conservarlos → commit `chore(apps-script): traer cambios hechos en el editor web`, o
-     b) descartarlos → `git checkout -- "Apps Script/"` (el siguiente `/finalizar` volverá a dejar el Apps Script igual que Git).
-     No decidas tú.
+> **Sebitotis** — 2 cambios (jue 08/10, noche)
+> - Nueva pestaña Yoobic · Perfect Store: …
+> - …
+>
+> **Ojo:** …
 
-5. Cierra con un resumen corto: commits nuevos traídos, si hubo desfase con Apps Script y que todo está listo para trabajar.
+**Sin commits nuevos** → una línea.
+
+**Si algo se paró:**
+- Cambios sin commitear → muéstralos y pregunta: guardarlos aparte (`git stash`), commitearlos o dejarlo así. Después vuelve a ejecutar `bash .claude/scripts/iniciar.sh`.
+- Conflicto en git pull o fallo de clasp → explica qué pasó en 1–2 líneas y para.
+- DESFASE con Apps Script (alguien editó en el editor web sin pasar por GitHub) → muestra la lista y pregunta si conservar esos cambios (commit `chore(apps-script): traer cambios hechos en el editor web`) o descartarlos (`git checkout -- "Apps Script/"`). No decidas tú.
+
+Termina con "Listo para trabajar." (o qué falta para estarlo).
