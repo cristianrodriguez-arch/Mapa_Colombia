@@ -40,6 +40,12 @@ git pull origin main
 
 Esto trae los últimos cambios que hizo tu equipo.
 
+> **Atajo con Claude Code**: escribe `/iniciar` al empezar y `/finalizar` al terminar.
+> - `/iniciar` → `git pull` + `clasp pull`, y avisa si alguien editó en el editor web de Apps Script sin pasar por Git.
+> - `/finalizar [mensaje opcional]` → commit + `git pull --rebase` + pruebas (`tests/`) + comparación con el Apps Script remoto + `clasp push` + `git push`.
+>
+> Viven en `.claude/commands/` (versionados en Git). Requisito una vez por equipo: `npm i -g @google/clasp` y `clasp login` con una cuenta con acceso al proyecto.
+
 ---
 
 ### 3️⃣ Hacer un Cambio: En Palabras Simples
