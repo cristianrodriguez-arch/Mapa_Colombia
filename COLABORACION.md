@@ -44,6 +44,7 @@ Esto trae los últimos cambios que hizo tu equipo.
 > - `/iniciar` → trae lo último de GitHub y de Apps Script y te **resume qué hizo el compañero** (sale de sus mensajes de commit). Avisa si alguien editó en el editor web de Apps Script sin pasar por GitHub.
 > - `/probar` → para **ver tus cambios en la URL `/dev` antes de cerrar**: trae lo del compañero, corre las pruebas y hace `clasp push` sin tocar GitHub. Úsalo en vez del `clasp push` manual (que pisa lo del otro si no lo has traído). Cierra luego con `/finalizar`.
 > - `/finalizar [nota opcional]` → Claude escribe un **commit pensado para que lo lea el otro**, y el script `.claude/scripts/finalizar.sh` integra lo del compañero, corre las pruebas de `tests/`, comprueba el Apps Script remoto y hace `clasp push` + `git push`.
+>   Al final **publica para el equipo**: crea una versión nueva y la pone en la implementación de producción que ya existe, así el link no cambia. Para subir sin publicar: `/finalizar sin publicar`.
 >
 > Por eso importa el mensaje de commit: es lo que el otro leerá al empezar su día.
 >

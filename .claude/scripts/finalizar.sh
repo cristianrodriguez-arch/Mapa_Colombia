@@ -1,13 +1,20 @@
 #!/usr/bin/env bash
 # /finalizar — después del commit: integra lo del compañero, prueba, compara con Apps Script y sube.
-#   bash .claude/scripts/finalizar.sh [--simular] [--pisar-remoto]
-#   --simular       hace todo menos clasp push y git push
+#   bash .claude/scripts/finalizar.sh [--simular] [--pisar-remoto] [--sin-publicar]
+#   --simular       hace todo menos clasp push, git push y publicar
 #   --pisar-remoto  sube aunque el proyecto en Google tenga cambios que no están en GitHub
+#   --sin-publicar  sube a GitHub y Apps Script pero NO cambia lo que ve el equipo
 cd "$(git rev-parse --show-toplevel)" || exit 1
-simular=0; pisar=0
+simular=0; pisar=0; publicar=1
 for a in "$@"; do
-  case $a in --simular) simular=1 ;; --pisar-remoto) pisar=1 ;; esac
+  case $a in --simular) simular=1 ;; --pisar-remoto) pisar=1 ;; --sin-publicar) publicar=0 ;; esac
 done
+
+# Implementación de PRODUCCIÓN del visor (la URL que usa el equipo, "2.7_Mapa_Estrategico").
+# Publicar = crear una versión nueva y mover ESTA implementación a ella: la URL no cambia.
+# Nunca `clasp deploy` sin -i: eso crea una implementación nueva, con otro link.
+# La otra implementación (@HEAD) es la de prueba (/dev) y no se toca.
+DEPLOY_PROD=AKfycbyZkO9dO6K8H5I_j_t5HPrYkhbp2r14Oe8M7yhFpxg3KVVpmnuPu-o7ftnBDodEjwxC
 
 [ "$(git branch --show-current)" = main ] || { echo "PARADO: no estás en main."; exit 1; }
 if [ -n "$(git status --porcelain)" ]; then
@@ -91,3 +98,20 @@ if ! git push --quiet origin main 2>&1; then
 fi
 echo "GIT PUSH: OK. Subido:"
 echo "$pendientes"
+
+# 5. Publicar para el equipo: versión nueva + la MISMA implementación de producción apunta a ella.
+if [ $publicar = 0 ]; then
+  echo "SIN PUBLICAR: producción sigue con su versión anterior (se pidió --sin-publicar)."
+  exit 0
+fi
+desc=$(git log -1 --format=%s | cut -c1-90)
+if ! salida=$(clasp create-version "$desc" 2>&1); then
+  echo "PARADO: subido a GitHub y Apps Script, pero no se pudo crear la versión:"; echo "$salida" | tail -n 5
+  exit 1
+fi
+version=$(echo "$salida" | grep -io 'version [0-9]\+' | grep -o '[0-9]\+' | tail -n 1)
+if [ -z "$version" ] || ! salida=$(clasp update-deployment "$DEPLOY_PROD" -V "$version" -d "$desc" 2>&1); then
+  echo "PARADO: se creó la versión ${version:-?} pero producción no se movió a ella:"; echo "$salida" | tail -n 5
+  exit 1
+fi
+echo "PUBLICADO: producción ahora sirve la versión $version (misma URL de siempre)."
