@@ -3,8 +3,9 @@
     python tests/test_etl_s3.py
 
 Reproduce lo que trae la hoja 'Final' de los "3. Affiliate_Master so": el de 2025 SIN
-columna POS_ID (el PDV se identifica por SF_ID) y el de 2026 con filas de Panamá que el
-filtro Affiliate = Colombia debe descartar. No necesita config.py ni toca Drive.
+columna POS_ID y el de 2026 con filas de Panamá que el filtro Affiliate = Colombia debe
+descartar. El PDV es el POS_ID (SAP ID + código interno): en 2025 se toma el que su SF_ID
+tiene en 2026 y, si no, las demás reglas de resolver_pos_id. No necesita config.py ni toca Drive.
 """
 import json
 import sys
@@ -70,6 +71,14 @@ def main():
             fila(ENC_2025, Fecha=datetime(2025, 2, 1), **{"Sold To ID": "11026707", "SF_ID": "0014I00001AAA",
                  "Ean_isdin": "8429420248977", "Ean_description": "FP FUSION WATER", "Origin": "DROGUERIAS CRUZ VERDE SAS",
                  "Units": "5", "Amount": "500,5", "ISDIN_PDV_DESC": "CV CENTRO", "KAM": "ANGELICA MONSALVE"}, **e),
+            # SF_ID que ya viene como "SAPID_código" → ese es el POS_ID.
+            fila(ENC_2025, Fecha=datetime(2025, 1, 1), **{"Sold To ID": "11026727", "SF_ID": "11026727_FI",
+                 "Ean_isdin": "8470001901200", "Origin": "BELLA PIEL", "Units": 1, "Amount": 100,
+                 "ISDIN_PDV_DESC": "FI_BELLA PIEL FERIA", "KAM": "MANUEL CAMARGO"}, **e),
+            # SF_ID que no está en 2026 → SAP ID + código de la descripción (y casa con el POS_ID de 2026).
+            fila(ENC_2025, Fecha=datetime(2025, 1, 1), **{"Sold To ID": "11049529", "SF_ID": "0014I00009ZZZQAA",
+                 "Ean_isdin": "8470001901200", "Origin": "FARMATODO COLOMBIA S.A.", "Units": 2, "Amount": 200,
+                 "ISDIN_PDV_DESC": "1023 - FARMATODO CENTRO MAYOR", "KAM": "ANGELICA MONSALVE"}, **e),
         ], [("8429420248977", "Foto")])
         libro(f26, ENC_2026, [
             fila(ENC_2026, Fecha=datetime(2026, 1, 1), **{"Sold To ID": "11026707", "SF_ID": "0014I00001AAA",
@@ -79,6 +88,10 @@ def main():
             fila(ENC_2026, Fecha=datetime(2026, 1, 1), **{"Sold To ID": "11026712", "SF_ID": "MP_1",
                  "Ean_isdin": "8470001901200", "Ean_description": "REPARADOR LABIAL", "Origin": "MEDIPIEL S.A.",
                  "Units": 3, "Amount": 300, "ISDIN_PDV_DESC": "MEDIPIEL ANDINO", "KAM": "SARA CARDONA"}, **e),
+            fila(ENC_2026, Fecha=datetime(2026, 1, 1), **{"Sold To ID": "11049529", "SF_ID": "001P10000NUEVOQAA",
+                 "POS_ID": "11049529_1023", "Ean_isdin": "8470001901200", "Origin": "FARMATODO COLOMBIA S.A.",
+                 "Units": 3, "Amount": 330, "ISDIN_PDV_DESC": "1023 - FARMATODO CENTRO MAYOR",
+                 "KAM": "ANGELICA MONSALVE"}, **e),
             fila(ENC_2026, Fecha=datetime(2026, 1, 1), **{"Sold To ID": "111", "SF_ID": "111_S566",
                  "Ean_isdin": "8470001901200", "Origin": "ARROCHA", "Units": 4, "Amount": 73752,
                  "Currency": "USD", "Affiliate": "Panama", "Canal": "ND", "Sub_Canal": "ND", "KAM": "MANUEL CAMARGO"}),
@@ -95,14 +108,23 @@ def main():
         cubo = json.loads((salida / "s3_cubo.json").read_text(encoding="utf-8"))
         t("meses de los dos años, ordenados", cubo["meses"] == ["2025-01", "2025-02", "2026-01"])
         cli = {c[0]: c for c in cubo["clientes"]}
-        t("Panamá queda fuera (filtro Affiliate)", "111" not in cli and len(cli) == 2)
+        t("Panamá queda fuera (filtro Affiliate)", "111" not in cli and len(cli) == 4)
         t("KAM del cliente = el de su mes más reciente", cli["11026707"][2] == "SARA CARDONA")
         pdv = {p[0]: p for p in cubo["pdv"]}
-        t("el PDV de 2025 (sin POS_ID) y el de 2026 son el mismo por SF_ID", "0014I00001AAA" in pdv and len(pdv) == 2)
-        t("descripción y POS_ID del PDV = los más recientes",
-          pdv["0014I00001AAA"][1] == "CV CENTRO NUEVO" and pdv["0014I00001AAA"][7] == "11026707_001")
+        t("PDV = POS_ID: el de 2025 (sin POS_ID) toma el que su SF_ID tiene en 2026 ('11026707:001' → '_')",
+          "11026707_001" in pdv and "0014I00001AAA" not in pdv)
+        t("SF_ID ya compuesto 'SAPID_código' = POS_ID", "11026727_FI" in pdv)
+        t("SF_ID que no está en 2026: SAP ID + código de la descripción, y se junta con el POS_ID de 2026",
+          "11049529_1023" in pdv and "0014I00009ZZZQAA" not in pdv and "001P10000NUEVOQAA" not in pdv)
+        t("sin POS_ID ni forma de armarlo: se queda el SF_ID", "MP_1" in pdv and len(pdv) == 4)
+        t("descripción del PDV = la más reciente", pdv["11026707_001"][1] == "CV CENTRO NUEVO")
+        t("el manifiesto cuenta las filas de cada regla", cubo["meta"]["pdv_pos_id"] == {
+            "pos_id": 2, "sf_id_en_otro_anio": 2, "sf_id_compuesto": 1, "codigo_descripcion": 1, "sin_pos_id": 1})
+        ifa = [p[0] for p in cubo["pdv"]].index("11049529_1023")
+        t("Farmatodo 1023: 2025 y 2026 en el MISMO punto de venta",
+          sorted(r[1:] for r in cubo["pm"] if r[0] == ifa) == [[0, 2, 200], [2, 3, 330]])
         ic = [c[0] for c in cubo["clientes"]].index("11026707")
-        ip = [p[0] for p in cubo["pdv"]].index("0014I00001AAA")
+        ip = [p[0] for p in cubo["pdv"]].index("11026707_001")
         cs = sorted(r for r in cubo["cs"] if r[0] == ic)
         t("cliente × producto × mes con coma decimal ('500,5')",
           [r[2:] for r in cs] == [[0, 10, 1000], [1, 5, 500.5], [2, 12, 1200]])

@@ -817,8 +817,10 @@ def ejecutar(cfg, limite):
 # el cliente de cada fila, que los archivos del mapa no traen; por eso lee la
 # hoja 'Final' de cada "3. Affiliate_Master so" listado en FUENTES_S3 (uno por
 # año). Ahí el cliente es Origin + Sold To ID (= SAP ID), y el punto de venta es
-# SF_ID (en todos los años; POS_ID solo existe desde 2026). No toca ninguno de
-# los archivos so_*.json del mapa.
+# el POS_ID (SAP ID + "_" + código interno del cliente, la misma clave del mapa y
+# del CRM). El libro de 2025 no trae POS_ID: se toma el que ese SF_ID tiene en 2026
+# (≈94 % del importe de 2025) y, si no, las reglas de resolver_pos_id. No toca
+# ninguno de los archivos so_*.json del mapa.
 #
 # Archivos (prefijo s3_, JSON ASCII para que la web app los pueda cachear):
 #   s3_cubo.json      catálogos + cliente×producto×mes (cs) + PDV×mes (pm)
@@ -847,6 +849,41 @@ COLUMNAS_S3_DEF = {
 }
 
 
+# Código interno del PDV al inicio de su descripción: "883_CRUZ_VERDE…", "CC100 MEDIPIEL…",
+# "1094 - FARMATODO…", "ZC_BELLA PIEL…" (en 2026 coincide con el POS_ID en el 94 % de las filas).
+RE_COD_PDV = re.compile(r"^\s*([A-Za-z]{0,3}\d+[A-Za-z]?|[A-Za-z]{2})\s*[-_ ]")
+_cod_pdv_cache = {}
+
+
+def codigo_pdv_desc(desc):
+    if desc not in _cod_pdv_cache:
+        m = RE_COD_PDV.match(desc or "")
+        _cod_pdv_cache[desc] = m.group(1) if m else ""
+    return _cod_pdv_cache[desc]
+
+
+def resolver_pos_id(tok, sf_pos):
+    """POS_ID (= SAP ID del cliente + "_" + código interno del PDV) de una clave provisional
+    (pos, sf, cliente, código de la descripción). El libro de 2025 no trae POS_ID, así que:
+      1. el POS_ID de la fila, si lo trae (2026);
+      2. el POS_ID que ese mismo SF_ID tiene en las filas que sí lo traen (el más frecuente);
+      3. el SF_ID, si ya viene como "SAPID_código";
+      4. SAP ID + el código al inicio de la descripción;
+      5. si nada de eso, el SF_ID tal cual.
+    Devuelve (clave, regla)."""
+    pos, sf, cli, cod = tok
+    if pos:
+        return pos, "pos_id"
+    if sf in sf_pos:
+        return max(sf_pos[sf].items(), key=lambda kv: kv[1])[0], "sf_id_en_otro_anio"
+    sfn = normalizar_pos(sf)
+    if "_" in sfn and sfn.startswith(cli + "_"):
+        return sfn, "sf_id_compuesto"
+    if cod:
+        return normalizar_pos(f"{cli}_{cod}"), "codigo_descripcion"
+    return sf, "sin_pos_id"
+
+
 def _ultimo(info, clave, anio_mes, valor):
     """Guarda en info[clave] el valor del mes más reciente (empates: el primero)."""
     if not valor:
@@ -868,8 +905,12 @@ def ejecutar_s3(cfg, limite=None):
     n_frag_sku = int(getattr(cfg, "N_FRAGMENTOS_S3_SKU", 16))
 
     cs = defaultdict(lambda: [0.0, 0.0])        # (cliente, sku, mes)
-    pm = defaultdict(lambda: [0.0, 0.0])        # (pdv, mes)
-    ps = defaultdict(lambda: [0.0, 0.0])        # (pdv, sku, mes)
+    # PDV: durante la lectura, una clave PROVISIONAL tok = (pos, sf, cliente, código de la
+    # descripción); al final cada tok se resuelve a su POS_ID (resolver_pos_id) y se juntan.
+    pm = defaultdict(lambda: [0.0, 0.0])        # (tok, mes)
+    ps = defaultdict(lambda: [0.0, 0.0])        # (tok, sku, mes)
+    sf_pos = defaultdict(lambda: defaultdict(int))   # SF_ID -> {POS_ID: filas}, de las filas que traen los dos
+    filas_tok = defaultdict(int)
     info_cli, info_pdv, info_sku = defaultdict(dict), defaultdict(dict), defaultdict(dict)
     kam_mes = defaultdict(lambda: defaultdict(int))   # (cliente, mes) -> {kam: filas}
     productos = {}
@@ -915,22 +956,28 @@ def ejecutar_s3(cfg, limite=None):
                     continue
                 nombre_cli = normalizar_texto(celda(fila, col.get("cliente")))
                 cli = normalizar_codigo(celda(fila, col.get("cliente_id"))) or normalizar_encabezado(nombre_cli).upper()
-                pdv = normalizar_texto(celda(fila, col.get("pdv"))) or normalizar_pos(celda(fila, col.get("pos_id")))
+                sf = normalizar_texto(celda(fila, col.get("pdv")))
+                pos = normalizar_pos(celda(fila, col.get("pos_id")))
+                desc_pdv = normalizar_texto(celda(fila, col.get("pdv_desc")))
                 sku = normalizar_codigo(celda(fila, col["sku"]))
-                if not cli or not pdv or not sku:
-                    conteo["descartadas_" + ("cliente" if not cli else ("pdv" if not pdv else "sku"))] += 1
+                if not cli or not (sf or pos) or not sku:
+                    conteo["descartadas_" + ("cliente" if not cli else ("pdv" if not (sf or pos) else "sku"))] += 1
                     continue
+                if pos and sf:
+                    sf_pos[sf][pos] += 1
+                tok = (pos, sf, cli, codigo_pdv_desc(desc_pdv))
+                filas_tok[tok] += 1
                 u = normalizar_numero(celda(fila, col["units"])) or 0.0
                 a = normalizar_numero(celda(fila, col["amount"])) or 0.0
-                for acumulado in (cs[(cli, sku, am)], pm[(pdv, am)], ps[(pdv, sku, am)]):
+                for acumulado in (cs[(cli, sku, am)], pm[(tok, am)], ps[(tok, sku, am)]):
                     acumulado[0] += u
                     acumulado[1] += a
-                ic, ip, isk = info_cli[cli], info_pdv[pdv], info_sku[sku]
+                ic, ip, isk = info_cli[cli], info_pdv[tok], info_sku[sku]
                 _ultimo(ic, "nombre", am, nombre_cli)
                 kam = normalizar_texto(celda(fila, col.get("kam"))).upper()
                 if kam:
                     kam_mes[(cli, am)][kam] += 1
-                _ultimo(ip, "desc", am, normalizar_texto(celda(fila, col.get("pdv_desc"))))
+                _ultimo(ip, "desc", am, desc_pdv)
                 _ultimo(ip, "cli", am, cli)
                 _ultimo(ip, "ciudad", am, normalizar_texto(celda(fila, col.get("ciudad"))).upper())
                 _ultimo(ip, "depto", am, normalizar_texto(celda(fila, col.get("departamento"))).upper())
@@ -941,6 +988,29 @@ def ejecutar_s3(cfg, limite=None):
                 conteo["validas"] += 1
             origen.append({"archivo": ruta.name, "hoja": hoja, "filas_validas": leidas,
                            "columnas": {c: encabezados[i] for c, i in mapeo.items()}})
+
+    # PDV = POS_ID: cada clave provisional se resuelve y se juntan las que caen en el mismo
+    # POS_ID (descripción, ciudad, etc. = las del mes más reciente).
+    clave_pdv, reglas_pdv = {}, defaultdict(int)
+    for tok in info_pdv:
+        clave_pdv[tok], regla = resolver_pos_id(tok, sf_pos)
+        reglas_pdv[regla] += filas_tok[tok]
+    pm_tok, ps_tok, info_tok = pm, ps, info_pdv
+    pm, ps, info_pdv = defaultdict(lambda: [0.0, 0.0]), defaultdict(lambda: [0.0, 0.0]), defaultdict(dict)
+    for (tok, am), v in pm_tok.items():
+        x = pm[(clave_pdv[tok], am)]
+        x[0] += v[0]
+        x[1] += v[1]
+    for (tok, s, am), v in ps_tok.items():
+        x = ps[(clave_pdv[tok], s, am)]
+        x[0] += v[0]
+        x[1] += v[1]
+    for tok, inf in info_tok.items():
+        destino = info_pdv[clave_pdv[tok]]
+        for k, (am, valor) in inf.items():
+            if k not in destino or am > destino[k][0]:
+                destino[k] = (am, valor)
+    del pm_tok, ps_tok, info_tok
 
     # KAM del cliente = el que más filas tiene en su mes más reciente.
     kam_cli = {}
@@ -988,7 +1058,8 @@ def ejecutar_s3(cfg, limite=None):
         "bus": bus,
         "fragmentos": {"pdv": n_frag_pdv, "sku": n_frag_sku},
         "meta": {"fuentes": origen, "filas": dict(sorted(conteo.items())),
-                 "filtros": dict(getattr(cfg, "FILTROS", None) or {})},
+                 "filtros": dict(getattr(cfg, "FILTROS", None) or {}),
+                 "pdv_pos_id": dict(sorted(reglas_pdv.items()))},   # filas por regla de resolver_pos_id
     }
     frag_pdv = [defaultdict(list) for _ in range(n_frag_pdv)]
     frag_sku = [defaultdict(list) for _ in range(n_frag_sku)]

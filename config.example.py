@@ -130,7 +130,8 @@ DIMENSION_PRODUCTOS = {
 # cada producto sale de la hoja DIM Productos del más reciente). De la hoja
 # 'Final' se toman también el cliente (Origin + Sold To ID = SAP ID), el KAM, el
 # canal y la ciudad, así que no se pierde ningún PDV que no esté en el CRM.
-# El PDV se identifica por SF_ID (existe en todos los años; POS_ID solo desde 2026).
+# El PDV se identifica por POS_ID (SAP ID + código interno). El libro de 2025 no lo trae:
+# se toma el que su SF_ID tiene en 2026 (ver resolver_pos_id en etl_sellout.py).
 # FILTROS (Affiliate = Colombia) se aplica igual. Genera s3_*.json en CARPETA_SALIDA.
 #   python etl_sellout.py            mapa (so_*) + Ventas 3.0 (s3_*)
 #   python etl_sellout.py --solo-s3  solo Ventas 3.0
