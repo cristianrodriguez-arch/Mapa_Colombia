@@ -326,13 +326,24 @@ function getDistribucionSkuJson(sku) {
 
 /** Catálogos + cliente×producto×mes + PDV×mes (~3 MB). */
 function getVentas3Json(forzar) {
-  if (forzar === true) mtdCacheQuitar_('s3_cubo.json');
+  if (forzar === true) {
+    // "Actualizar": fuera el cubo y también los fragmentos s3_* cacheados (si no, tras
+    // correr el ETL el detalle por PDV seguiría saliendo de la corrida anterior).
+    var lista = [];
+    try { lista = JSON.parse(CacheService.getScriptCache().get(CLAVE_REGISTRO_DRIVE) || '[]'); } catch (e) { lista = []; }
+    lista.filter(function(n) { return n.indexOf('s3_') === 0; }).concat(['s3_cubo.json']).forEach(mtdCacheQuitar_);
+  }
   return leerArchivoDrive_('s3_cubo.json');
 }
 
 /** PDV × mes de UN BU (índice en cubo.bus): dimensión Punto de venta filtrada por BU. */
-function getVentas3PbJson(iBu) {
-  return leerArchivoDrive_(nombreFrag_('s3_pb_', iBu));
+function getVentas3PbJson(iBu, generado) {
+  var nombre = nombreFrag_('s3_pb_', iBu), texto = leerArchivoDrive_(nombre);
+  if (generado && JSON.parse(texto).generado !== generado) {   // fragmento viejo en la caché: se relee de Drive
+    mtdCacheQuitar_(nombre);
+    texto = leerArchivoDrive_(nombre);
+  }
+  return texto;
 }
 
 /**
@@ -352,7 +363,12 @@ function getVentas3DetalleJson(reqJson) {
   lista.forEach(function(i) { (porFrag[i % n] = porFrag[i % n] || []).push(i); });
   var ps = [], generado = null;
   for (var f in porFrag) {
-    var datos = JSON.parse(leerArchivoDrive_(nombreFrag_(porPdv ? 's3_pdv_' : 's3_sku_', parseInt(f, 10))));
+    var nombre = nombreFrag_(porPdv ? 's3_pdv_' : 's3_sku_', parseInt(f, 10));
+    var datos = JSON.parse(leerArchivoDrive_(nombre));
+    if (req.generado && datos.generado !== req.generado) {   // fragmento viejo en la caché: se relee de Drive
+      mtdCacheQuitar_(nombre);
+      datos = JSON.parse(leerArchivoDrive_(nombre));
+    }
     generado = datos.generado;
     if (req.generado && generado !== req.generado) {
       return JSON.stringify({ error: 'El ETL se actualizó mientras mirabas: vuelve a cargar Ventas 3.0.' });
@@ -365,6 +381,212 @@ function getVentas3DetalleJson(reqJson) {
     });
   }
   return JSON.stringify({ generado: generado || req.generado, ps: ps });
+}
+
+/* ---------- Ventas 3.0 · Sell-in + plan (piloto, 2026-10-10) ----------
+ * Mismo formato que s3_cubo.json, para que la pestaña reutilice todo lo que ya
+ * hace con el sell-out, pero con el sell-in de la hoja 'SI_Appscript' (copia de
+ * la hoja 'Data' de Carga Looker, solo Type = SI) y el plan de 'PPTO_Appscript'
+ * (la hoja PPTO en formato largo, con UNPIVOT_POR_GRUPOS). Las dos viven en el
+ * libro "Ventas - YTD" (SPREADSHEET_ID_MTD).
+ *   meses  SOLO los que tienen sell-in: el último es el mes de corte (sale de
+ *          los datos, nunca del reloj). El plan de meses posteriores se ignora.
+ *   cs     [iCliente, iProducto, iMes, unidades, importe]
+ *   pl     [iCliente, iMes, plan]   (pesos; el plan existe solo por cliente)
+ * Cliente = SAP ID. Las ventas internas (CLIENTE = "ISDIN": 41000123, 9103xxxx…)
+ * se juntan en el SAP ID 1, como en el Histórico. Producto = Product ID; si la
+ * fila no lo trae se toma el de otra fila con el mismo EAN o el mismo nombre
+ * (si no hay, el EAN o el nombre). Cada producto lleva sus EAN para cruzar los
+ * filtros con el sell-out, que identifica el producto por EAN.
+ */
+var HOJA_SI_APPSCRIPT   = 'SI_Appscript';
+var HOJA_PPTO_APPSCRIPT = 'PPTO_Appscript';
+var CACHE_V3SI_CLAVE    = 'ventas3_si_v1';
+
+/** Celda con un error de fórmula o con la función personalizada todavía calculando. */
+function v3siCeldaPendiente_(row, idx) {
+  if (mtdEsError_(row, idx)) return true;
+  var t = mtdNorm_(mtdTexto_(row, idx));
+  return t === 'loading...' || t === 'cargando...';
+}
+
+function v3siLeerSellIn_(libro, tz) {
+  var hoja = mtdHoja_(libro, HOJA_SI_APPSCRIPT, true);
+  var b = mtdLeerBloque_(hoja, function(h) {
+    return {
+      fecha:   mtdColEx_(h, ['fecha'], [[['fecha'], []]]),
+      sapId:   mtdColEx_(h, ['sap id'], [[['sap', 'id'], []]]),
+      prod:    mtdColEx_(h, ['product'], null),
+      real:    mtdColEx_(h, ['real (local)'], [[['real', 'local'], ['-1']]]),
+      realN:   mtdColEx_(h, ['real #'], [[['real', '#'], []]]),
+      tipo:    mtdColEx_(h, ['type'], null),
+      cliente: mtdColEx_(h, ['cliente'], [[['cliente'], []]]),
+      kam:     mtdColEx_(h, ['kam encargado'], [[['kam'], []]]),
+      bu:      mtdColEx_(h, ['bu'], null),
+      ean:     mtdColEx_(h, ['ean'], null),
+      prodId:  mtdColEx_(h, ['product id'], [[['product', 'id'], []]]),
+      brand:   mtdColEx_(h, ['brand'], [[['brand'], []]])
+    };
+  });
+  mtdExigir_(b.col, ['fecha', 'sapId', 'real'], HOJA_SI_APPSCRIPT, b.headersRaw);
+  var col = b.col, data = b.data;
+
+  // 1ª pasada: Product ID conocido por EAN y por nombre (para las filas que no lo traen).
+  var pidDeEan = {}, pidDeNom = {};
+  data.forEach(function(row) {
+    var pid = mtdTexto_(row, col.prodId);
+    if (!pid) return;
+    var ean = mtdTexto_(row, col.ean), nom = mtdNorm_(mtdTexto_(row, col.prod));
+    if (ean && !pidDeEan[ean]) pidDeEan[ean] = pid;
+    if (nom && !pidDeNom[nom]) pidDeNom[nom] = pid;
+  });
+
+  // 2ª pasada: agregación cliente × producto × mes.
+  var cli = {}, cliLista = [], prod = {}, prodLista = [], acc = {}, mesesSet = {};
+  var cuenta = { filas: 0, otroTipo: 0, sinFecha: 0, sinCliente: 0, internas: 0 };
+  data.forEach(function(row) {
+    var tipo = mtdTexto_(row, col.tipo).toUpperCase();
+    if (tipo && tipo !== 'SI') { cuenta.otroTipo++; return; }
+    var mes = sivsoMes_(row[col.fecha], tz);
+    if (!mes) { cuenta.sinFecha++; return; }
+    var nomCli = mtdTexto_(row, col.cliente), sap = mtdTexto_(row, col.sapId);
+    if (!sap && !nomCli) { cuenta.sinCliente++; return; }
+    var interno = mtdNorm_(nomCli) === 'isdin' || sap === '1';
+    if (interno) cuenta.internas++;
+    var id = interno ? '1' : mtdIdCliente_(sap, nomCli);
+    var c = cli[id];
+    if (!c) { c = cli[id] = { i: cliLista.length, id: id, nombre: '', kam: '', mes: '' }; cliLista.push(c); }
+    if (mes >= c.mes) {   // nombre y KAM del mes más reciente
+      c.mes = mes;
+      c.nombre = interno ? 'ISDIN (ventas internas)' : (nomCli || c.nombre);
+      c.kam = interno ? 'ISDIN' : (mtdTexto_(row, col.kam) || c.kam);
+    }
+
+    var nomP = mtdTexto_(row, col.prod), ean = mtdTexto_(row, col.ean);
+    var pid = mtdTexto_(row, col.prodId) || pidDeEan[ean] || pidDeNom[mtdNorm_(nomP)] || '';
+    var pk = pid ? 'P:' + pid : (ean ? 'E:' + ean : (nomP ? 'N:' + mtdNorm_(nomP) : '-'));
+    var p = prod[pk];
+    if (!p) {
+      p = prod[pk] = { i: prodLista.length, cod: pid || ean, nombre: '', bu: '', marca: '', eans: [], mes: '' };
+      prodLista.push(p);
+    }
+    if (ean && p.eans.indexOf(ean) === -1) p.eans.push(ean);
+    if (mes >= p.mes) {   // atributos del mes más reciente que los traiga
+      p.mes = mes;
+      p.nombre = nomP || p.nombre;
+      p.bu = mtdTexto_(row, col.bu) || p.bu;
+      p.marca = mtdTexto_(row, col.brand) || p.marca;
+    }
+
+    mesesSet[mes] = 1;
+    cuenta.filas++;
+    var k = c.i + '|' + p.i + '|' + mes;
+    var a = acc[k] || (acc[k] = [c.i, p.i, mes, 0, 0]);
+    a[3] += mtdNum_(row, col.realN);
+    a[4] += mtdNum_(row, col.real);
+  });
+
+  var meses = Object.keys(mesesSet).sort(), idxMes = {};
+  meses.forEach(function(m, i) { idxMes[m] = i; });
+  var bus = {};
+  prodLista.forEach(function(p) { if (p.bu) bus[p.bu.toUpperCase()] = 1; });
+  return {
+    meses: meses, idxMes: idxMes, cli: cli, cliLista: cliLista, cuenta: cuenta,
+    skus: prodLista.map(function(p) { return [p.cod, p.nombre || '(sin nombre)', p.bu, p.marca, p.eans]; }),
+    cs: Object.keys(acc).map(function(k) {
+      var a = acc[k];
+      return [a[0], a[1], idxMes[a[2]], mtdRed_(a[3]), mtdRed_(a[4])];
+    }),
+    bus: Object.keys(bus).sort()
+  };
+}
+
+/** Plan por cliente × mes de PPTO_Appscript, solo en los meses que tienen sell-in. */
+function v3siLeerPlan_(libro, tz, si) {
+  var hoja = mtdHoja_(libro, HOJA_PPTO_APPSCRIPT, true);
+  var b = mtdLeerBloque_(hoja, function(h) {
+    return {
+      sapId:   mtdColEx_(h, ['sap id'], [[['sap', 'id'], []]]),
+      cliente: mtdColEx_(h, ['cliente'], [[['cliente'], []]]),
+      kam:     mtdColEx_(h, ['kam encargado'], [[['kam'], []]]),
+      fecha:   mtdColEx_(h, ['fecha'], [[['fecha'], []]]),
+      plan:    mtdColEx_(h, ['plan'], [[['plan'], []]])
+    };
+  });
+  mtdExigir_(b.col, ['sapId', 'fecha', 'plan'], HOJA_PPTO_APPSCRIPT, b.headersRaw);
+  var col = b.col, acc = {}, cuenta = { filas: 0, pendientes: 0, sinFecha: 0, fueraDeMeses: 0, nuevos: 0 };
+  var total = 0;
+  b.data.forEach(function(row) {
+    if (v3siCeldaPendiente_(row, col.plan) || v3siCeldaPendiente_(row, col.fecha)) { cuenta.pendientes++; return; }
+    var sap = mtdTexto_(row, col.sapId);
+    if (!sap) return;
+    var mes = sivsoMes_(row[col.fecha], tz);
+    if (!mes) { cuenta.sinFecha++; return; }
+    var plan = mtdNum_(row, col.plan);
+    total += plan;
+    var iMes = si.idxMes[mes];
+    if (iMes === undefined) { cuenta.fueraDeMeses++; return; }   // mes sin sell-in todavía
+    var c = si.cli[sap];
+    if (!c) {   // cliente con plan y sin sell-in: entra con venta 0
+      c = si.cli[sap] = { i: si.cliLista.length, id: sap, nombre: mtdTexto_(row, col.cliente) || sap,
+                          kam: mtdTexto_(row, col.kam) || 'SIN KAM', mes: '' };
+      si.cliLista.push(c);
+      cuenta.nuevos++;
+    }
+    cuenta.filas++;
+    var k = c.i + '|' + iMes;
+    acc[k] = (acc[k] || 0) + plan;
+  });
+  return {
+    filas: Object.keys(acc).map(function(k) {
+      var p = k.split('|');
+      return [Number(p[0]), Number(p[1]), mtdRed_(acc[k])];
+    }),
+    cuenta: cuenta, total: mtdRed_(total)
+  };
+}
+
+function v3siConstruir_() {
+  var libro = SpreadsheetApp.openById(SPREADSHEET_ID_MTD);
+  var tz = libro.getSpreadsheetTimeZone();
+  var si = v3siLeerSellIn_(libro, tz);   // sin sell-in no hay vista: aquí sí se lanza el error
+  var errores = {}, plan = null;
+  try { plan = v3siLeerPlan_(libro, tz, si); } catch (e) { errores.plan = e.message; Logger.log('Ventas 3.0 plan: ' + e.message); }
+  if (plan && plan.cuenta.pendientes) {
+    errores.plan = plan.cuenta.pendientes + " celdas de '" + HOJA_PPTO_APPSCRIPT +
+                   "' con error o todavía calculando; vuelve a cargar en un momento.";
+  }
+  var ahora = new Date().toISOString();
+  return {
+    v: 1, fuente: 'si', generado: ahora,
+    meses: si.meses,
+    clientes: si.cliLista.map(function(c) { return [c.id, c.nombre, c.kam]; }),
+    skus: si.skus, cs: si.cs, pl: plan ? plan.filas : [], bus: si.bus, pdv: [], pm: [],
+    meta: {
+      generado: ahora,
+      ultimoMes: si.meses.length ? si.meses[si.meses.length - 1] : null,
+      libroActualizado: mtdLibroActualizado_(SPREADSHEET_ID_MTD),
+      errores: errores,
+      fuentes: { sellIn: { hoja: HOJA_SI_APPSCRIPT, filas: si.cuenta },
+                 plan: plan ? { hoja: HOJA_PPTO_APPSCRIPT, filas: plan.cuenta, total: plan.total } : null }
+    }
+  };
+}
+
+/** Sell-in + plan de Ventas 3.0 (STRING JSON ASCII, caché 30 min; `forzar` = "Actualizar"). */
+function getVentas3SiJson(forzar) {
+  return conCache_(CACHE_V3SI_CLAVE, CACHE_MTD_SEGUNDOS, function() {
+    var d = v3siConstruir_();
+    return { texto: jsonAscii_(d), cachear: d.cs.length > 0 && !Object.keys(d.meta.errores).length };
+  }, forzar === true);
+}
+
+/** Diagnóstico manual desde el editor. */
+function verVentas3Si() {
+  var d = JSON.parse(getVentas3SiJson(true));
+  Logger.log('Meses: ' + d.meses[0] + ' → ' + d.meta.ultimoMes + ' · clientes: ' + d.clientes.length +
+             ' · productos: ' + d.skus.length + ' · filas cs: ' + d.cs.length + ' · plan: ' + d.pl.length);
+  Logger.log('Fuentes: ' + JSON.stringify(d.meta.fuentes) + ' · errores: ' + JSON.stringify(d.meta.errores));
 }
 
 /* ============================================================
@@ -1293,8 +1515,8 @@ function getHistoricoVentasJson(forzar) { return getVentasMtdCompletoJson(forzar
 
 /** Borra la caché de Ventas MTD (útil tras actualizar las hojas). */
 function limpiarCacheMtd() {
-  [CACHE_MTD_CLAVE, 'ventas_mtd', 'ventas_mtd_historico'].forEach(mtdCacheQuitar_);
-  Logger.log('Caché de Ventas MTD limpiada (incluye el histórico).');
+  [CACHE_MTD_CLAVE, 'ventas_mtd', 'ventas_mtd_historico', CACHE_V3SI_CLAVE].forEach(mtdCacheQuitar_);
+  Logger.log('Caché de Ventas MTD limpiada (incluye el histórico y el sell-in/plan de Ventas 3.0).');
   return 'OK';
 }
 
@@ -1884,6 +2106,7 @@ function calentarCache() {
   var pasos = [
     ['Ventas MTD', function() { return getVentasMtdCompletoJson(true); }],
     ['SI vs SO',   function() { return getSIvsSOJson(true); }],
+    ['Ventas 3.0 sell-in', function() { return getVentas3SiJson(true); }],
     ['Yoobic',     function() { return getYoobicJson(true); }],
     // Las del mapa duran 6 h: solo se llenan si faltan (no se fuerzan cada 15 min).
     ['Puntos',        function() { return getPuntosJson(false); }],

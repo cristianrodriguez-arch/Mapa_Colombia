@@ -11,7 +11,7 @@
 | Pestaña | Archivo cliente | Endpoint del servidor | Fuente |
 |---|---|---|---|
 | **Ventas** (primera hoja, por defecto desde 2026-10-10) | `JsVentas.html` | ninguno propio: reutiliza los dos de abajo | Las de Ventas MTD + SI vs SO + hoja `Info SO-INV` (DOH objetivo) |
-| **Ventas 3.0** (sell-out estilo Zebra) | `JsVentas3.html` | `getVentas3Json`, `getVentas3PbJson`, `getVentas3DetalleJson` | Archivos `s3_*.json` del ETL de sell-out (`etl_sellout.py`, hoja 'Final' de los Affiliate Master 2025 y 2026) |
+| **Ventas 3.0** (sell-out y sell-in estilo Zebra) | `JsVentas3.html` | `getVentas3Json`, `getVentas3PbJson`, `getVentas3DetalleJson`; sell-in: `getVentas3SiJson` | Sell-out: archivos `s3_*.json` del ETL (`etl_sellout.py`, hoja 'Final' de los Affiliate Master 2025 y 2026). Sell-in + plan: hojas `SI_Appscript` y `PPTO_Appscript` del libro "Ventas - YTD" |
 | **Ventas MTD (clásico)** | `JsVentasMtd.html` | `getVentasMtdCompletoJson(forzar)` | Libro `1hViwAW2…` ("Ventas - YTD"): hojas `CUMPLIMIENTO`, `PLANTILLA`, `Historico de ventas` |
 | **SI vs SO (clásico)** | `JsSIvsSO.html` | `getSIvsSOJson(forzar)` | Libro "Carga Looker" `1_eW3f95…`, hojas `Data` e `Info SO-INV` (solo columnas SAP y DOH objetivo) |
 | **Mapa** | `JsMapa.html`, `JsFiltros.html`, `JsPaneles.html` | 5 endpoints (`getPuntosJson`, `getBricksJson`, `getVentasJson`, `getPortafolioJson`, `getAsignacionesJson`) | Hojas del MAESTRO PDV's + JSON del ETL en Drive |
@@ -116,10 +116,23 @@ Réplica del visual de crecimiento del Power BI de sell-out. Fuente única: el E
 | **Var % vs mes pasado** | Último mes elegido ÷ el mes anterior − 1 |
 | **Promedio mensual** ("Promedio Selec") | AC ÷ número de meses elegidos |
 | **Resultado** | AC total, con ΔPY% y ΔPY |
-| **Total PDV** | Puntos de venta (SF_ID) con venta en los meses elegidos, con los filtros activos |
+| **Total PDV** | Puntos de venta (`POS_ID`) con venta en los meses elegidos, con los filtros activos |
 | **Promedio por PDV** | Resultado ÷ Total PDV |
 
-Dimensiones: Cliente (`Origin`/`Sold To ID`), BU (`DIM Productos` › SUB FAMILIA), Producto (`Ean_isdin`), Punto de venta (`SF_ID`). Validación (2026-10-10): ene–ago 2026 = 127,70 MM / 1.765.276 und (el ETL del mapa da 126,02 MM porque descarta 6.466 filas sin POS_ID); vs ene–ago 2025: +9,4 % en importe.
+Dimensiones: Cliente (`Origin`/`Sold To ID`), BU (`DIM Productos` › SUB FAMILIA), Producto (`Ean_isdin`), Punto de venta (`POS_ID`; en 2025, que no lo trae, el que su `SF_ID` tiene en 2026 — ver `resolver_pos_id` en etl_sellout.py). **Clic en filas** = filtro que se acumula (sin bajar de nivel); el TOTAL, las tarjetas y el resumen del mes de arriba (el de la pestaña Ventas) toman solo lo elegido. Validación (2026-10-10): ene–ago 2026 = 127,70 MM / 1.765.276 und (el ETL del mapa da 126,02 MM porque descarta 6.466 filas sin POS_ID); vs ene–ago 2025: +9,4 % en importe.
+
+**Sell-in + plan (piloto, 2026-10-10)** — switch **Sell-in | Sell-out** (abre en Sell-in y "Último" mes) arriba de la pestaña. Misma vista y mismas fórmulas; solo cambia la fuente (`getVentas3SiJson`): sell-in de la hoja **`SI_Appscript`** (copia de la `Data` de Carga Looker, `Type` = SI) y plan de **`PPTO_Appscript`** (la hoja PPTO en formato largo con `UNPIVOT_POR_GRUPOS`), ambas en el libro "Ventas - YTD" (`1hViwAW2…`).
+
+| KPI | Fórmula |
+|---|---|
+| **Último mes** | El último mes con sell-in en `SI_Appscript` (nunca el reloj). Cada fuente tiene el suyo: el sell-in puede ir un mes adelante del sell-out. El plan de meses posteriores se ignora hasta que haya sell-in |
+| **Plan** | Σ plan de `PPTO_Appscript` en los meses elegidos. Solo por cliente y en pesos: en `#`, o con filtro de producto o BU, queda **n/d**. Por BU o Producto no hay columnas de plan, pero la tarjeta total sí (todos los clientes) |
+| **% Cumpl.** | AC ÷ Plan, solo con plan > 0 (verde ≥ 100 %, rojo < 100 %). El total es la venta de todos los clientes filtrados ÷ su plan (incluye la venta de clientes sin plan) |
+| Cliente con plan y sin venta | Aparece con AC = 0 y 0 % (dato real) |
+
+Reglas de datos: cliente = SAP ID; las ventas internas (CLIENTE = "ISDIN": 41000123, 9103xxxx…) se juntan en el **SAP ID 1** "ISDIN (ventas internas)", como en el Histórico. Producto = `Product ID`; una fila sin ID toma el de otra fila con el mismo EAN o nombre. Sin punto de venta (la dimensión se deshabilita). Al cambiar de fuente, los filtros pasan por SAP ID (cliente) y EAN (producto) y la selección rápida de meses se recalcula. Si `PPTO_Appscript` tiene celdas en error o "Loading…" (la función personalizada calculando), el aviso sale en el subtítulo y **no se cachea**.
+
+Validación con las hojas reales (2026-10-10): sell-in ene–sep 2026 = **137.985 M** (igual al Histórico al peso); plan ene–sep = 153.250 M → cumplimiento 90,0 %; 2025 = 193.954 M (−0,007 % vs Histórico 2025). 73 clientes, 198 productos, payload 850 KB.
 
 ## 4. Filtrado cruzado (clic en tablas y gráficos, estilo Looker Studio)
 

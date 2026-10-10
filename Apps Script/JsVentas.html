@@ -158,10 +158,14 @@ function vtU(x,campo){return vtEstado.unidad==='#'?(x[campo+'U']||0):(x[campo]||
 
 /* Ventana de meses cerrados del modo "vs sell-out": termina en el último mes con
    sell-out en 'Data'. vent = 1 | 3 | 'anio'. */
-function vtVentana(){
+/* op (opcional, lo usa Ventas 3.0 con sus meses): {vent: 1 | 3 | 'anio'} relativo al último
+   mes con sell-out, o {k0, k1} meses exactos (k1 se recorta al último mes con sell-out). */
+function vtVentana(op){
   var k1=vtSO&&vtSO.kMax>=0?vtSO.kMax:-1;
   if(k1<0)return null;
-  var k0=vtEstado.vent==='anio'?Math.floor(k1/12)*12:k1-(Number(vtEstado.vent)||3)+1;
+  var vent=op&&op.vent!=null?op.vent:vtEstado.vent,k0;
+  if(op&&op.k0!=null){k1=Math.min(op.k1,k1);k0=Math.min(op.k0,k1)}
+  else k0=vent==='anio'?Math.floor(k1/12)*12:k1-(Number(vent)||3)+1;
   return{k0:k0,k1:k1,etq:k0===k1?vtMesEtq(k1):MTD_MESES[k0%12]+'–'+vtMesEtq(k1)}}
 
 /* Suma de sell-in y sell-out de una serie mensual en la ventana y en los mismos
@@ -273,12 +277,13 @@ function vtCalcCliente(u,av,w){
 /* Venta -1 de los clientes que NO están en la cartera de CUMPLIMIENTO (perdidos, los que
    solo salen en PLANTILLA o en el Histórico, los que solo reportan sell-out),
    filtrado por KAM/canal: el total "Δ% vs Venta -1" debe incluirlos, como en Ventas MTD
-   (si no, perder un cliente se vería como crecimiento). */
-function vtA1Fuera(todos){
-  var conMes={},o={a1:0,a1Prev:0,a1Mes:0};
+   (si no, perder un cliente se vería como crecimiento). `pasa` = filtro de cliente (por
+   defecto KAM/canal de esta pestaña; Ventas 3.0 pasa el suyo). */
+function vtA1Fuera(todos,pasa){
+  var conMes={},o={a1:0,a1Prev:0,a1Mes:0};pasa=pasa||vtPasa;
   todos.forEach(function(x){if(x.u.m)conMes[x.id]=1});
   (typeof mtdUlista!=='undefined'?mtdUlista:[]).forEach(function(u){
-    if(conMes[u.id]||!vtPasa(u))return;
+    if(conMes[u.id]||!pasa(u))return;
     o.a1+=mtdVenta1[u.id]||0;o.a1Prev+=vtH.a1Prev[u.id]||0;o.a1Mes+=vtH.a1Mes[u.id]||0});
   return o}
 
@@ -305,15 +310,18 @@ function vtTotales(filas,fuera){
 
 function vtPasa(u){return(!vtEstado.kam||u.kam===vtEstado.kam)&&(!vtEstado.canal||u.canal===vtEstado.canal)}
 
-function vtModelo(){
-  if(vtMod)return vtMod;
+/* opVent (opcional): ventana de sell-out propia (ver vtVentana); así el modelo se arma
+   aparte y no toca el de esta pestaña (vtMod). */
+function vtModelo(opVent){
+  if(vtMod&&!opVent)return vtMod;
   var av=vtAvance();
   vtIndexar(av);
-  var w=vtVentana();
+  var w=vtVentana(opVent);
   var todos=vtUniverso(av).map(function(u){return vtCalcCliente(u,av,w)});
   var filas=todos.filter(function(x){return vtPasa(x.u)});
-  vtMod={av:av,w:w,todos:todos,filas:filas,tot:vtTotales(filas,vtA1Fuera(todos)),prods:null};
-  return vtMod}
+  var M={av:av,w:w,todos:todos,filas:filas,tot:vtTotales(filas,vtA1Fuera(todos)),prods:null};
+  if(!opVent)vtMod=M;
+  return M}
 
 /* Productos del contexto (KAM/canal): PLANTILLA del mes + sell-in/sell-out de la
    ventana + inventario reportado por cliente × producto. Se calcula solo al abrir
@@ -363,10 +371,12 @@ function vtAlEntrar(){
   if(typeof sivsoData!=='undefined'&&sivsoData===null&&!sivsoCargando&&typeof cargarSIvsSO==='function')cargarSIvsSO();
   vtRender()}
 
-/* Lo llaman onVentasMtdCargado / onSIvsSOCargado (y sus errores). */
+/* Lo llaman onVentasMtdCargado / onSIvsSOCargado (y sus errores). Ventas 3.0 muestra
+   el mismo resumen del mes arriba (vt3PintarResumen). */
 function vtDatosListos(){
   vtSO=vtH=vtPM=vtMod=null;
-  if(mtdVistaActiva==='ventas')vtRender()}
+  if(mtdVistaActiva==='ventas')vtRender();
+  if(mtdVistaActiva==='ventas3'&&typeof vt3PintarResumen==='function')vt3PintarResumen()}
 
 function vtActualizar(){
   vtSO=vtH=vtPM=vtMod=null;
@@ -489,18 +499,21 @@ function vtPintarControles(M){
 
 /* Switch de la barra (vs plan / vs sell-out) + unidad ($/#) + ventana de meses.
    conModo=false (Productos y su ficha): sin el switch de la barra y con unidad y
-   ventana siempre activas, porque esas tablas muestran sell-in y sell-out. */
-function vtHtmlSwitches(conModo){
+   ventana siempre activas, porque esas tablas muestran sell-in y sell-out.
+   op (opcional, Ventas 3.0): {pre: prefijo de los manejadores (aquí 'vt'), sinVentana: sin el
+   selector de meses (Ventas 3.0 usa los meses de su panel lateral)}. */
+function vtHtmlSwitches(conModo,op){
   if(conModo===undefined)conModo=true;
+  var pre=(op&&op.pre)||'vt',conVentana=!(op&&op.sinVentana);
   var so=!conModo||vtEstado.modo==='so';
-  function b(on,txt,fn,dis){return'<button type="button" class="'+(on?'activo':'')+'" onclick="'+fn+'"'+(dis?' disabled':'')+'>'+txt+'</button>'}
+  function b(on,txt,fn,dis){return'<button type="button" class="'+(on?'activo':'')+'" onclick="'+pre+fn+'"'+(dis?' disabled':'')+'>'+txt+'</button>'}
   return'<div class="vt-switches">'+
-    (conModo?'<div class="vt-switch" role="group" aria-label="Comparar">'+b(!so,'vs plan',"vtSetModo('plan')")+b(so,'vs sell-out',"vtSetModo('so')")+'</div>':'')+
+    (conModo?'<div class="vt-switch" role="group" aria-label="Comparar">'+b(!so,'vs plan',"SetModo('plan')")+b(so,'vs sell-out',"SetModo('so')")+'</div>':'')+
     '<div class="vt-switch chico" role="group" aria-label="Unidad" title="'+(so?'Pesos o unidades':'El plan solo existe en pesos: las unidades aplican en vs sell-out y en Productos')+'">'+
-      b(vtEstado.unidad==='$','$',"vtSetUnidad('$')",!so)+b(vtEstado.unidad==='#','#',"vtSetUnidad('#')",!so)+'</div>'+
-    (so?'<div class="vt-switch chico" role="group" aria-label="Meses">'+
-      b(vtEstado.vent===1,'Último mes','vtSetVent(1)')+b(vtEstado.vent===3,'3 meses','vtSetVent(3)')+
-      b(vtEstado.vent==='anio','Año',"vtSetVent('anio')")+'</div>':'')+
+      b(vtEstado.unidad==='$','$',"SetUnidad('$')",!so)+b(vtEstado.unidad==='#','#',"SetUnidad('#')",!so)+'</div>'+
+    (so&&conVentana?'<div class="vt-switch chico" role="group" aria-label="Meses">'+
+      b(vtEstado.vent===1,'Último mes','SetVent(1)')+b(vtEstado.vent===3,'3 meses','SetVent(3)')+
+      b(vtEstado.vent==='anio','Año',"SetVent('anio')")+'</div>':'')+
   '</div>'}
 
 /* ── Vista Clientes: resumen + matriz + mensual + lista ── */
@@ -526,13 +539,14 @@ function vtRenderClientes(M){
   document.getElementById('vtCuerpo').innerHTML=h;
   vtPintarLista()}
 
-/* Resumen (cartera completa o un cliente, en su ficha). n = null en la ficha. */
-function vtHtmlHero(t,M,titulo,n){
+/* Resumen (cartera completa o un cliente, en su ficha). n = null en la ficha.
+   op = opciones de sus switches (ver vtHtmlSwitches; Ventas 3.0 pasa las suyas). */
+function vtHtmlHero(t,M,titulo,n,op){
   var av=M.av,so=vtEstado.modo==='so';
   function stat(etq,val,det){return'<div class="vt-stat"><div class="vt-etq">'+etq+'</div><div class="vt-num-m">'+val+'</div>'+
     (det?'<div class="vt-det">'+det+'</div>':'')+'</div>'}
   var cab='<div class="vt-hero-cab"><div class="vt-hero-tit">'+esc(titulo)+
-    (n==null?'':' <span>'+n+(n===1?' cliente':' clientes')+'</span>')+'</div>'+vtHtmlSwitches()+'</div>';
+    (n==null?'':' <span>'+n+(n===1?' cliente':' clientes')+'</span>')+'</div>'+vtHtmlSwitches(true,op)+'</div>';
   if(so)return vtHtmlHeroSO(t,M,cab,stat,n);
   var mesLY=MTD_MESES_LARGO[av.mes-1].toLowerCase()+' '+(av.anio-1);
   var b=vtBarraDatos(t,'plan'),max=Math.max(b.pista,b.rayado,b.barra)*1.03;

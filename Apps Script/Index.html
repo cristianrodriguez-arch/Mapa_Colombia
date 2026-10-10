@@ -165,13 +165,15 @@
     <div id="vtCuerpo"></div>
   </div>
 
-  <!-- ═══ Ventas 3.0 (JsVentas3.html): sell-out estilo Zebra BI, fuente = ETL (Affiliate Master). ═══ -->
+  <!-- ═══ Ventas 3.0 (JsVentas3.html): estilo Zebra BI. Sell-out = ETL (Affiliate Master);
+       sell-in + plan = hojas SI_Appscript y PPTO_Appscript del libro Ventas - YTD. ═══ -->
   <div id="vistaVentas3" hidden>
-    <div class="card vt-barra">
-      <div class="vt-titulo"><h2>Ventas 3.0</h2><span class="sub" id="vt3Sub"></span></div>
+    <div class="card vt-barra vt3-barra">
+      <!-- Resumen del mes: el mismo de la pestaña Ventas (vt3PintarResumen). -->
+      <div class="vt3-res" id="vt3Resumen"></div>
       <div class="vt-ctrl">
         <label class="vt-campo"><span>KAM</span><select id="vt3Kam" onchange="vt3SetKam(this.value)"></select></label>
-        <button class="btn" onclick="vt3Cargar(true)" title="Volver a leer los archivos del ETL">Actualizar</button>
+        <button class="btn" onclick="vt3Actualizar()" title="Volver a leer los datos de la fuente elegida y del mes">Actualizar</button>
       </div>
     </div>
     <div id="vt3Cuerpo"></div>
