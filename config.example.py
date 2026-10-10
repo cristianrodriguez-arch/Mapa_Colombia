@@ -122,3 +122,28 @@ DIMENSION_PRODUCTOS = {
         "bu": ["sub familia"],
     },
 }
+
+# ---------------------------------------------------------------------------
+# Ventas 3.0 (pestaña de sell-out estilo Zebra BI de la web app)
+# ---------------------------------------------------------------------------
+# Un "3. Affiliate_Master so" por año, del más viejo al más reciente (el BU de
+# cada producto sale de la hoja DIM Productos del más reciente). De la hoja
+# 'Final' se toman también el cliente (Origin + Sold To ID = SAP ID), el KAM, el
+# canal y la ciudad, así que no se pierde ningún PDV que no esté en el CRM.
+# El PDV se identifica por SF_ID (existe en todos los años; POS_ID solo desde 2026).
+# FILTROS (Affiliate = Colombia) se aplica igual. Genera s3_*.json en CARPETA_SALIDA.
+#   python etl_sellout.py            mapa (so_*) + Ventas 3.0 (s3_*)
+#   python etl_sellout.py --solo-s3  solo Ventas 3.0
+# Sin FUENTES_S3 no se generan los s3_*.
+FUENTES_S3 = [
+    {"ruta": r"G:\My Drive\ISDIN COLOMBIA\VENTAS\SELL-OUT\2025\3. Affiliate_Master so.xlsm", "hoja": "Final"},
+    {"ruta": r"G:\My Drive\ISDIN COLOMBIA\VENTAS\SELL-OUT\2026\3. Affiliate_Master so 2026.xlsm", "hoja": "Final"},
+]
+
+# Fragmentos del detalle PDV × producto (se piden solo al filtrar por PDV o producto).
+N_FRAGMENTOS_S3_PDV = 32
+N_FRAGMENTOS_S3_SKU = 16
+
+# Mapeo de columnas de Ventas 3.0 (mismas reglas que COLUMNAS). Sin esta variable
+# se usa COLUMNAS_S3_DEF de etl_sellout.py, que coincide con la hoja 'Final'.
+# COLUMNAS_S3 = {"cliente": ["origin"], "cliente_id": ["sold to id"], ...}

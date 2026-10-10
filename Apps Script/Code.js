@@ -131,7 +131,8 @@ function registrarClaveDrive_(nombre) {
 function limpiarCache() {
   var cache = CacheService.getScriptCache(), lista = [];
   try { lista = JSON.parse(cache.get(CLAVE_REGISTRO_DRIVE) || '[]'); } catch (e) { lista = []; }
-  ['so_pdv.json', 'so_portafolio.json', 'so_indice.json', 'so_sku_indice.json', 'so_manifiesto.json']
+  ['so_pdv.json', 'so_portafolio.json', 'so_indice.json', 'so_sku_indice.json', 'so_manifiesto.json',
+   's3_cubo.json']
     .forEach(function(n) { if (lista.indexOf(n) === -1) lista.push(n); });
   lista.forEach(mtdCacheQuitar_);
   cache.remove(CLAVE_REGISTRO_DRIVE);
@@ -312,6 +313,58 @@ function getDistribucionSkuJson(sku) {
   }
   var datos = JSON.parse(leerArchivoDrive_(nombreFrag_('so_sku_', parseInt(frag, 10))));
   return JSON.stringify({ sku: s, pdv: datos[s] || {} });
+}
+
+/* ============================================================
+ * Endpoints — Ventas 3.0 (sell-out estilo Zebra, JsVentas3.html)
+ * ============================================================
+ * Archivos s3_*.json que deja etl_sellout.py (FUENTES_S3: los Affiliate Master
+ * de varios años, hoja 'Final'). El navegador hace toda la agregación; aquí solo
+ * se sirven los archivos (con la caché por trozos de leerArchivoDrive_; vienen en
+ * ASCII para que quepan) y el detalle PDV × producto por partes.
+ */
+
+/** Catálogos + cliente×producto×mes + PDV×mes (~3 MB). */
+function getVentas3Json(forzar) {
+  if (forzar === true) mtdCacheQuitar_('s3_cubo.json');
+  return leerArchivoDrive_('s3_cubo.json');
+}
+
+/** PDV × mes de UN BU (índice en cubo.bus): dimensión Punto de venta filtrada por BU. */
+function getVentas3PbJson(iBu) {
+  return leerArchivoDrive_(nombreFrag_('s3_pb_', iBu));
+}
+
+/**
+ * Detalle PDV × producto SOLO de los PDV (o productos) pedidos. `reqJson` =
+ * {pdv:[índices] | null, sku:[índices] | null, npdv, nsku, generado}. Lee los
+ * fragmentos s3_pdv_NN (índice % npdv) o s3_sku_NN (índice % nsku) y devuelve
+ * {generado, ps:[[iPdv, iSku, iMes, und, imp], ...]}. Si el ETL corrió de nuevo
+ * entre la carga del cubo y este pedido (otro "generado"), avisa en vez de
+ * mezclar índices de corridas distintas.
+ */
+function getVentas3DetalleJson(reqJson) {
+  var req = JSON.parse(reqJson || '{}');
+  var porPdv = req.pdv && req.pdv.length;
+  var lista = (porPdv ? req.pdv : (req.sku || [])).map(Number).filter(function(n) { return n >= 0; });
+  var n = Number(porPdv ? req.npdv : req.nsku) || 1;
+  var porFrag = {};
+  lista.forEach(function(i) { (porFrag[i % n] = porFrag[i % n] || []).push(i); });
+  var ps = [], generado = null;
+  for (var f in porFrag) {
+    var datos = JSON.parse(leerArchivoDrive_(nombreFrag_(porPdv ? 's3_pdv_' : 's3_sku_', parseInt(f, 10))));
+    generado = datos.generado;
+    if (req.generado && generado !== req.generado) {
+      return JSON.stringify({ error: 'El ETL se actualizó mientras mirabas: vuelve a cargar Ventas 3.0.' });
+    }
+    porFrag[f].forEach(function(i) {
+      (datos.filas[i] || []).forEach(function(t) {
+        // fragmento por PDV: [iSku, iMes, und, imp] · por producto: [iPdv, iMes, und, imp]
+        ps.push(porPdv ? [i, t[0], t[1], t[2], t[3]] : [t[0], i, t[1], t[2], t[3]]);
+      });
+    });
+  }
+  return JSON.stringify({ generado: generado || req.generado, ps: ps });
 }
 
 /* ============================================================
@@ -1149,6 +1202,17 @@ function mtdLeerHistorico_(libro, tz) {
            sinFecha: sinFecha, sinCliente: sinCliente };
 }
 
+/** ISO de la última modificación de un archivo de Drive, o null si no se puede leer. */
+function mtdLibroActualizado_(id) {
+  try {
+    if (typeof DriveApp === 'undefined') return null;
+    return DriveApp.getFileById(id).getLastUpdated().toISOString();
+  } catch (e) {
+    Logger.log('No pude leer la fecha de modificación de ' + id + ': ' + e.message);
+    return null;
+  }
+}
+
 /** Σ real del histórico en un (anio, mes): sirve para la conciliación de las 3 hojas. */
 function mtdSumaHistoricoMes_(filas, anio, mes) {
   var s = 0;
@@ -1182,6 +1246,9 @@ function mtdConstruirCompleto_() {
                historico:    (hist && periodo && periodo.anio) ? mtdSumaHistoricoMes_(hist.filas, periodo.anio, periodo.mes) : null };
 
   meta.actualizadoEn = new Date().toISOString();   // hora en que se LEYÓ la hoja (no la de la caché)
+  // Última modificación del ARCHIVO (la descarga diaria de ventas se pega ahí): la
+  // pestaña Ventas la usa para saber en qué día hábil del mes van los datos.
+  meta.libroActualizado = mtdLibroActualizado_(SPREADSHEET_ID_MTD);
   meta.periodo = periodo || null;
   meta.errores = errores;
   meta.conciliacion = conc;
@@ -1346,8 +1413,49 @@ function sivsoLeerDatos_() {
     return [f[0], f[1], f[2], mtdRed_(f[3]), mtdRed_(f[4]), mtdRed_(f[5]), mtdRed_(f[6]),
             mtdRed_(f[7]), mtdRed_(f[8]), f[9]];
   });
-  return { filas: filas, clientes: clientes, productos: productos,
-           meta: { totalFilasOrigen: filasOrigen, filasSinFecha: sinFecha, filasTipoIgnorado: sinTipo, zonaHoraria: tz } };
+  var doh = {}, errorDoh = null;
+  try { doh = sivsoLeerDohObjetivo_(libro); } catch (e) { errorDoh = e.message; Logger.log('DOH objetivo: ' + e.message); }
+  return { filas: filas, clientes: clientes, productos: productos, doh: doh,
+           meta: { totalFilasOrigen: filasOrigen, filasSinFecha: sinFecha, filasTipoIgnorado: sinTipo, zonaHoraria: tz,
+                   errorDoh: errorDoh } };
+}
+
+/**
+ * DOH objetivo (días de inventario meta) por cliente, de la hoja 'Info SO-INV'
+ * del mismo libro: {sapId: días}. Celdas como "60 // Depende" o
+ * "Reajustar // 60" → 60; vacío o sin número → el cliente no entra (la UI usa
+ * el valor por defecto y lo dice).
+ *
+ * SEGURIDAD: esa hoja guarda usuarios y CONTRASEÑAS de los portales de los
+ * clientes en texto plano. Por eso NO se usa mtdLeerBloque_ (que lee de la
+ * columna A hasta la última mapeada, y se llevaría esas columnas): se ubican
+ * los encabezados y se leen SOLO las dos columnas necesarias, una por una.
+ */
+var HOJA_LOOKER_INFO = 'Info SO-INV';
+function sivsoLeerDohObjetivo_(libro) {
+  var hoja = libro.getSheetByName(HOJA_LOOKER_INFO);
+  if (!hoja) return {};
+  var ultCol = hoja.getLastColumn(), ultFila = hoja.getLastRow();
+  if (ultCol < 1 || ultFila < 2) return {};
+  var h = hoja.getRange(1, 1, 1, ultCol).getValues()[0].map(mtdNorm_);
+  // Respaldo por fragmento SOLO si el encabezado no habla de credenciales: un
+  // "Usuario portal SAP" nunca puede pasar por la columna SAP.
+  var CREDENCIALES = ['usuario', 'user', 'contrasena', 'clave', 'password', 'pass', 'login', 'correo', 'mail'];
+  var cSap = mtdColEx_(h, ['sap', 'sap id'], [[['sap'], CREDENCIALES]]);
+  var cDoh = mtdColEx_(h, ['doh objetivo'], [[['doh'], CREDENCIALES]]);
+  if (cSap === null || cDoh === null || cSap === cDoh) return {};
+  var n = ultFila - 1;
+  var saps = hoja.getRange(2, cSap + 1, n, 1).getValues();
+  var dias = hoja.getRange(2, cDoh + 1, n, 1).getValues();
+  var o = {};
+  for (var i = 0; i < n; i++) {
+    var sap = String(saps[i][0] == null ? '' : saps[i][0]).trim();
+    if (!/^\d+$/.test(sap)) continue;            // un SAP ID es solo dígitos: nada de texto libre
+    var m = String(dias[i][0] == null ? '' : dias[i][0]).match(/\d+(?:[.,]\d+)?/);
+    var d = m ? parseFloat(m[0].replace(',', '.')) : NaN;
+    if (d > 0 && d < 1000) o[sap] = d;
+  }
+  return o;
 }
 
 /**
@@ -1363,6 +1471,7 @@ function getSIvsSOJson(forzar) {
       clientes: leido.clientes,
       productos: leido.productos,
       filas: leido.filas,
+      doh: leido.doh,
       meta: {
         actualizadoEn: new Date().toISOString(),
         totalFilas:    leido.filas.length,

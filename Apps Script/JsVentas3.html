@@ -1,0 +1,462 @@
+<script>
+/* ══════════ JsVentas3 · pestaña "Ventas 3.0" (sell-out, estilo Zebra BI) ══════════
+   Reemplaza el visual "Crecimiento por EAN $#" del Power BI de sell-out: por cada
+   fila de la dimensión elegida (Cliente · BU · Producto · Punto de venta) muestra
+   PY · AC (barras) · ΔPY (barras divergentes) · ΔPY% (pines) · Var % vs mes pasado,
+   con un switch a tabla y exportación a CSV. SOLO DATOS REALES (sin proyecciones).
+
+   FUENTE ÚNICA: el ETL de sell-out (etl_sellout.py) sobre la hoja 'Final' de los
+   "3. Affiliate_Master so" (2025 y 2026), Affiliate = Colombia. Cliente = Origin
+   (Sold To ID = SAP ID), KAM, canal y ciudad vienen del mismo archivo, así que no
+   se pierde ningún punto de venta que no esté en el CRM. El servidor solo sirve
+   los JSON del ETL (getVentas3Json / getVentas3DetalleJson); todo se agrega aquí.
+
+   Payload s3_cubo.json (ver etl_sellout.py, escribir_s3):
+     meses   ['2025-01', …]                         índice de mes = posición
+     clientes[[sapId, nombre, kam]]
+     skus    [[ean, descripción, bu, marca]]
+     pdv     [[clave, descripción, iCliente, ciudad, departamento, canal]]
+     cs      [[iCliente, iSku, iMes, unidades, importe]]   cliente × producto × mes
+     pm      [[iPdv, iMes, unidades, importe]]              punto de venta × mes
+   Bajo demanda, s3_detalle.json: ps [[iPdv, iSku, iMes, unidades, importe]] (solo
+   para cruzar punto de venta con producto o BU).
+
+   DEFINICIONES (las del Power BI, confirmadas por el usuario el 2026-10-10):
+     AC = suma de los meses elegidos · PY = los mismos meses del año anterior
+     ΔPY = AC − PY · ΔPY% = AC ÷ PY − 1
+     Var % vs mes pasado = último mes elegido ÷ el mes anterior − 1
+     Promedio Selec = AC ÷ número de meses elegidos
+     Promedio por PDV = AC ÷ Total PDV (puntos con venta en los meses elegidos)
+   ═══════════════════════════════════════════════════════════════ */
+
+var vt3Data=null,vt3Cargando=false,vt3Error='';
+/* Detalle bajo demanda: vt3Det[firma] = filas [iPdv, iSku, iMes, und, imp] (firma = 'pdv:…' o 'sku:…');
+   vt3Pb[bu] = filas PDV × mes de ese BU. vt3Pend = pedidos en vuelo; vt3DetError = último error. */
+var vt3Det={},vt3Pend={},vt3DetError='',vt3Pb={};
+var vt3E={dim:'cli',unidad:'#',vista:'graf',sel:null,kam:'',q:'',f:{cli:[],bu:[],sku:[],pdv:[]},
+  orden:{k:'ac',dir:'desc'},tope:40};
+var VT3_DIMS=[['cli','Cliente'],['bu','BU'],['sku','Producto'],['pdv','Punto de venta']];
+var VT3_DRILL={cli:'sku',bu:'sku',sku:'pdv',pdv:'sku'};   // al hacer clic en una fila
+var VT3_LS='vt3_v1';
+var vt3Filas=[];   // lo que se ve (orden, CSV, clic)
+
+/* ══════════ Carga ══════════ */
+function vt3AlEntrar(){if(!vt3Data&&!vt3Cargando)vt3Cargar(false);vt3Render()}
+function vt3Cargar(forzar){
+  vt3Cargando=true;vt3Error='';if(forzar){vt3Data=null;vt3Det={};vt3Pb={}}
+  vt3Render();
+  if(!esGas()){setTimeout(function(){vt3Recibir(vt3Demo())},250);return}
+  google.script.run
+    .withSuccessHandler(function(j){try{vt3Recibir(JSON.parse(j))}catch(e){vt3Cargando=false;vt3Error=me(e);vt3Render()}})
+    .withFailureHandler(function(e){vt3Cargando=false;vt3Error=me(e);vt3Render()})
+    .getVentas3Json(forzar===true)}
+function vt3Recibir(d){vt3Cargando=false;vt3Data=vt3Preparar(d);vt3Restaurar();vt3Render()}
+
+/* Detalle punto de venta × producto, por partes: solo los PDV o productos filtrados
+   (el detalle completo pesa ~26 MB). El servidor lee los fragmentos s3_pdv_NN / s3_sku_NN
+   del ETL. Devuelve las filas, o null mientras llegan (y pide repintar al llegar). */
+function vt3Detalle(req){
+  var firma=req.pdv?'pdv:'+req.pdv.slice().sort().join(','):'sku:'+req.sku.slice().sort().join(',');
+  if(vt3Det[firma])return vt3Det[firma];
+  if(vt3Pend[firma])return null;
+  vt3Pend[firma]=1;vt3DetError='';
+  function listo(filas){delete vt3Pend[firma];vt3Det[firma]=filas;vt3PintarCuerpo()}
+  if(!esGas()){setTimeout(function(){
+    var P={},S={};(req.pdv||[]).forEach(function(i){P[i]=1});(req.sku||[]).forEach(function(i){S[i]=1});
+    listo((vt3Data.demoPs||[]).filter(function(r){return req.pdv?P[r[0]]:S[r[1]]}))},150);return null}
+  var D=vt3Data;
+  google.script.run
+    .withSuccessHandler(function(j){var r;try{r=JSON.parse(j)}catch(e){r={error:me(e)}}
+      if(r.error||r.generado!==D.meta.generado){delete vt3Pend[firma];
+        vt3DetError=r.error||'El ETL se actualizó: vuelve a cargar Ventas 3.0.';vt3PintarCuerpo();return}
+      listo(r.ps||[])})
+    .withFailureHandler(function(e){delete vt3Pend[firma];vt3DetError=me(e);vt3PintarCuerpo()})
+    .getVentas3DetalleJson(JSON.stringify({pdv:req.pdv||null,sku:req.sku||null,
+      npdv:D.frag.pdv,nsku:D.frag.sku,generado:D.meta.generado}))
+  return null}
+/* PDV × mes de los BU filtrados (dimensión Punto de venta filtrada por BU): un archivo
+   por BU (s3_pb_NN). Devuelve filas [iPdv, bu, iMes, und, imp], o null mientras llegan. */
+function vt3PbFilas(){
+  var D=vt3Data,falta=false,filas=[];
+  vt3E.f.bu.forEach(function(bu){
+    if(vt3Pb[bu]){Array.prototype.push.apply(filas,vt3Pb[bu]);return}
+    falta=true;
+    var k='pb:'+bu;if(vt3Pend[k])return;
+    vt3Pend[k]=1;
+    function listo(pb){delete vt3Pend[k];vt3Pb[bu]=pb.map(function(r){return[r[0],bu,r[1],r[2],r[3]]});vt3PintarCuerpo()}
+    if(!esGas()){setTimeout(function(){var g={};
+      (D.demoPs||[]).forEach(function(r){if(D.skus[r[1]].bu!==bu)return;var kk=r[0]+'|'+r[2];
+        var x=g[kk]||(g[kk]=[r[0],r[2],0,0]);x[2]+=r[3];x[3]+=r[4]});
+      listo(Object.keys(g).map(function(kk){return g[kk]}))},150);return}
+    google.script.run
+      .withSuccessHandler(function(j){var d;try{d=JSON.parse(j)}catch(e){d={error:me(e)}}
+        if(d.error||d.generado!==D.meta.generado){delete vt3Pend[k];
+          vt3DetError=d.error||'El ETL se actualizó: vuelve a cargar Ventas 3.0.';vt3PintarCuerpo();return}
+        listo(d.pb||[])})
+      .withFailureHandler(function(e){delete vt3Pend[k];vt3DetError=me(e);vt3PintarCuerpo()})
+      .getVentas3PbJson(D.bus.indexOf(bu))});
+  return falta?null:filas}
+
+/* Índices derivados (una vez por carga). */
+function vt3Preparar(d){
+  var ip={};(d.meses||[]).forEach(function(m,i){ip[m]=i});
+  var X={meses:d.meses||[],ip:ip,meta:{generado:d.generado||(d.meta||{}).generado,fuentes:(d.meta||{}).fuentes},
+    frag:d.fragmentos||{pdv:32,sku:16},bus:d.bus||[],demoPs:d.demoPs||null,
+    clientes:(d.clientes||[]).map(function(c){return{id:c[0],nombre:c[1]||c[0],kam:c[2]||'SIN KAM'}}),
+    skus:(d.skus||[]).map(function(s){return{ean:s[0],nombre:s[1]||s[0],bu:(s[2]||'SIN BU').toUpperCase(),marca:s[3]||''}}),
+    pdv:(d.pdv||[]).map(function(p){return{clave:p[0],nombre:p[1]||p[0],cli:p[2],ciudad:p[3]||'',depto:p[4]||'',canal:p[5]||''}}),
+    cs:d.cs||[],pm:d.pm||[]};
+  // Mes del año anterior y mes previo de cada índice (−1 si no está en los datos).
+  X.py=X.meses.map(function(m){var j=ip[(Number(m.slice(0,4))-1)+m.slice(4)];return j==null?-1:j});
+  X.prev=X.meses.map(function(m){var a=Number(m.slice(0,4)),n=Number(m.slice(5,7))-1;if(!n){a--;n=12}
+    var j=ip[a+'-'+(n<10?'0':'')+n];return j==null?-1:j});
+  X.anioMax=X.meses.length?Number(X.meses[X.meses.length-1].slice(0,4)):0;
+  return X}
+
+/* ══════════ Estado ══════════ */
+function vt3Guardar(){try{localStorage.setItem(VT3_LS,JSON.stringify({dim:vt3E.dim,unidad:vt3E.unidad,vista:vt3E.vista,kam:vt3E.kam}))}catch(e){}}
+function vt3Restaurar(){
+  try{var g=JSON.parse(localStorage.getItem(VT3_LS)||'null');
+    if(g){if(VT3_DIMS.some(function(d){return d[0]===g.dim}))vt3E.dim=g.dim;
+      vt3E.unidad=g.unidad==='$'?'$':'#';vt3E.vista=g.vista==='tabla'?'tabla':'graf';vt3E.kam=g.kam||''}}catch(e){}
+  if(!vt3E.sel||!vt3E.sel.length)vt3E.sel=vt3MesesAnio(vt3Data.anioMax)}
+function vt3MesesAnio(a){var o=[];vt3Data.meses.forEach(function(m,i){if(Number(m.slice(0,4))===a)o.push(i)});return o}
+function vt3SetDim(d){vt3E.dim=d;vt3E.tope=40;vt3E.q='';vt3Guardar();vt3Render()}
+function vt3SetUnidad(u){vt3E.unidad=u;vt3Guardar();vt3Render()}
+function vt3SetVista(v){vt3E.vista=v;vt3Guardar();vt3Render()}
+function vt3SetKam(k){vt3E.kam=k;vt3Guardar();vt3Render()}
+function vt3Buscar(q){vt3E.q=q;vt3PintarCuerpo()}
+function vt3Mas(){vt3E.tope+=60;vt3PintarCuerpo()}
+function vt3AlternarMes(i){var s=vt3E.sel.slice(),j=s.indexOf(i);if(j===-1)s.push(i);else if(s.length>1)s.splice(j,1);
+  vt3E.sel=s.sort(function(a,b){return a-b});vt3Render()}
+function vt3SelRapida(t){var anio=vt3MesesAnio(vt3Data.anioMax);
+  vt3E.sel=t==='anio'?anio:(t==='u3'?anio.slice(-3):anio.slice(-1));vt3Render()}
+function vt3QuitarFiltro(dim,v){var a=vt3E.f[dim],i=a.indexOf(v);if(i!==-1)a.splice(i,1);vt3Render()}
+function vt3LimpiarFiltros(){vt3E.f={cli:[],bu:[],sku:[],pdv:[]};vt3Render()}
+/* Clic en una fila: filtra por ella y baja a la siguiente dimensión. */
+function vt3Drill(i){
+  var x=vt3Filas[i];if(!x)return;
+  var a=vt3E.f[vt3E.dim];if(a.indexOf(x.key)===-1)a.push(x.key);
+  vt3E.dim=VT3_DRILL[vt3E.dim];vt3E.tope=40;vt3E.q='';vt3Render();
+  var v=document.getElementById('vistaVentas3');if(v&&v.scrollTo)v.scrollTo(0,0)}
+
+/* ══════════ Agregación ══════════ */
+function vt3Val(u,a){return vt3E.unidad==='#'?u:a}
+/* ¿Pasa la fila los filtros? (cada fuente revisa solo lo que sabe) */
+function vt3PasaCli(iCli){
+  var f=vt3E.f,c=vt3Data.clientes[iCli];
+  if(f.cli.length&&f.cli.indexOf(iCli)===-1)return false;
+  if(vt3E.kam&&(!c||c.kam!==vt3E.kam))return false;
+  return true}
+function vt3PasaSku(iSku){
+  var f=vt3E.f,s=vt3Data.skus[iSku];
+  if(f.sku.length&&f.sku.indexOf(iSku)===-1)return false;
+  if(f.bu.length&&(!s||f.bu.indexOf(s.bu)===-1))return false;
+  return true}
+function vt3PasaPdv(iPdv){
+  var f=vt3E.f,p=vt3Data.pdv[iPdv];
+  if(f.pdv.length&&f.pdv.indexOf(iPdv)===-1)return false;
+  return p?vt3PasaCli(p.cli):false}
+
+/* Fuente de las series según dimensión y filtros (la más liviana que alcance):
+     cs  cliente × producto × mes  → dimensiones Cliente, BU y Producto sin filtro de PDV
+     pm  PDV × mes                 → dimensión PDV sin filtro de producto ni de BU
+     pb  PDV × BU × mes            → dimensión PDV filtrada por BU
+     ps  PDV × producto × mes      → filtro de PDV, o dimensión PDV filtrada por producto */
+function vt3Fuente(){
+  var f=vt3E.f,d=vt3E.dim;
+  if(f.pdv.length)return{tipo:'ps',req:{pdv:f.pdv}};
+  if(d==='pdv'&&f.sku.length)return{tipo:'ps',req:{sku:f.sku}};
+  if(d==='pdv'&&f.bu.length)return{tipo:'pb'};
+  return{tipo:d==='pdv'?'pm':'cs'}}
+/* Filas de la fuente (null = todavía no llegan). */
+function vt3FilasFuente(F){
+  if(F.tipo==='cs')return vt3Data.cs;
+  if(F.tipo==='pm')return vt3Data.pm;
+  if(F.tipo==='pb')return vt3PbFilas();
+  return vt3Detalle(F.req)}
+function vt3Series(dim,F,filas){
+  var D=vt3Data,n=D.meses.length,g={};
+  function sum(k,iMes,u,a){var s=g[k]||(g[k]=new Float64Array(n));s[iMes]+=vt3Val(u,a)}
+  if(F.tipo==='cs')filas.forEach(function(r){
+    if(!vt3PasaCli(r[0])||!vt3PasaSku(r[1]))return;
+    sum(dim==='cli'?r[0]:(dim==='bu'?D.skus[r[1]].bu:r[1]),r[2],r[3],r[4])});
+  else if(F.tipo==='pm')filas.forEach(function(r){
+    if(!vt3PasaPdv(r[0]))return;
+    sum(dim==='cli'?D.pdv[r[0]].cli:r[0],r[1],r[2],r[3])});
+  else if(F.tipo==='pb')filas.forEach(function(r){
+    if(!vt3PasaPdv(r[0])||vt3E.f.bu.indexOf(r[1])===-1)return;
+    sum(r[0],r[2],r[3],r[4])});
+  else filas.forEach(function(r){
+    if(!vt3PasaPdv(r[0])||!vt3PasaSku(r[1]))return;
+    var k=dim==='cli'?D.pdv[r[0]].cli:(dim==='bu'?D.skus[r[1]].bu:(dim==='sku'?r[1]:r[0]));
+    sum(k,r[2],r[3],r[4])});
+  return g}
+
+/* AC, PY, ΔPY, ΔPY% y Var % vs mes pasado de una serie para los meses elegidos. */
+function vt3Medidas(s){
+  var D=vt3Data,ac=0,py=0,hayPy=false;
+  vt3E.sel.forEach(function(i){ac+=s[i];var j=D.py[i];if(j>=0){py+=s[j];hayPy=true}});
+  var ult=vt3E.sel[vt3E.sel.length-1],pv=D.prev[ult];
+  var m={ac:ac,py:hayPy?py:null};
+  m.dpy=m.py!=null?ac-m.py:null;
+  m.dpyp=m.py>0?ac/m.py-1:null;
+  m.vmp=pv>=0&&s[pv]>0?s[ult]/s[pv]-1:null;
+  return m}
+
+function vt3Nombre(dim,k){
+  var D=vt3Data;
+  if(dim==='cli'){var c=D.clientes[k];return{n:c?c.nombre:String(k),s:c?vtCortoNombre(c.kam):''}}
+  if(dim==='bu')return{n:String(k),s:''};
+  if(dim==='sku'){var s=D.skus[k];return{n:s?s.nombre:String(k),s:s?(s.bu+' · '+s.ean):''}}
+  var p=D.pdv[k],c2=p?D.clientes[p.cli]:null;
+  return{n:p?p.nombre:String(k),s:(c2?c2.nombre:'')+(p&&p.ciudad?' · '+p.ciudad:'')}}
+function vtCortoNombre(n){return String(n||'').toLowerCase().replace(/(^|\s)\S/g,function(c){return c.toUpperCase()})}
+
+/* Modelo de la vista: filas + totales + KPI. null si falta el detalle (se pide). */
+function vt3Modelo(){
+  var F=vt3Fuente(),filasF=vt3FilasFuente(F);
+  if(!filasF)return null;
+  var dim=vt3E.dim,g=vt3Series(dim,F,filasF),filas=[],n=vt3Data.meses.length,tot=new Float64Array(n);
+  Object.keys(g).forEach(function(k){
+    var s=g[k];for(var i=0;i<n;i++)tot[i]+=s[i];
+    var m=vt3Medidas(s);if(!m.ac&&!m.py)return;
+    var key=dim==='bu'?k:Number(k),nm=vt3Nombre(dim,key);
+    m.key=key;m.nombre=nm.n;m.sub=nm.s;filas.push(m)});
+  var T=vt3Medidas(tot);T.prom=vt3E.sel.length?T.ac/vt3E.sel.length:null;
+  var pdvs=vt3TotalPdv();T.nPdv=pdvs;T.promPdv=pdvs>0?T.ac/pdvs:null;
+  return{filas:filas,tot:T,fuente:F.tipo}}
+
+/* Total PDV: puntos con venta en los meses elegidos, con la fuente que tenga PDV
+   (null mientras llega el detalle). */
+function vt3TotalPdv(){
+  var f=vt3E.f,sel={},vistos={},n=0;vt3E.sel.forEach(function(i){sel[i]=1});
+  var F=f.pdv.length?{tipo:'ps',req:{pdv:f.pdv}}:(f.sku.length?{tipo:'ps',req:{sku:f.sku}}:(f.bu.length?{tipo:'pb'}:{tipo:'pm'}));
+  var filas=vt3FilasFuente(F);if(!filas)return null;
+  filas.forEach(function(r){
+    var iMes=F.tipo==='pm'?r[1]:r[2],u=F.tipo==='pm'?r[2]:r[3],a=F.tipo==='pm'?r[3]:r[4];
+    if(!sel[iMes]||!vt3Val(u,a)||vistos[r[0]]||!vt3PasaPdv(r[0]))return;
+    if(F.tipo==='ps'&&!vt3PasaSku(r[1]))return;
+    if(F.tipo==='pb'&&f.bu.indexOf(r[1])===-1)return;
+    vistos[r[0]]=1;n++});
+  return n}
+
+/* ══════════ Formato ══════════ */
+/* Cifras cortas con coma decimal (caben en las columnas angostas del gráfico):
+   $47,4 MM · $740 M · 1,8 M und · 32.121 und. */
+function vt3Num(v){if(v==null||!isFinite(v))return'–';
+  var a=Math.abs(v),sg=v<0?'−':'',d=function(x){return x.toFixed(1).replace('.',',')};
+  if(vt3E.unidad==='$'){
+    if(a>=1e9)return sg+'$'+d(a/1e9)+' MM';
+    if(a>=1e6)return sg+'$'+(a>=1e8?Math.round(a/1e6):d(a/1e6))+' M';
+    if(a>=1e3)return sg+'$'+Math.round(a/1e3)+' K';
+    return sg+'$'+FMT.format(Math.round(a))}
+  return a>=1e6?sg+d(a/1e6)+' M':sg+FMT.format(Math.round(a))}
+function vt3NumD(v){if(v==null||!isFinite(v))return'–';return(v>0?'+':v<0?'−':'')+vt3Num(Math.abs(v))}
+function vt3Pct(v){if(v==null||!isFinite(v))return'–';var n=Math.round(Math.abs(v)*100);
+  return(n===0?'':(v>0?'+':'−'))+FMT.format(n)+'%'}
+function vt3MesEtq(i){var m=vt3Data.meses[i];return MTD_MESES[Number(m.slice(5,7))-1]+' '+m.slice(0,4)}
+function vt3EtqSel(){var s=vt3E.sel;if(!s.length)return'';
+  return s.length===1?vt3MesEtq(s[0]):MTD_MESES[Number(vt3Data.meses[s[0]].slice(5,7))-1]+'–'+vt3MesEtq(s[s.length-1])+
+    (s.length!==s[s.length-1]-s[0]+1?' ('+s.length+' meses)':'')}
+
+/* ══════════ Render ══════════ */
+function vt3Render(){
+  var c=document.getElementById('vt3Cuerpo');if(!c)return;
+  if(!vt3Data){
+    c.innerHTML=vt3Error?'<div class="card mtd-estado"><b>No pude cargar el sell-out del ETL.</b><br>'+esc(vt3Error)+
+      '<br><span class="mini">Revisa que etl_sellout.py haya generado s3_cubo.json en la carpeta de Drive.</span>'+
+      '<br><button class="btn" style="margin-top:10px" onclick="vt3Cargar(true)">Reintentar</button></div>':
+      '<div class="mtd-estado"><span class="mtd-spinner"></span>Cargando sell-out…</div>';
+    return}
+  var D=vt3Data,kams={};D.clientes.forEach(function(x){kams[x.kam]=1});
+  if(vt3E.kam&&!kams[vt3E.kam])vt3E.kam='';
+  var sk=document.getElementById('vt3Kam');
+  if(sk)sk.innerHTML='<option value="">Todos los KAM</option>'+Object.keys(kams).sort().map(function(k){
+    return'<option value="'+esc(k)+'"'+(k===vt3E.kam?' selected':'')+'>'+esc(vtCortoNombre(k))+'</option>'}).join('');
+  var sub=document.getElementById('vt3Sub');
+  if(sub)sub.innerText='Sell-out · '+vt3EtqSel()+' vs mismos meses del año anterior · fuente: Affiliate Master'+
+    (D.meta.generado?' · ETL del '+String(D.meta.generado).slice(0,10):'');
+  c.innerHTML='<div class="vt3-grid"><aside class="vt3-lado">'+vt3HtmlMeses()+'<div id="vt3Kpis"></div></aside>'+
+    '<section class="card vt3-panel"><div class="vt3-cab">'+
+      '<h3 id="vt3Titulo"></h3>'+
+      '<div class="vt-switches">'+
+        '<div class="vt-switch" role="group" aria-label="Dimensión">'+VT3_DIMS.map(function(d){
+          return'<button type="button" class="'+(vt3E.dim===d[0]?'activo':'')+'" onclick="vt3SetDim(\''+d[0]+'\')">'+d[1]+'</button>'}).join('')+'</div>'+
+        '<div class="vt-switch chico" role="group" aria-label="Unidad">'+
+          '<button type="button" class="'+(vt3E.unidad==='$'?'activo':'')+'" onclick="vt3SetUnidad(\'$\')">$</button>'+
+          '<button type="button" class="'+(vt3E.unidad==='#'?'activo':'')+'" onclick="vt3SetUnidad(\'#\')">#</button></div>'+
+        '<div class="vt-switch chico" role="group" aria-label="Vista">'+
+          '<button type="button" class="'+(vt3E.vista==='graf'?'activo':'')+'" onclick="vt3SetVista(\'graf\')">Gráfico</button>'+
+          '<button type="button" class="'+(vt3E.vista==='tabla'?'activo':'')+'" onclick="vt3SetVista(\'tabla\')">Tabla</button></div>'+
+        '<button class="mtd-btn-csv" onclick="vt3Csv()" title="Descargar lo que se ve">⬇ CSV</button>'+
+      '</div></div>'+
+      '<div class="vt3-filtros" id="vt3Chips"></div>'+
+      '<input type="search" class="vt-buscar" placeholder="Buscar…" value="'+esc(vt3E.q)+'" oninput="vt3Buscar(this.value)">'+
+      '<div id="vt3Contenido"></div></section></div>';
+  vt3PintarCuerpo()}
+
+function vt3HtmlMeses(){
+  var D=vt3Data,anio=vt3MesesAnio(D.anioMax),sel={};vt3E.sel.forEach(function(i){sel[i]=1});
+  return'<div class="card vt3-meses"><div class="vt3-meses-tit">Meses</div>'+
+    '<div class="vt3-rapidos"><button type="button" class="vt-link" onclick="vt3SelRapida(\'anio\')">Año</button>'+
+      '<button type="button" class="vt-link" onclick="vt3SelRapida(\'u3\')">Últ. 3</button>'+
+      '<button type="button" class="vt-link" onclick="vt3SelRapida(\'u1\')">Último</button></div>'+
+    '<div class="vt3-lista-meses">'+anio.map(function(i){
+      return'<label class="vt3-mes'+(sel[i]?' on':'')+'"><input type="checkbox"'+(sel[i]?' checked':'')+
+        ' onchange="vt3AlternarMes('+i+')">'+MTD_MESES_LARGO[Number(D.meses[i].slice(5,7))-1]+'</label>'}).join('')+
+    '</div></div>'}
+
+function vt3PintarCuerpo(){
+  var cont=document.getElementById('vt3Contenido');if(!cont)return;
+  var dimEtq=VT3_DIMS.filter(function(d){return d[0]===vt3E.dim})[0][1];
+  var tit=document.getElementById('vt3Titulo');
+  if(tit)tit.innerText='Crecimiento por '+(vt3E.dim==='bu'?'BU':dimEtq.toLowerCase())+' '+(vt3E.unidad==='#'?'(unidades)':'($)');
+  vt3PintarChips();
+  var M=vt3Modelo();
+  if(!M){cont.innerHTML=vt3DetError?'<div class="mtd-vacio">No pude cargar el detalle por punto de venta: '+esc(vt3DetError)+'</div>':
+    '<div class="mtd-estado"><span class="mtd-spinner"></span>Cargando el detalle por punto de venta…</div>';
+    document.getElementById('vt3Kpis').innerHTML='';return}
+  vt3PintarKpis(M.tot);
+  var q=normTxt(vt3E.q||''),l=M.filas.filter(function(x){return!q||normTxt(x.nombre+' '+x.sub).indexOf(q)!==-1});
+  var o=vt3E.orden,dir=o.dir==='asc'?1:-1;
+  l.sort(function(a,b){
+    if(o.k==='nombre')return dir*a.nombre.localeCompare(b.nombre,'es');
+    var x=a[o.k],y=b[o.k],nx=x==null||!isFinite(x),ny=y==null||!isFinite(y);
+    if(nx||ny)return nx&&ny?0:(nx?1:-1);return dir*(x-y)});
+  vt3Filas=l;
+  if(!l.length){cont.innerHTML='<div class="mtd-vacio">Sin datos con estos filtros</div>';return}
+  if(vt3E.vista==='tabla')vt3PintarTabla(l,M.tot);else vt3PintarGrafico(l,M.tot)}
+
+function vt3PintarChips(){
+  var c=document.getElementById('vt3Chips');if(!c)return;
+  var D=vt3Data,items=[];
+  vt3E.f.cli.forEach(function(v){items.push(['cli',v,'Cliente: '+(D.clientes[v]?D.clientes[v].nombre:v)])});
+  vt3E.f.bu.forEach(function(v){items.push(['bu',v,'BU: '+v])});
+  vt3E.f.sku.forEach(function(v){items.push(['sku',v,'Producto: '+(D.skus[v]?D.skus[v].nombre:v)])});
+  vt3E.f.pdv.forEach(function(v){items.push(['pdv',v,'PDV: '+(D.pdv[v]?D.pdv[v].nombre:v)])});
+  c.hidden=!items.length;
+  c.innerHTML=items.map(function(it){return'<button type="button" class="chip-filtro" onclick="vt3QuitarFiltro(\''+it[0]+'\','+
+    (typeof it[1]==='number'?it[1]:'\''+esc(it[1])+'\'')+')" title="Quitar filtro">'+esc(it[2])+'<span class="x" aria-hidden="true">×</span></button>'}).join('')+
+    (items.length?'<button type="button" class="chip-filtro-limpiar" onclick="vt3LimpiarFiltros()">Quitar todos</button>':'')}
+
+function vt3PintarKpis(T){
+  var k=document.getElementById('vt3Kpis');if(!k)return;
+  function card(val,etq,extra){return'<div class="card vt3-kpi"><div class="v">'+val+'</div><div class="e">'+etq+'</div>'+(extra||'')+'</div>'}
+  var d=T.dpyp!=null?'<div class="vt3-kpi-d '+(T.dpy>=0?'pos':'neg')+'">ΔPY '+vt3Pct(T.dpyp)+' | '+vt3NumD(T.dpy)+'</div>':'<div class="vt3-kpi-d">sin año anterior</div>';
+  k.innerHTML=card(vt3Num(T.prom),'Promedio mensual')+
+    card(vt3Num(T.ac),'Resultado '+(vt3E.unidad==='#'?'(und)':'($)'),d)+
+    card(T.promPdv==null?'–':vt3Num(T.promPdv),'Promedio por PDV')+
+    card(T.nPdv==null?'…':FMT.format(T.nPdv),'Total PDV')}
+
+/* Gráfico estilo Zebra BI: una fila por elemento, cinco columnas alineadas. */
+function vt3PintarGrafico(l,T){
+  var vis=l.slice(0,vt3E.tope);
+  var maxAc=0,maxD=0,maxP=0;
+  vis.forEach(function(x){maxAc=Math.max(maxAc,x.ac,x.py||0);if(x.dpy!=null)maxD=Math.max(maxD,Math.abs(x.dpy));
+    if(x.dpyp!=null)maxP=Math.max(maxP,Math.abs(x.dpyp))});
+  var cap=Math.min(maxP,1)||1;   // ΔPY% sobre ±100 %: el pin llega al borde con flecha (como Zebra)
+  function cab(k,t,cls){var o=vt3E.orden,act=o.k===k;
+    return'<button type="button" class="vt3-th '+(cls||'')+(act?' act':'')+'" onclick="vt3Ordenar(\''+k+'\')">'+t+(act?(o.dir==='asc'?' ↑':' ↓'):'')+'</button>'}
+  var h='<div class="vt3-chart"><div class="vt3-fila vt3-encab">'+cab('nombre','',"nom")+cab('py','PY','num')+cab('ac','AC','ac')+
+    cab('dpy','ΔPY','d')+cab('dpyp','ΔPY%','p')+cab('vmp','Var % vs mes pasado','num')+'</div>';
+  vis.forEach(function(x,i){
+    var w=maxAc>0?x.ac/maxAc*82:0;
+    var dw=maxD>0&&x.dpy!=null?Math.abs(x.dpy)/maxD*44:0,pos=x.dpy>=0;
+    var pv=x.dpyp,pw=pv==null?0:Math.min(Math.abs(pv),cap)/cap*44,fuera=pv!=null&&Math.abs(pv)>cap;
+    h+='<div class="vt3-fila" tabindex="0" role="button" onclick="vt3Drill('+i+')" onkeydown="if(event.key===\'Enter\')vt3Drill('+i+')"'+
+      ' onmousemove="vt3Tip(event,'+i+')" onmouseleave="vt3TipFuera()">'+
+      '<span class="nom" title="'+esc(x.nombre)+'">'+esc(x.nombre)+(x.sub?'<small>'+esc(x.sub)+'</small>':'')+'</span>'+
+      '<span class="num py">'+(x.py==null?'':vt3Num(x.py))+'</span>'+
+      '<span class="ac"><i style="width:'+w.toFixed(1)+'%"></i><b>'+vt3Num(x.ac)+'</b></span>'+
+      '<span class="d">'+(x.dpy==null?'':'<i class="'+(pos?'pos':'neg')+'" style="'+(pos?'left:50%':'right:50%')+';width:'+dw.toFixed(1)+'%"></i>'+
+        '<b class="'+(pos?'pos':'neg')+'" style="'+(pos?'left:calc(50% + '+dw.toFixed(1)+'% + 4px)':'right:calc(50% + '+dw.toFixed(1)+'% + 4px)')+'">'+vt3NumD(x.dpy)+'</b>')+'</span>'+
+      '<span class="p">'+(pv==null?'':'<i class="'+(pv>=0?'pos':'neg')+'" style="'+(pv>=0?'left:50%':'right:50%')+';width:'+pw.toFixed(1)+'%"></i>'+
+        '<em class="'+(pv>=0?'pos':'neg')+(fuera?' fuera':'')+'" style="'+(pv>=0?'left:calc(50% + '+pw.toFixed(1)+'%)':'right:calc(50% + '+pw.toFixed(1)+'%)')+'"></em>'+
+        // Pin largo: la cifra va del lado de adentro (si no, se sale de la tarjeta en el celular).
+        (pw>30?'<b class="adentro '+(pv>=0?'pos':'neg')+'" style="'+(pv>=0?'right:calc(50% - '+pw.toFixed(1)+'% + 8px)':'left:calc(50% - '+pw.toFixed(1)+'% + 8px)')+'">'+vt3Pct(pv)+'</b>':
+        '<b class="'+(pv>=0?'pos':'neg')+'" style="'+(pv>=0?'left:calc(50% + '+pw.toFixed(1)+'% + 9px)':'right:calc(50% + '+pw.toFixed(1)+'% + 9px)')+'">'+vt3Pct(pv)+'</b>'))+'</span>'+
+      '<span class="num vmp">'+vt3Pct(x.vmp)+'</span>'+
+      '<span class="mv">PY '+(x.py==null?'–':vt3Num(x.py))+' · ΔPY '+vt3NumD(x.dpy)+' · vs mes pasado '+vt3Pct(x.vmp)+'</span>'+
+    '</div>'});
+  h+='<div class="vt3-fila vt3-total"><span class="nom">TOTAL</span><span class="num py">'+(T.py==null?'':vt3Num(T.py))+'</span>'+
+    '<span class="ac"><b style="position:static">'+vt3Num(T.ac)+'</b></span><span class="d"><b class="'+(T.dpy>=0?'pos':'neg')+'" style="position:static">'+vt3NumD(T.dpy)+'</b></span>'+
+    '<span class="p"><b class="'+(T.dpyp>=0?'pos':'neg')+'" style="position:static">'+vt3Pct(T.dpyp)+'</b></span><span class="num vmp">'+vt3Pct(T.vmp)+'</span></div>';
+  h+='</div>'+(l.length>vis.length?'<button class="btn vt-mas" onclick="vt3Mas()">Mostrar más ('+(l.length-vis.length)+' restantes)</button>':
+    '<div class="hint">'+l.length+(l.length===1?' fila':' filas')+' · clic en una fila para ver su detalle</div>');
+  document.getElementById('vt3Contenido').innerHTML=h+'<div class="vt3-tip" id="vt3Tip" hidden></div>'}
+
+function vt3Ordenar(k){var o=vt3E.orden;
+  vt3E.orden=o.k===k?{k:k,dir:o.dir==='desc'?'asc':'desc'}:{k:k,dir:k==='nombre'?'asc':'desc'};vt3PintarCuerpo()}
+
+/* Tooltip como el de Power BI (solo con mouse). */
+function vt3Tip(ev,i){
+  var t=document.getElementById('vt3Tip'),x=vt3Filas[i];if(!t||!x)return;
+  t.innerHTML='<div class="t">'+esc(x.nombre)+'</div><table>'+
+    '<tr><td>AC</td><td>'+vt3Num(x.ac)+'</td></tr><tr><td>PY</td><td>'+(x.py==null?'–':vt3Num(x.py))+'</td></tr>'+
+    '<tr><td>ΔPY</td><td>'+vt3NumD(x.dpy)+'</td></tr><tr><td>ΔPY%</td><td>'+vt3Pct(x.dpyp)+'</td></tr>'+
+    '<tr><td>Var % vs mes pasado</td><td>'+vt3Pct(x.vmp)+'</td></tr></table>';
+  t.hidden=false;
+  var r=document.getElementById('vt3Contenido').getBoundingClientRect();
+  t.style.left=Math.min(ev.clientX-r.left+16,r.width-260)+'px';t.style.top=(ev.clientY-r.top+14)+'px'}
+function vt3TipFuera(){var t=document.getElementById('vt3Tip');if(t)t.hidden=true}
+
+/* Vista de tabla (mismo helper ordenable de Ventas MTD). */
+function vt3PintarTabla(l,T){
+  document.getElementById('vt3Contenido').innerHTML='<div class="mtd-scroll vt-scroll-alto"><table class="mtd-tabla" id="vt3Tabla"></table></div>'+
+    '<div class="hint">'+l.length+' filas · clic en una fila para ver su detalle · clic en un encabezado para ordenar</div>';
+  var dimEtq=VT3_DIMS.filter(function(d){return d[0]===vt3E.dim})[0][1];
+  mtdTabla({id:'vt3Tabla',filas:l,orden:{k:'ac',dir:'desc'},
+    alOrdenar:function(v){vt3Filas=v},
+    clic:{valor:function(x){return vt3Filas.indexOf(x)},activo:function(){return false},haySel:function(){return false},
+      alClic:function(i){vt3Drill(i)},titulo:'Ver el detalle de esta fila'},
+    columnas:[
+      {k:'nombre',t:dimEtq,tipo:'txt',celda:function(x){return'<td>'+esc(x.nombre)+(x.sub?'<span class="sub">'+esc(x.sub)+'</span>':'')+'</td>'}},
+      {k:'py',t:'PY',tipo:'num',celda:function(x,t){return mtdTd(x.py==null?'–':vt3Num(x.py),t)}},
+      {k:'ac',t:'AC',tipo:'num',celda:function(x,t){return mtdTd(vt3Num(x.ac),t)}},
+      {k:'dpy',t:'ΔPY',tipo:'num',celda:function(x,t){return mtdTd('<span class="'+(x.dpy>=0?'pos':'neg')+'">'+vt3NumD(x.dpy)+'</span>',t)}},
+      {k:'dpyp',t:'ΔPY%',tipo:'num',celda:function(x,t){return mtdTd('<span class="'+(x.dpyp>=0?'pos':'neg')+'">'+vt3Pct(x.dpyp)+'</span>',t)}},
+      {k:'vmp',t:'Var % vs mes pasado',tipo:'num',celda:function(x,t){return mtdTd(vt3Pct(x.vmp),t)}}],
+    total:'<tr class="total"><td>TOTAL</td>'+mtdTd(T.py==null?'–':vt3Num(T.py),'PY')+mtdTd(vt3Num(T.ac),'AC')+
+      mtdTd(vt3NumD(T.dpy),'ΔPY')+mtdTd(vt3Pct(T.dpyp),'ΔPY%')+mtdTd(vt3Pct(T.vmp),'Var % vs mes pasado')+'</tr>'})}
+
+/* CSV: lo que se ve (filtros, búsqueda y orden), con la unidad elegida. */
+function vt3Csv(){
+  var dimEtq=VT3_DIMS.filter(function(d){return d[0]===vt3E.dim})[0][1],u=vt3E.unidad==='#'?' (und)':' ($)';
+  mtdDescargarCsv(vt3Filas.map(function(x){return{nombre:x.nombre,sub:x.sub,py:x.py==null?'':Math.round(x.py),ac:Math.round(x.ac),
+    dpy:x.dpy==null?'':Math.round(x.dpy),dpyp:x.dpyp==null?'':x.dpyp,vmp:x.vmp==null?'':x.vmp}}),[
+    {clave:'nombre',titulo:dimEtq},{clave:'sub',titulo:'Detalle'},{clave:'py',titulo:'PY'+u},{clave:'ac',titulo:'AC'+u},
+    {clave:'dpy',titulo:'ΔPY'+u},{clave:'dpyp',titulo:'ΔPY%'},{clave:'vmp',titulo:'Var % vs mes pasado'}],
+    'ventas3_'+vt3E.dim+'_'+mtdCsvFecha()+'.csv')}
+
+/* ══════════ Datos de ejemplo (vista previa sin Apps Script) ══════════
+   Mismo catálogo que los demás demos (DEMO_CLIENTES / DEMO_PRODUCTOS). Meses: enero
+   del año anterior al mes pasado del reloj; varios PDV por cliente. */
+function vt3Demo(){
+  var sem=21;function rnd(){sem=(sem*1103515245+12345)%2147483648;return sem/2147483648}
+  var hoy=new Date(),kFin=hoy.getFullYear()*12+hoy.getMonth()-2,k0=(hoy.getFullYear()-1)*12,meses=[];
+  for(var k=k0;k<=kFin;k++){var m=k%12+1;meses.push(Math.floor(k/12)+'-'+(m<10?'0':'')+m)}
+  var cl=DEMO_CLIENTES.filter(function(c){return c[0]!=='1'});
+  var clientes=cl.map(function(c){return[c[0],c[1],c[2]]});
+  var skus=DEMO_PRODUCTOS.map(function(p,i){return['84294202'+(48977+i*37),p[0],p[1],p[2]]});
+  var CIUD=['BOGOTA','MEDELLIN','CALI','BARRANQUILLA','CARTAGENA','BUCARAMANGA'];
+  var pdv=[],cs={},pm={},ps=[];
+  cl.forEach(function(c,ic){
+    var n=Math.max(2,Math.round((c[5]||c[4]||1e8)/4e8)),crec=(DEMO_CREC_SO&&DEMO_CREC_SO[c[0]])||1.06;
+    for(var j=0;j<n;j++){
+      var ip=pdv.length,base=(c[5]||c[4]||1e8)*0.9/n/55000*(0.5+rnd());
+      pdv.push([c[0]+'_'+(j+1),c[1].split(' ')[0]+' '+(j+1)+' '+CIUD[(ic+j)%CIUD.length],ic,CIUD[(ic+j)%CIUD.length],'',j%5?'TIENDA':'DIGITAL']);
+      skus.forEach(function(s,is){
+        if(rnd()<0.2)return;
+        var w=DEMO_PRODUCTOS[is][3]*(0.6+rnd()*0.8);
+        meses.forEach(function(mm,im){
+          var mo=Number(mm.slice(5,7)),g=Math.pow(crec,(im-(meses.length-1))/12);
+          var u=Math.round(base*w*demoEstacion(mo)*g*(0.7+rnd()*0.6));if(!u)return;
+          var a=u*(45000+is*6000);ps.push([ip,is,im,u,a]);
+          var kc=ic+'|'+is+'|'+im,kp=ip+'|'+im;
+          (cs[kc]||(cs[kc]=[ic,is,im,0,0]))[3]+=u;cs[kc][4]+=a;
+          (pm[kp]||(pm[kp]=[ip,im,0,0]))[2]+=u;pm[kp][3]+=a})})}});
+  return{v:1,meses:meses,clientes:clientes,skus:skus,pdv:pdv,
+    cs:Object.keys(cs).map(function(k){return cs[k]}),pm:Object.keys(pm).map(function(k){return pm[k]}),
+    demoPs:ps,meta:{generado:hoy.toISOString(),demo:true}}}
+</script>

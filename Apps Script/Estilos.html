@@ -837,4 +837,361 @@ img.yb-grande{width:100%;max-height:40vh;object-fit:contain;background:var(--lie
   .yb-comparar{grid-template-columns:1fr}
   .yb-galeria{grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
 }
+
+/* ══════════ Ventas (JsVentas.html) · cartera del KAM ══════════
+   Diseñada primero para el celular: una columna, tarjetas y barras de bala
+   (bullet) en vez de tablas anchas; desde 1000 px pasa a dos columnas (lista
+   a la izquierda, matriz y mensual a la derecha). Zebra BI: etiquetas directas,
+   color solo con significado. SOLO DATOS REALES: en la barra, lo rayado es el
+   mismo mes del año pasado completo (no una proyección). */
+#vistaVentas{min-height:0;overflow-y:auto;padding:2px}
+#vistaVentas[hidden]{display:none}
+body:not(.vista-mapa) .btn-centrar{display:none}
+.mtdtab-top.clasico{font-weight:500;color:var(--muted);font-size:12px}
+.mtdtab-top.clasico.activo{color:var(--ink)}
+
+.vt-barra{position:sticky;top:0;z-index:20;display:flex;flex-wrap:wrap;align-items:center;gap:8px 16px;
+  padding:10px 14px;margin-bottom:10px}
+.vt-titulo{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;min-width:0}
+.vt-titulo h2{margin:0;font-size:17px;font-weight:700}
+.vt-titulo .sub{font-size:12.5px;color:var(--muted)}
+.vt-titulo .sub b{color:var(--ink)}
+.vt-ctrl{display:flex;gap:8px;align-items:flex-end;margin-left:auto;flex-wrap:wrap}
+.vt-campo{display:flex;flex-direction:column;gap:2px}
+.vt-campo span{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-2)}
+.vt-campo select{min-width:170px;max-width:240px;padding:7px 8px;border:1px solid var(--borde-2);border-radius:var(--radio);
+  background:var(--surface);color:var(--ink);font-size:13px;font-family:inherit}
+.vt-campo select:focus,.vt-buscar:focus,.vt-orden:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 2px var(--accent-suave)}
+
+/* Control segmentado Clientes | Productos */
+.vt-segmento{display:inline-flex;gap:0;margin:0 0 10px;padding:3px;background:var(--surface);
+  border:1px solid var(--borde);border-radius:999px;box-shadow:var(--sombra)}
+.vt-segmento button{border:none;background:none;padding:7px 18px;border-radius:999px;font:inherit;font-size:13px;
+  font-weight:600;color:var(--ink-2);cursor:pointer}
+.vt-segmento button.activo{background:var(--ink);color:#fff}
+
+/* Switches del resumen: vs plan / vs sell-out · $ / # · ventana de meses */
+.vt-hero-cab{display:flex;justify-content:space-between;align-items:center;gap:8px 12px;flex-wrap:wrap;margin-bottom:10px}
+.vt-hero-cab h3{margin:0;font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-2)}
+.vt-switches{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.vt-switch{display:inline-flex;padding:2px;border:1px solid var(--borde-2);border-radius:999px;background:var(--surface)}
+.vt-switch button{border:none;background:none;padding:5px 12px;border-radius:999px;font:inherit;font-size:12px;
+  font-weight:600;color:var(--ink-2);cursor:pointer;white-space:nowrap}
+.vt-switch button.activo{background:var(--ink);color:#fff}
+.vt-switch button:disabled{cursor:default;opacity:.4}
+.vt-switch.chico button{padding:4px 9px;font-size:11.5px}
+
+.vt-inicio{display:grid;grid-template-columns:minmax(0,1fr) 360px;gap:12px;align-items:start}
+.vt-col-a,.vt-col-b{display:flex;flex-direction:column;gap:12px;min-width:0}
+/* Sin esto, la fila de filtros rápidos (no se parte en el celular) ensancha su tarjeta. */
+.vt-inicio .card{min-width:0;max-width:100%}
+.vt-col-b{position:sticky;top:66px}
+.vt-etq{font-size:10.5px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-2)}
+.vt-det{font-size:12px;color:var(--muted);margin-top:2px}
+.vt-det b{color:var(--ink)}
+.vt-num-xl{font-size:28px;font-weight:700;line-height:1.15;font-variant-numeric:tabular-nums}
+.vt-num-l{font-size:30px;font-weight:700;line-height:1.1;font-variant-numeric:tabular-nums}
+.vt-num-m{font-size:17px;font-weight:700;line-height:1.25;font-variant-numeric:tabular-nums}
+.vt-pos{color:var(--sem-alto);font-weight:600}
+.vt-neg{color:var(--error);font-weight:600}
+.vt-na{color:var(--muted)}
+.vt-nota{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted);padding:6px 0}
+/* Asterisco "valorizado a PVL": muy discreto, a pedido del usuario. */
+.vt-pvl{color:var(--muted);font-weight:400;margin-left:1px;cursor:help}
+.vt-pvl-nota{font-size:10px;color:#a3a6ad;margin-top:8px}
+
+/* Resumen */
+.vt-hero{padding:14px 16px}
+.vt-hero-tit{font-size:12px;font-weight:700;color:var(--ink-2);text-transform:uppercase;letter-spacing:.04em}
+.vt-hero-tit span{font-weight:500;color:var(--muted);text-transform:none;letter-spacing:0;margin-left:4px}
+.vt-hero-top{display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap}
+.vt-hero-der{text-align:right}
+.vt-bg{position:relative;height:26px;margin:24px 0 6px}
+.vt-bg-pista{position:absolute;left:0;top:3px;bottom:3px;background:#e9eaee;border-radius:3px}
+.vt-bg-rayado{position:absolute;left:0;top:7px;bottom:7px;border-radius:2px;
+  background:repeating-linear-gradient(135deg,rgba(43,40,48,.35) 0 2px,transparent 2px 5px)}
+.vt-bg-barra{position:absolute;left:0;top:7px;bottom:7px;border-radius:2px;background:var(--ink)}
+.vt-bg-barra.so{background:var(--accent)}
+.vt-bg-raya{position:absolute;top:-2px;bottom:-2px;width:2px;margin-left:-1px;background:var(--ink)}
+.vt-bg-raya span{position:absolute;bottom:100%;left:50%;transform:translateX(-50%);margin-bottom:2px;
+  font-size:10.5px;font-weight:600;color:var(--ink);white-space:nowrap}
+/* Cerca de los bordes el rótulo se ancla hacia adentro para no salirse de la tarjeta. */
+.vt-bg-raya.izq span{left:-1px;transform:none}
+.vt-bg-raya.der span{left:auto;right:-1px;transform:none}
+.vt-bg-meta{position:absolute;top:0;bottom:0;width:0;border-left:2px dotted var(--muted)}
+.vt-bg-meta span{position:absolute;top:100%;left:0;transform:translateX(-50%);margin-top:1px;font-size:10px;color:var(--muted)}
+.vt-bg-ley{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:11px;color:var(--ink-2);margin:14px 0 4px}
+.vt-bg-ley span{display:inline-flex;align-items:center;gap:5px}
+.vt-bg-ley i{display:inline-block;width:14px;height:8px;border-radius:2px}
+.vt-bg-ley .sw-barra{background:var(--ink)}
+.vt-bg-ley .sw-barra.so{background:var(--accent)}
+.vt-bg-ley .sw-raya{width:2px;height:12px;background:var(--ink)}
+.vt-bg-ley .sw-rayado{background:repeating-linear-gradient(135deg,rgba(43,40,48,.45) 0 2px,transparent 2px 5px);border:1px solid var(--borde-2)}
+.vt-bg-ley .sw-pista{background:#e9eaee}
+.vt-contexto{font-size:12.5px;color:var(--ink-2);margin:2px 0 4px;line-height:1.45}
+.vt-contexto b{color:var(--ink)}
+.vt-stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px 16px;margin-top:12px;
+  padding-top:12px;border-top:1px solid var(--borde)}
+
+/* Lista de clientes */
+.vt-lista-card{padding:12px 14px}
+.vt-lista-cab{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap}
+.vt-lista-cab h3,.vt-matriz-card h3,.vt-notas h3,.vt-canal h3{margin:0;font-size:13px;font-weight:700;
+  text-transform:uppercase;letter-spacing:.04em;color:var(--ink-2)}
+.vt-acciones{display:flex;gap:6px;align-items:center}
+.vt-orden{padding:5px 6px;border:1px solid var(--borde-2);border-radius:var(--radio);background:var(--surface);
+  color:var(--ink);font:inherit;font-size:12px}
+.vt-segs{display:flex;gap:6px;flex-wrap:wrap;margin:10px 0 8px}
+.vt-segs .chip-periodo{padding:4px 10px}
+.vt-cnt{font-weight:500;opacity:.7;margin-left:2px}
+.vt-buscar{width:100%;padding:8px 10px;margin-bottom:8px;border:1px solid var(--borde-2);border-radius:var(--radio);
+  font:inherit;font-size:13px;background:var(--surface);color:var(--ink)}
+.vt-fila{display:grid;width:100%;align-items:center;gap:4px 12px;
+  grid-template-columns:minmax(150px,2.1fr) minmax(110px,1.5fr) repeat(5,minmax(64px,1fr)) 140px;
+  padding:9px 6px;border:none;border-bottom:1px solid var(--borde);background:none;text-align:left;
+  font:inherit;color:var(--ink);cursor:pointer}
+.vt-fila:hover{background:var(--lienzo)}
+.vt-fila:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+.vt-fila-cab{cursor:default;padding:4px 6px;font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;
+  color:var(--ink-2);border-bottom:1px solid var(--borde-2)}
+.vt-fila-cab:hover{background:none}
+.vt-fila-cab span:nth-child(n+3):not(:last-child){text-align:right}
+.vt-f-nom{display:flex;flex-direction:column;min-width:0}
+.vt-f-nom b{font-size:13px;font-weight:700;overflow:hidden;text-overflow:ellipsis}
+.vt-f-nom small,.vt-f-num small{display:block;font-size:10.5px;color:var(--muted);font-weight:400}
+.vt-f-num{text-align:right;font-variant-numeric:tabular-nums}
+.vt-f-num b{font-size:13px;font-weight:700}
+.vt-f-acc{display:flex;justify-content:flex-start}
+.vt-bul{position:relative;height:16px}
+.vt-bul .pista{position:absolute;left:0;top:2px;bottom:2px;background:#e9eaee;border-radius:2px}
+.vt-bul .rayado{position:absolute;left:0;top:5px;bottom:5px;border-radius:2px;
+  background:repeating-linear-gradient(135deg,rgba(43,40,48,.35) 0 2px,transparent 2px 5px)}
+.vt-bul .barra{position:absolute;left:0;top:5px;bottom:5px;border-radius:2px}
+.vt-bul .raya{position:absolute;top:0;bottom:0;width:2px;margin-left:-1px;background:var(--ink)}
+.vt-bul.vacio{background:repeating-linear-gradient(90deg,var(--borde) 0 4px,transparent 4px 8px);height:2px;margin:7px 0}
+.vt-chip{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;color:var(--ink);line-height:1.2}
+.vt-chip .d{width:8px;height:8px;border-radius:50%;flex-shrink:0;align-self:center}
+.vt-legend-nw,.vt-ficha .hist-legend .it,.vt-inicio .hist-legend .it{white-space:nowrap}
+
+/* Matriz ¿empujar o activar? */
+.vt-matriz-card,.vt-notas,.vt-canal{padding:12px 14px}
+.vt-matriz-card .hint{font-size:11.5px;color:var(--muted);margin:4px 0 10px}
+.vt-matriz{display:grid;grid-template-columns:72px 1fr 1fr;gap:6px}
+.vt-m-col{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-2);text-align:center}
+.vt-m-fila{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.03em;color:var(--ink-2);
+  display:flex;align-items:center;line-height:1.2}
+.vt-m-celda{display:flex;flex-direction:column;align-items:flex-start;gap:1px;padding:8px 9px;min-height:74px;
+  border:1px solid var(--borde);border-radius:var(--radio);background:var(--surface-2);font:inherit;text-align:left;
+  color:var(--ink);cursor:pointer}
+.vt-m-celda:hover{border-color:var(--ink)}
+.vt-m-celda.sel{border-color:var(--accent);box-shadow:inset 0 0 0 1px var(--accent);background:var(--accent-suave)}
+.vt-m-celda.vacia{cursor:default;opacity:.55}
+.vt-m-celda.vacia:hover{border-color:var(--borde)}
+.vt-m-celda .acc{display:flex;align-items:center;gap:5px;font-size:11px;font-weight:600;color:var(--ink-2)}
+.vt-m-celda .acc .d{width:7px;height:7px;border-radius:50%}
+.vt-m-celda .n{font-size:22px;font-weight:700;line-height:1.1;font-variant-numeric:tabular-nums}
+.vt-m-celda .det{font-size:10.5px;color:var(--muted)}
+.vt-m-pie{font-size:11.5px;color:var(--muted);margin-top:8px}
+.vt-link{border:none;background:none;padding:0;font:inherit;color:var(--ink-2);text-decoration:underline;cursor:pointer}
+.vt-link:hover{color:var(--accent)}
+.vt-notas ul{margin:6px 0 0;padding-left:18px;font-size:12px;color:var(--ink-2);line-height:1.45}
+.vt-notas li{margin-bottom:4px}
+.vt-mensual .hint{margin-bottom:2px}
+
+/* Fichas de cliente y de producto */
+.vt-ficha{display:flex;flex-direction:column;gap:12px}
+.vt-ficha-cab{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.vt-ficha-cab h2{margin:0;font-size:18px;font-weight:700}
+.vt-ficha-cab .sub{font-size:12.5px;color:var(--muted)}
+.vt-ficha-acc,.vt-ficha-cab>.vt-switches{margin-left:auto}
+.vt-ficha-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px;align-items:stretch}
+.vt-frase{font-size:13.5px;line-height:1.5;margin:8px 0 0;color:var(--ink)}
+.vt-canal .vt-stats{grid-template-columns:repeat(auto-fit,minmax(140px,1fr))}
+.vt-scroll-alto{max-height:520px}
+.vt-alerta{display:inline-block;font-size:11px;font-weight:600;margin-left:6px}
+.vt-alerta.q{color:var(--error)}
+.vt-alerta.s{color:var(--aviso)}
+.vt-prod-filtros{display:flex;flex-direction:column;gap:6px;margin-bottom:8px}
+.vt-prod-filtros .vt-buscar{margin-bottom:0}
+.vt-prod-fila{display:flex;gap:8px;align-items:center;justify-content:space-between;flex-wrap:wrap}
+.vt-prod-card .hint .mtd-btn-csv{margin-left:6px}
+.vt-mas{margin-top:10px;width:100%}
+
+/* Gráfico de 12 meses: barras pareadas sell-in / sell-out con la cifra de sell-out arriba */
+.vt-graf{display:flex;align-items:flex-end;gap:6px;padding:16px 4px 4px;overflow-x:auto;position:relative}
+.vt-g-dohetq{position:absolute;left:0;bottom:4px;font-size:9px;font-weight:700;color:var(--muted);letter-spacing:.04em}
+.vt-g-col{flex:1 0 34px;display:flex;flex-direction:column;align-items:center;gap:2px}
+.vt-g-val{font-size:9.5px;font-weight:700;color:var(--accent-2);white-space:nowrap;font-variant-numeric:tabular-nums}
+.vt-g-par{display:flex;align-items:flex-end;gap:2px}
+.vt-g-bar{width:12px;border-radius:2px 2px 0 0;position:relative}
+.vt-g-bar.si{background:var(--ink)}
+.vt-g-bar.so{background:var(--accent)}
+.vt-g-mes{font-size:10.5px;font-weight:600;color:var(--ink-2)}
+.vt-g-doh{font-size:10px;color:var(--muted);font-variant-numeric:tabular-nums;min-height:13px}
+/* En la columna derecha (360 px) el mensual es angosto: barras más finas, sin cifras. */
+.vt-col-b .vt-graf{gap:3px;padding-left:18px}
+.vt-col-b .vt-g-col{flex:1 1 0;min-width:0}
+.vt-col-b .vt-g-bar{width:8px}
+.vt-col-b .vt-g-val{display:none}
+.vt-col-b .vt-g-mes,.vt-col-b .vt-g-doh{font-size:9.5px}
+
+@media(max-width:1000px){
+  /* Una columna: resumen → matriz → mensual → lista → notas (las columnas se disuelven). */
+  .vt-inicio{display:flex;flex-direction:column}
+  .vt-col-a,.vt-col-b{display:contents}
+  .vt-hero{order:-3}
+  .vt-matriz-card{order:-2}
+  .vt-mensual{order:-1}
+  .vt-notas{order:1}
+  .vt-ficha-grid{grid-template-columns:minmax(0,1fr)}
+  /* Lista como tarjetas: nombre + acción arriba, bala, y las cifras en dos filas */
+  .vt-fila-cab{display:none}
+  .vt-fila{grid-template-columns:repeat(3,minmax(0,1fr));grid-template-areas:
+    "nom nom acc" "bul bul bul" "v r p" "a i .";padding:11px 2px;gap:6px 10px}
+  .vt-f-nom{grid-area:nom}.vt-f-bul{grid-area:bul}.vt-f-acc{grid-area:acc;justify-content:flex-end;text-align:right}
+  .vt-f-num.v{grid-area:v}.vt-f-num.r{grid-area:r}.vt-f-num.p{grid-area:p}.vt-f-num.a{grid-area:a}.vt-f-num.i{grid-area:i}
+  .vt-f-num{text-align:left}
+  .vt-f-num::before{content:attr(data-th);display:block;font-size:9.5px;font-weight:700;text-transform:uppercase;
+    letter-spacing:.03em;color:var(--muted)}
+}
+@media(max-width:780px){
+  .mtdtabs-top{overflow-x:auto;scrollbar-width:none;flex-wrap:nowrap}
+  .mtdtabs-top::-webkit-scrollbar{display:none}
+  .mtdtab-top{white-space:nowrap;padding:8px 12px}
+  .vt-barra{position:static;padding:10px 12px}
+  .vt-ctrl{margin-left:0;width:100%}
+  .vt-campo{flex:1 1 140px}
+  .vt-campo select{min-width:0;max-width:none;width:100%}
+  .vt-segmento{display:flex}
+  .vt-segmento button{flex:1}
+  .vt-num-xl{font-size:24px}
+  .vt-num-l{font-size:26px}
+  .vt-hero-der{text-align:left}
+  .vt-stats{grid-template-columns:1fr 1fr}
+  .vt-segs{flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;padding-bottom:2px}
+  .vt-segs::-webkit-scrollbar{display:none}
+  .vt-segs .chip-periodo{flex-shrink:0}
+  .vt-g-val{display:none}
+  .vt-graf{gap:3px;padding-left:0}
+  .vt-g-col{flex:1 1 0;min-width:0}
+  .vt-g-bar{width:8px}
+  .vt-g-mes,.vt-g-doh{font-size:9.5px}
+  .vt-g-dohetq{display:none}
+  .hist-legend{flex-wrap:wrap;gap:6px 12px}
+  /* En el teléfono nada de scroll dentro del scroll: la tabla crece con la página. */
+  .vt-scroll-alto{max-height:none}
+}
+
+/* ══════════ Ventas 3.0 (JsVentas3.html) · sell-out estilo Zebra BI ══════════
+   Réplica del visual "Crecimiento por EAN $#" del Power BI: PY en cifra, AC en
+   barras grises, ΔPY en barras divergentes (verde / rojo), ΔPY% en pines con
+   flecha cuando se salen de la escala y "Var % vs mes pasado" en cifra. Cada
+   columna es una pista de ancho fijo con su eje al centro (ΔPY, ΔPY%). */
+#vistaVentas3{min-height:0;overflow-y:auto;padding:2px}
+#vistaVentas3[hidden]{display:none}
+.vt3-grid{display:grid;grid-template-columns:210px minmax(0,1fr);gap:12px;align-items:start}
+.vt3-lado{display:flex;flex-direction:column;gap:10px;position:sticky;top:66px}
+.vt3-meses{padding:10px 12px}
+.vt3-meses-tit{font-size:14px;font-weight:700;color:var(--ink);margin-bottom:4px}
+.vt3-rapidos{display:flex;gap:10px;font-size:11.5px;margin-bottom:6px}
+.vt3-lista-meses{display:flex;flex-direction:column;gap:1px}
+.vt3-mes{display:flex;align-items:center;gap:8px;padding:4px 6px;border-radius:4px;font-size:13px;cursor:pointer;color:var(--ink-2)}
+.vt3-mes.on{background:var(--lienzo);color:var(--ink);font-weight:600}
+.vt3-mes input{margin:0;accent-color:var(--ink)}
+.vt3-kpi{padding:14px 12px;text-align:center}
+.vt3-kpi .v{font-size:24px;font-weight:700;font-variant-numeric:tabular-nums;line-height:1.15}
+.vt3-kpi .e{font-size:12.5px;font-weight:600;color:var(--ink-2);margin-top:2px}
+.vt3-kpi-d{font-size:11.5px;font-weight:600;margin-top:4px;color:var(--muted)}
+.vt3-kpi-d.pos{color:var(--sem-alto)}
+.vt3-kpi-d.neg{color:var(--error)}
+#vt3Kpis{display:flex;flex-direction:column;gap:10px}
+.vt3-panel{padding:12px 14px;min-width:0;position:relative}
+.vt3-cab{display:flex;justify-content:space-between;align-items:center;gap:8px 12px;flex-wrap:wrap;margin-bottom:8px}
+.vt3-cab h3{margin:0;font-size:17px;font-weight:700;color:var(--ink)}
+.vt3-filtros{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px}
+.vt3-filtros[hidden]{display:none}
+
+/* Filas del gráfico */
+.vt3-chart{font-size:11.5px;font-variant-numeric:tabular-nums}
+.vt3-fila{display:grid;grid-template-columns:minmax(150px,1.6fr) 64px minmax(130px,2.2fr) minmax(130px,2fr) minmax(120px,1.6fr) 74px;
+  align-items:center;gap:0 6px;min-height:19px;padding:1px 4px;border-radius:3px;cursor:pointer;position:relative}
+.vt3-fila:hover{background:var(--lienzo)}
+.vt3-fila:hover .ac i{background:#3c3c3c}
+.vt3-fila:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+.vt3-fila>span{position:relative;height:17px;display:flex;align-items:center;min-width:0;white-space:nowrap}
+.vt3-fila .nom{display:block;height:auto;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--ink)}
+.vt3-fila .nom small{display:none}
+.vt3-fila .num{justify-content:flex-end;color:var(--ink-2)}
+.vt3-fila .mv{display:none}
+.vt3-fila .ac{border-left:1px solid #b8b8b8}
+.vt3-fila .ac i{display:block;height:13px;background:#9a9a9a;border-radius:0 1px 1px 0}
+.vt3-fila .ac b{font-weight:500;margin-left:4px;color:var(--ink)}
+/* ΔPY y ΔPY%: eje vertical al centro de la pista */
+.vt3-fila .d::before,.vt3-fila .p::before{content:'';position:absolute;left:50%;top:-2px;bottom:-2px;width:1px;background:#8a8a8a}
+.vt3-fila .d i{position:absolute;top:2px;height:13px}
+.vt3-fila .d i.pos{background:#a5d46a}
+.vt3-fila .d i.neg{background:#f26d6d}
+.vt3-fila .d b,.vt3-fila .p b{position:absolute;font-weight:500;white-space:nowrap;color:var(--ink)}
+.vt3-fila .p i{position:absolute;top:8px;height:2px}
+.vt3-fila .p i.pos{background:#a5d46a}
+.vt3-fila .p i.neg{background:#f26d6d}
+.vt3-fila .p em{position:absolute;top:5px;width:8px;height:8px;margin:0 -4px;border-radius:50%;background:#555}
+.vt3-fila .p em.fuera.pos{background:none;border-radius:0;width:0;height:0;margin:0 -2px;top:4px;
+  border-left:8px solid #a5d46a;border-top:5px solid transparent;border-bottom:5px solid transparent}
+.vt3-fila .p em.fuera.neg{background:none;border-radius:0;width:0;height:0;margin:0 -6px;top:4px;
+  border-right:8px solid #f26d6d;border-top:5px solid transparent;border-bottom:5px solid transparent}
+.vt3-fila .p b{font-style:italic}
+.vt3-fila .p b.adentro{background:var(--surface);padding:0 3px;top:1px;line-height:15px}
+.vt3-fila:hover .p b.adentro{background:var(--lienzo)}
+.vt3-encab{cursor:default;border-bottom:1px solid var(--borde-2);margin-bottom:3px;padding-bottom:3px}
+.vt3-encab:hover{background:none}
+.vt3-encab .vt3-th{border:none;background:none;font:inherit;font-size:11px;color:var(--ink-2);cursor:pointer;padding:0;text-align:right}
+.vt3-encab .vt3-th.ac{text-align:left}
+.vt3-encab .vt3-th.d,.vt3-encab .vt3-th.p{text-align:center}
+.vt3-encab .vt3-th.act{color:var(--ink);font-weight:700}
+.vt3-encab>.vt3-th:first-child{text-align:left}
+.vt3-total{border-top:2px solid var(--ink);margin-top:3px;padding-top:3px;font-weight:700;cursor:default}
+.vt3-total:hover{background:none}
+.vt3-total .d::before,.vt3-total .p::before{display:none}
+.vt3-total .d,.vt3-total .p{justify-content:center}
+.vt3-total b{font-weight:700}
+.vt3-fila b.pos,.vt3-panel .pos{color:var(--sem-alto)}
+.vt3-fila b.neg,.vt3-panel .neg{color:var(--error)}
+.vt3-fila .d b.pos,.vt3-fila .d b.neg,.vt3-fila .p b.pos,.vt3-fila .p b.neg{color:var(--ink)}
+.vt3-total .d b.pos,.vt3-total .p b.pos{color:var(--sem-alto)}
+.vt3-total .d b.neg,.vt3-total .p b.neg{color:var(--error)}
+
+/* Tooltip estilo Power BI */
+.vt3-tip{position:absolute;z-index:30;min-width:220px;max-width:280px;padding:12px 14px;background:var(--surface);
+  border:1px solid var(--borde);border-radius:4px;box-shadow:0 6px 20px rgba(17,24,39,.16);pointer-events:none;font-size:13px}
+.vt3-tip[hidden]{display:none}
+.vt3-tip .t{font-weight:700;letter-spacing:.03em;margin-bottom:6px}
+.vt3-tip table{border-collapse:collapse;width:100%}
+.vt3-tip td{padding:2px 0;font-variant-numeric:tabular-nums}
+.vt3-tip td:first-child{text-align:right;padding-right:12px;color:var(--ink-2);width:60%}
+
+@media(max-width:1000px){
+  .vt3-grid{grid-template-columns:minmax(0,1fr)}
+  .vt3-lado{position:static}
+  .vt3-lista-meses{flex-direction:row;flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;gap:4px}
+  .vt3-lista-meses::-webkit-scrollbar{display:none}
+  .vt3-mes{flex-shrink:0;border:1px solid var(--borde-2);border-radius:999px;padding:3px 10px}
+  .vt3-mes input{display:none}
+  .vt3-mes.on{background:var(--ink);color:#fff;border-color:var(--ink)}
+  #vt3Kpis{display:grid;grid-template-columns:1fr 1fr}
+}
+@media(max-width:700px){
+  /* En el teléfono: nombre arriba; AC y ΔPY% abajo; PY, ΔPY y var. vs mes pasado en una línea de texto. */
+  .vt3-fila{grid-template-columns:minmax(0,1.3fr) minmax(0,1fr);grid-template-areas:"nom nom" "ac p" "mv mv";
+    padding:6px 2px;border-bottom:1px solid var(--borde);gap:2px 8px}
+  .vt3-fila .nom{grid-area:nom;font-weight:600;white-space:normal}
+  .vt3-fila .nom small{display:block;font-weight:400;color:var(--muted);font-size:10.5px}
+  .vt3-fila .ac{grid-area:ac}.vt3-fila .p{grid-area:p}
+  .vt3-fila .py,.vt3-fila .d,.vt3-fila .vmp{display:none}
+  .vt3-fila .mv{display:block;grid-area:mv;font-size:10.5px;color:var(--muted)}
+  .vt3-encab{display:none}
+  .vt3-total{grid-template-areas:"nom nom" "ac p"}
+  .vt3-total .mv{display:none}
+  .vt3-kpi .v{font-size:20px}
+}
 </style>

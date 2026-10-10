@@ -19,7 +19,7 @@
    ═══════════════════════════════════════════════════════════════ */
 
 let ventasMtdData=null;
-var mtdCargando=false;
+var mtdCargando=false,mtdErrorCarga='';
 var MTD_MESES=['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
 var MTD_MESES_LARGO=['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto',
   'Septiembre','Octubre','Noviembre','Diciembre'];
@@ -263,9 +263,9 @@ function mtdCsvProductos(){
 /* ── Vistas de nivel superior: mapa ↔ Ventas MTD ↔ SI vs SO ──
    Convive con verVista() de JsPaneles, que conmuta las pestañas internas del
    rail (Tabla/Análisis/Brick): son niveles distintos y no se pisan. */
-var mtdVistaActiva='ventasmtd';
-var SIVSO_VISTAS=['mapa','ventasmtd','sivso','yoobic'];
-var VISTA_SUFIJO={mapa:'Mapa',ventasmtd:'VentasMtd',sivso:'SIvsSO',yoobic:'Yoobic'};   // #vista<X> / #btnVista<X>
+var mtdVistaActiva='ventas';
+var SIVSO_VISTAS=['ventas','ventas3','mapa','ventasmtd','sivso','yoobic'];
+var VISTA_SUFIJO={ventas:'Ventas',ventas3:'Ventas3',mapa:'Mapa',ventasmtd:'VentasMtd',sivso:'SIvsSO',yoobic:'Yoobic'};   // #vista<X> / #btnVista<X>
 function mostrarVistaSuperior(v){
   mtdVistaActiva=v;
   SIVSO_VISTAS.forEach(function(id){
@@ -276,6 +276,11 @@ function mostrarVistaSuperior(v){
   // no aplica a Ventas MTD, SI vs SO ni Yoobic, que tienen sus propios filtros.
   var bf=document.getElementById('barraFiltros');
   if(bf){bf.hidden=(v!=='mapa');bf.classList.remove('abierto')}
+  // "Ventas" no tiene panel de filtros plegable (KAM y Canal siempre están a la
+  // vista): el botón "Filtros" del móvil sobra ahí. La clase vista-<v> del body
+  // oculta además los botones que solo sirven en el mapa (Centrar).
+  var bm=document.getElementById('btnFiltrosMovil');if(bm)bm.hidden=(v==='ventas'||v==='ventas3');
+  if(document.body)SIVSO_VISTAS.forEach(function(id){document.body.classList.toggle('vista-'+id,id===v)});
   document.querySelectorAll('.mtd-filtros').forEach(function(mf){mf.classList.remove('abierto')});
   if(typeof cerrarFiltrosMovil==='function')cerrarFiltrosMovil();
   if(v==='mapa'&&typeof mapaAlEntrar==='function')mapaAlEntrar();
@@ -286,6 +291,8 @@ function mostrarVistaSuperior(v){
         map.invalidateSize()},60);
   }
   if(v==='ventasmtd'&&ventasMtdData===null&&!mtdCargando)cargarVentasMtd();
+  if(v==='ventas'&&typeof vtAlEntrar==='function')vtAlEntrar();
+  if(v==='ventas3'&&typeof vt3AlEntrar==='function')vt3AlEntrar();
   if(v==='sivso'&&typeof sivsoAlEntrar==='function')sivsoAlEntrar();
   if(v==='yoobic'&&typeof ybAlEntrar==='function')ybAlEntrar()}
 
@@ -302,11 +309,13 @@ function cargarVentasMtd(forzar){
   google.script.run
     .withSuccessHandler(function(j){
       try{onVentasMtdCargado(JSON.parse(j))}
-      catch(e){mtdCargando=false;est.innerText='No pude leer la respuesta: '+me(e)}})
+      catch(e){mtdCargando=false;mtdErrorCarga='No pude leer la respuesta: '+me(e);est.innerText=mtdErrorCarga;
+        if(typeof vtDatosListos==='function')vtDatosListos()}})
     .withFailureHandler(function(e){
-      mtdCargando=false;
+      mtdCargando=false;mtdErrorCarga=me(e);
       est.innerHTML='<b>No pude cargar Ventas MTD.</b><br>'+esc(me(e))+
-        '<br><span class="mini">Revisa las hojas CUMPLIMIENTO, PLANTILLA e Historico de ventas del archivo de Ventas MTD.</span>'})
+        '<br><span class="mini">Revisa las hojas CUMPLIMIENTO, PLANTILLA e Historico de ventas del archivo de Ventas MTD.</span>';
+      if(typeof vtDatosListos==='function')vtDatosListos()})
     .getVentasMtdCompletoJson(forzar===true)}
 
 /* Estado derivado del payload (se arma una vez por carga). */
@@ -335,7 +344,7 @@ function mtdPrepararDatos(){
   histAnios=Object.keys(mtdCortes).map(Number).sort(function(a,b){return b-a})}
 
 function onVentasMtdCargado(data){
-  mtdCargando=false;
+  mtdCargando=false;mtdErrorCarga='';
   ventasMtdData=data||{clientes:[],productos:[],prod:[],hist:[],histClientes:{},meta:{}};
   var meta=ventasMtdData.meta||{};
   mtdPrepararDatos();
@@ -346,8 +355,10 @@ function onVentasMtdCargado(data){
   document.getElementById('mtdEstado').style.display='none';
   document.getElementById('mtdContenido').style.display='block';
   mtdAvisosPayload(meta);
-  histLlenarAnios();
-  renderVentasMtd();
+  // La pestaña Ventas se avisa SIEMPRE: si el informe clásico (oculto) falla al
+  // pintarse, Ventas no debe quedarse con el "Cargando…".
+  try{histLlenarAnios();renderVentasMtd()}
+  finally{if(typeof vtDatosListos==='function')vtDatosListos()}
   // Los selectores se crean después del primer render: Choices.js puede tardar
   // en llegar del CDN y no debe retrasar las cifras.
   cargarLib('choices',function(){mtdCrearSelectores()});
@@ -361,7 +372,7 @@ function mtdRotularPeriodo(meta){
   if(!p||!p.mes){el.innerText='';return}
   var hoy=new Date(),actual=(hoy.getFullYear()===p.anio&&hoy.getMonth()+1===p.mes);
   el.innerText=MTD_MESES_LARGO[p.mes-1]+' '+(p.anio||'')+' · '+
-    (actual?'mes en curso':'mes cerrado')+' · A-1 = mismo mes del año anterior'}
+    (actual?'mes en curso · A-1 = año anterior hasta la misma fecha':'mes cerrado · A-1 = mismo mes del año anterior')}
 
 function mtdAvisosPayload(meta){
   var msgs=[],e=meta.errores||{};
@@ -895,39 +906,74 @@ function histRenderTrimestres(anio,ids){
     '<span class="it"><span class="sw-plan"></span>Plan (meta)</span></div>'}
 
 /* ══════════ Datos de ejemplo para abrir el HTML fuera de Apps Script ══════════
-   Reproducen los casos reales de la auditoría: cliente sin plan, venta negativa,
-   fila interna de ISDIN, cliente que dejó de vender y un cliente solo-histórico. */
+   Catálogo COMPARTIDO por mtdDatosDemo y sivsoDatosDemo (JsSIvsSO): mismos SAP ID y
+   nombres de producto en ambos, como en las hojas reales; sin eso la pestaña Ventas
+   no cruzaría nada en la vista previa. El mes del informe es el mes EN CURSO del
+   reloj (como pasa con la descarga diaria) y cada cliente reproduce un caso de la
+   matriz de Ventas, con cifras del 2026-10-10:
+     sap, cliente, kam, canal, plan mes, A-1 mes completo, A-1 a la fecha, venta a
+     la fecha, factor de inventario (DOH reportado ÷ objetivo), DOH objetivo (0 =
+     sin dato en Info SO-INV), reporta sell-out (1/0), meses de rezago extra.    */
+var DEMO_CLIENTES=[
+  ['11026707','DROGUERIAS CRUZ VERDE SAS','ANGELICA MONSALVE','Cadenas',4608e6,4790e6,461.6e6,680.9e6,1.6,60,1,0],
+  ['11049529','FARMATODO COLOMBIA S.A.','ANGELICA MONSALVE','Cadenas',2052e6,2130e6,137.7e6,11.4e6,.75,60,1,0],
+  ['11026712','MEDIPIEL S.A.S.','SARA CARDONA','Tiendas de piel',3600e6,2400e6,8.1e6,28.8e6,.9,60,1,0],
+  ['11033482','CMX S.A.S','SARA CARDONA','Tiendas de piel',2700e6,2750e6,60e6,243.6e6,1,60,1,0],
+  ['11026727','BELLA PIEL','MANUEL CAMARGO','Tiendas de piel',3576e6,3300e6,302.9e6,745.4e6,1.5,60,1,0],
+  ['11026702','DISTRIBUIDORA PASTEUR S.A.','PEREZ NATALIA','Cadenas',900e6,800e6,0,62e6,.35,30,1,0],
+  ['11072880','COPERATIVA MULTIACTIVA DE SERVICIOS (LA REBAJA)','ABADIA MIGUEL','Wholesalers',1500e6,1700e6,255e6,331e6,.4,60,1,0],
+  ['11026688','CAJA COLOMBIANA DE SUBSIDIO FAMILIA','MORENO DIANA','Cadenas',1150e6,900e6,45e6,22e6,2.2,60,1,0],
+  ['11026711','LASKIN S.A.','ABADIA MIGUEL','Tiendas de piel',160e6,140e6,29.7e6,31.5e6,1,0,0,0],
+  ['11026696','CUTIS S.A.','ABADIA MIGUEL','Tiendas de piel',280e6,250e6,25e6,30e6,1.1,60,1,1],
+  ['11026925','SAINT-PRIEST S.A.S','SERGIO MAGGI','Tiendas de piel',0,13e6,3.9e6,7.7e6,1,60,0,0],
+  ['11099998','DERMA NUEVA S.A.S','SARA CARDONA','Tiendas de piel',120e6,0,0,30e6,1,0,0,0],
+  ['1','ISDIN','OTRO','SIN CANAL',0,30e6,15e6,29e6,1,0,0,0]];
+/* Solo reporta sell-out (no está en CUMPLIMIENTO): sap, cliente, kam, canal, venta/mes, factor inv., objetivo. */
+var DEMO_SOLO_SO=[['111','COMPAÑIA ASTOR S.A.','PEREZ NATALIA','Cadenas',280e6,.3,60]];
+var DEMO_PRODUCTOS=[   // nombre, BU, marca, peso en la venta del cliente
+  ['FP FUSION WATER MAGIC SPF50 50ML','Foto','FOTOPROTECCION',.22],
+  ['FP FWATER MAGIC COLOR MEDIUM SPF50 50ML','Foto','FOTOPROTECCION',.14],
+  ['FP GEL CREAM SPF50+ 100ML','Foto','FOTOPROTECCION',.1],
+  ['ISDINCEUTICS K-OX EYES 15G','Isdinceutics','ISDINCEUTICS',.08],
+  ['ISDINCEUTICS FLAVO-C ULTRAGL AMP 30U 2ML','Isdinceutics','ISDINCEUTICS',.08],
+  ['ISDINCEUTICS MELACLEAR ADVANCED 3% 30ML','Isdinceutics','ISDINCEUTICS',.07],
+  ['UREADIN ULTRA30 CREAM 50ML','Derma','UREADIN',.07],
+  ['NUTRATOPIC BODY CREAM 200ML','Derma','NUTRATOPIC',.06],
+  ['LAMBDAPIL HAIR LOSS LOTION 125ML','Derma','LAMBDAPIL',.1],
+  ['ERYFOTONA AK-NMSC FLUID SPF100 50ML','Aesthetics','ERYFOTONA',.08]];
+/* Estacionalidad suave del mes (1-12) para las series de ejemplo. */
+function demoEstacion(m){return 1+0.12*Math.sin((m-3)/12*2*Math.PI)}
+
 function mtdDatosDemo(){
-  var cl=[
-    ['11026707','DROGUERIAS CRUZ VERDE SAS','ANGELICA MONSALVE','Cadenas',4560494148,4516433538,33754085874,38312458004],
-    ['11026712','MEDIPIEL S.A.S.','SARA CARDONA','Tiendas de piel',2415009092,2982079180,17682225638,18696073702],
-    ['11049529','FARMATODO COLOMBIA S.A.','ANGELICA MONSALVE','Cadenas',2629201772,2520805085,19933397465,19608213514],
-    ['11033482','CMX S.A.S','SARA CARDONA','Tiendas de piel',2860988079,2852043221,14381784666,15825892662],
-    ['11026727','BELLA PIEL','MANUEL CAMARGO','Tiendas de piel',1600114699,2639039528,16072256663,20691878072],
-    ['11026925','SAINT-PRIEST S.A.S','SERGIO MAGGI','Tiendas de piel',7769795,0,159105553,161942410],
-    ['11026722','DERMATOLOGICA S.A','SIN KAM','Tiendas de piel',-1222499,0,25790922,840000000],
-    ['1','ISDIN','OTRO','SIN CANAL',28972282,0,196187091,0]];
-  var clientes=cl.map(function(c){return{id:c[0],sapId:c[0],cliente:c[1],kam:c[2],canal:c[3],
-    realMes:c[4],planMes:c[5],realAnio:c[6],planAnio:c[7],interno:c[0]==='1'?1:0,error:0}});
-  var productos=['FP FUSION WATER MAGIC SPF50 50ML','FP FWATER MAGIC COLOR MEDIUM SPF50 50ML',
-    'ISDIN REPARADOR LABIAL STICK 4G','ISDINCEUTICS MELACLEAR ADVANCE','SIN PRODUCTO'];
-  var prod=[],sem=7;function rnd(){sem=(sem*1103515245+12345)%2147483648;return sem/2147483648}
-  clientes.forEach(function(c){productos.forEach(function(p,i){
-    var v=Math.max(0,Math.round(c.realMes*(0.1+rnd()*0.25)/(i+1)));
-    var a=i===3&&c.id==='11026712'?0:Math.round(v*(0.6+rnd()*0.9));
-    if(c.realMes>0||a>0)prod.push([c.id,i,v,a,Math.round(v/90000)])})});
-  var hist=[],hc={};
-  clientes.forEach(function(c){hc[c.id]=[c.cliente,c.kam,c.canal]});
-  hc['11099999']=['CLIENTE PERDIDO SAS','SIN KAM','Tiendas de piel'];
-  var ids=clientes.map(function(c){return c.id}).concat(['11099999']);
-  for(var a=2023;a<=2026;a++)for(var m=1;m<=12;m++){
-    if(a===2026&&m>9)continue;
-    ids.forEach(function(id,i){
-      if(id==='11099999'&&a===2026)return;
-      var base=(a-2021)*(2e8-i*1.2e7)+m*(1e7+i*2e6);
-      hist.push([a,m,id,Math.round(base*(0.9+((m*7+i*3)%5)/20)),a===2026&&m>9?0:Math.round(base*1.05)])})}
+  var hoy=new Date(),anio=hoy.getFullYear(),mes=hoy.getMonth()+1;
+  var sem=7;function rnd(){sem=(sem*1103515245+12345)%2147483648;return sem/2147483648}
+  var productos=DEMO_PRODUCTOS.map(function(p){return p[0]});
+  var clientes=[],prod=[],hist=[],hc={};
+  DEMO_CLIENTES.forEach(function(c){
+    var id=c[0],plan=c[4],a1Mes=c[5],a1=c[6],real=c[7];
+    hc[id]=[c[1],c[2],c[3]];
+    // Histórico: 3 años atrás hasta el mes en curso; el mismo mes del año pasado
+    // vale EXACTAMENTE el A-1 del mes completo (base de la proyección).
+    var realAnio=0,planAnio=0,base=(a1Mes||plan||real*4)/demoEstacion(mes);
+    for(var y=anio-3;y<=anio;y++)for(var m=1;m<=12;m++){
+      var crec=Math.pow(1.06,y-(anio-1)),r=Math.round(base*demoEstacion(m)*crec*(0.92+rnd()*0.16));
+      if(y===anio-1&&m===mes)r=a1Mes;
+      var p=Math.round((plan||0)/demoEstacion(mes)*demoEstacion(m)*(y===anio?1:0.95));
+      if(y===anio&&m===mes){r=real;p=plan}
+      if(y===anio&&m>mes)r=0;
+      if(!plan&&y===anio)p=0;
+      if(id==='11099998'&&y<anio)continue;          // cliente nuevo: sin historia
+      if(y===anio){realAnio+=r;planAnio+=p}
+      if(r||p)hist.push([y,m,id,r,p])}
+    clientes.push({id:id,sapId:id,cliente:c[1],kam:c[2],canal:c[3],realMes:real,planMes:plan,
+      realAnio:realAnio,planAnio:planAnio,interno:id==='1'?1:0,error:0});
+    // PLANTILLA: la venta y el A-1 a la fecha repartidos por producto.
+    DEMO_PRODUCTOS.forEach(function(pp,i){
+      var w=pp[3]*(0.8+rnd()*0.4),v=Math.round(real*w),a=Math.round(a1*w*(0.7+rnd()*0.6));
+      if(v||a)prod.push([id,i,v,a,Math.round(v/60000)])})});
   return{v:2,clientes:clientes,productos:productos,prod:prod,hist:hist,histClientes:hc,
-    meta:{actualizadoEn:new Date().toISOString(),periodo:{anio:2026,mes:9,fuente:'demo'},errores:{},
+    meta:{actualizadoEn:hoy.toISOString(),libroActualizado:hoy.toISOString(),
+      periodo:{anio:anio,mes:mes,fuente:'demo'},errores:{},
       conciliacion:{cumplimiento:1,plantilla:1,historico:1},clientesConError:[],productosSinNombre:0,
-      historico:{filas:hist.length,anioMin:2023,anioMax:2026}}}}
+      historico:{filas:hist.length,anioMin:anio-3,anioMax:anio}}}}
 </script>

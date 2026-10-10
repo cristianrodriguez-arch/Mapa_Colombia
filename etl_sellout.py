@@ -26,6 +26,8 @@ Uso:
   python etl_sellout.py --inspect       revisa hojas, encabezados y mapeo
   python etl_sellout.py                 corrida completa
   python etl_sellout.py --limite 5000   solo las primeras 5000 filas (pruebas)
+  python etl_sellout.py --solo-s3       solo los archivos s3_* de Ventas 3.0 (varios años)
+  python etl_sellout.py --sin-s3        solo los archivos so_* del mapa
 
 La configuración vive en config.py (copia de config.example.py).
 """
@@ -563,12 +565,14 @@ def fragmento_de(pos_id, n_fragmentos):
     return zlib.crc32(pos_id.encode("utf-8")) % n_fragmentos
 
 
-def escribir_json(ruta, datos, intentos=5):
+def escribir_json(ruta, datos, intentos=5, ascii=False):
     """Escritura atómica (archivo .tmp + reemplazo) para que Drive nunca
-    sincronice un JSON a medio escribir. Reintenta si Drive bloquea el archivo."""
+    sincronice un JSON a medio escribir. Reintenta si Drive bloquea el archivo.
+    ascii=True escapa tildes y Ñ (\\uXXXX): la web app cachea por trozos de 90 KB
+    solo si el texto es ASCII (con tildes, de 30 KB, y los archivos grandes ya no caben)."""
     temporal = ruta.with_name(ruta.name + ".tmp")
     with open(temporal, "w", encoding="utf-8") as f:
-        json.dump(datos, f, ensure_ascii=False, separators=(",", ":"))
+        json.dump(datos, f, ensure_ascii=ascii, separators=(",", ":"))
     for intento in range(intentos):
         try:
             os.replace(temporal, ruta)
@@ -805,6 +809,224 @@ def ejecutar(cfg, limite):
 
 
 # ---------------------------------------------------------------------------
+# Ventas 3.0: cubos de sell-out de VARIOS años, con cliente y KAM
+# ---------------------------------------------------------------------------
+# La pestaña "Ventas 3.0" de la web app (JsVentas3.html) replica el visual de
+# crecimiento del Power BI de sell-out (PY · AC · ΔPY · ΔPY% · var. vs mes
+# pasado) por Cliente, BU, Producto o Punto de venta. Necesita el año anterior y
+# el cliente de cada fila, que los archivos del mapa no traen; por eso lee la
+# hoja 'Final' de cada "3. Affiliate_Master so" listado en FUENTES_S3 (uno por
+# año). Ahí el cliente es Origin + Sold To ID (= SAP ID), y el punto de venta es
+# SF_ID (en todos los años; POS_ID solo existe desde 2026). No toca ninguno de
+# los archivos so_*.json del mapa.
+#
+# Archivos (prefijo s3_, JSON ASCII para que la web app los pueda cachear):
+#   s3_cubo.json      catálogos + cliente×producto×mes (cs) + PDV×mes (pm)
+#   s3_pb_NN.json     PDV × mes de UN BU (NN = índice en "bus"; dimensión PDV filtrada por BU)
+#   s3_pdv_NN.json    PDV × producto × mes, por PDV   (filtro de punto de venta)
+#   s3_sku_NN.json    PDV × producto × mes, por producto (PDV filtrado por producto)
+# Todas las series van como [índices..., mes, unidades, importe] y todos los
+# archivos llevan el mismo "generado": la web app no mezcla corridas distintas.
+
+COLUMNAS_S3_DEF = {
+    "fecha": ["fecha"],
+    "cliente_id": ["sold to id"],
+    "cliente": ["origin"],
+    "pdv": ["sf id"],
+    "pos_id": ["pos id"],
+    "pdv_desc": ["isdin pdv desc"],
+    "sku": ["ean isdin"],
+    "prod_desc": ["ean description"],
+    "units": ["units"],
+    "amount": ["amount"],
+    "kam": ["kam"],
+    "canal": ["canal"],
+    "subcanal": ["sub canal"],
+    "ciudad": ["ciudad cliente"],
+    "departamento": ["departamento cliente"],
+}
+
+
+def _ultimo(info, clave, anio_mes, valor):
+    """Guarda en info[clave] el valor del mes más reciente (empates: el primero)."""
+    if not valor:
+        return
+    previo = info.get(clave)
+    if previo is None or anio_mes > previo[0]:
+        info[clave] = (anio_mes, valor)
+
+
+def ejecutar_s3(cfg, limite=None):
+    fuentes = getattr(cfg, "FUENTES_S3", None)
+    if not fuentes:
+        print("Ventas 3.0: FUENTES_S3 no está en config.py; no se generan los archivos s3_*.")
+        return
+    t0 = time.perf_counter()
+    salida = Path(cfg.CARPETA_SALIDA)
+    columnas_cfg = getattr(cfg, "COLUMNAS_S3", None) or COLUMNAS_S3_DEF
+    n_frag_pdv = int(getattr(cfg, "N_FRAGMENTOS_S3_PDV", 32))
+    n_frag_sku = int(getattr(cfg, "N_FRAGMENTOS_S3_SKU", 16))
+
+    cs = defaultdict(lambda: [0.0, 0.0])        # (cliente, sku, mes)
+    pm = defaultdict(lambda: [0.0, 0.0])        # (pdv, mes)
+    ps = defaultdict(lambda: [0.0, 0.0])        # (pdv, sku, mes)
+    info_cli, info_pdv, info_sku = defaultdict(dict), defaultdict(dict), defaultdict(dict)
+    kam_mes = defaultdict(lambda: defaultdict(int))   # (cliente, mes) -> {kam: filas}
+    productos = {}
+    conteo = defaultdict(int)
+    origen = []
+
+    for fuente in fuentes:
+        ruta = Path(fuente["ruta"])
+        with abrir_libro(ruta) as libro:
+            hoja = libro.elegir_hoja(fuente.get("hoja", "Final"))
+            dim, info_dim = cargar_dimension_productos(cfg, libro) if getattr(cfg, "DIMENSION_PRODUCTOS", None) and \
+                cfg.DIMENSION_PRODUCTOS["hoja"] in libro.hojas else ({}, None)
+            productos.update(dim)   # la fuente más reciente (última de la lista) manda
+            encabezados, filas = leer_encabezados(libro, hoja, int(fuente.get("fila_encabezados", 1)))
+            mapeo = mapear_columnas(encabezados, columnas_cfg)
+            faltan = [c for c in ("fecha", "sku", "units", "amount") if c not in mapeo]
+            if "cliente_id" not in mapeo and "cliente" not in mapeo:
+                faltan.append("cliente_id/cliente")
+            if "pdv" not in mapeo and "pos_id" not in mapeo:
+                faltan.append("pdv/pos_id")
+            if faltan:
+                sys.exit(f"ERROR Ventas 3.0: en '{ruta.name}' › '{hoja}' no encontré: {', '.join(faltan)}.\n"
+                         f"  Encabezados: {encabezados}")
+            filtros, faltan_filtros = preparar_filtros(cfg, encabezados)
+            if faltan_filtros:
+                sys.exit(f"ERROR Ventas 3.0: en '{ruta.name}' no están las columnas de FILTROS: "
+                         + ", ".join(faltan_filtros))
+            print(f"Ventas 3.0: leyendo '{hoja}' de {ruta.name} con {libro.motor} ...")
+            col = {campo: mapeo.get(campo) for campo in columnas_cfg}
+            cache_filtros, leidas = {}, 0
+            for fila in filas:
+                if fila_vacia(fila):
+                    continue
+                if filtros and not pasa_filtros(fila, filtros, cache_filtros):
+                    conteo["filtradas"] += 1
+                    continue
+                if limite is not None and leidas >= limite:
+                    break
+                leidas += 1
+                am = normalizar_fecha(celda(fila, col["fecha"]))
+                if am is None:
+                    conteo["descartadas_fecha"] += 1
+                    continue
+                nombre_cli = normalizar_texto(celda(fila, col.get("cliente")))
+                cli = normalizar_codigo(celda(fila, col.get("cliente_id"))) or normalizar_encabezado(nombre_cli).upper()
+                pdv = normalizar_texto(celda(fila, col.get("pdv"))) or normalizar_pos(celda(fila, col.get("pos_id")))
+                sku = normalizar_codigo(celda(fila, col["sku"]))
+                if not cli or not pdv or not sku:
+                    conteo["descartadas_" + ("cliente" if not cli else ("pdv" if not pdv else "sku"))] += 1
+                    continue
+                u = normalizar_numero(celda(fila, col["units"])) or 0.0
+                a = normalizar_numero(celda(fila, col["amount"])) or 0.0
+                for acumulado in (cs[(cli, sku, am)], pm[(pdv, am)], ps[(pdv, sku, am)]):
+                    acumulado[0] += u
+                    acumulado[1] += a
+                ic, ip, isk = info_cli[cli], info_pdv[pdv], info_sku[sku]
+                _ultimo(ic, "nombre", am, nombre_cli)
+                kam = normalizar_texto(celda(fila, col.get("kam"))).upper()
+                if kam:
+                    kam_mes[(cli, am)][kam] += 1
+                _ultimo(ip, "desc", am, normalizar_texto(celda(fila, col.get("pdv_desc"))))
+                _ultimo(ip, "cli", am, cli)
+                _ultimo(ip, "ciudad", am, normalizar_texto(celda(fila, col.get("ciudad"))).upper())
+                _ultimo(ip, "depto", am, normalizar_texto(celda(fila, col.get("departamento"))).upper())
+                _ultimo(ip, "canal", am, normalizar_texto(celda(fila, col.get("canal"))).upper())
+                _ultimo(ip, "subcanal", am, normalizar_texto(celda(fila, col.get("subcanal"))).upper())
+                _ultimo(ip, "pos", am, normalizar_pos(celda(fila, col.get("pos_id"))))
+                _ultimo(isk, "desc", am, normalizar_texto(celda(fila, col.get("prod_desc"))))
+                conteo["validas"] += 1
+            origen.append({"archivo": ruta.name, "hoja": hoja, "filas_validas": leidas,
+                           "columnas": {c: encabezados[i] for c, i in mapeo.items()}})
+
+    # KAM del cliente = el que más filas tiene en su mes más reciente.
+    kam_cli = {}
+    for (cli, am), kams in kam_mes.items():
+        if cli not in kam_cli or am > kam_cli[cli][0]:
+            kam_cli[cli] = (am, max(kams.items(), key=lambda kv: kv[1])[0])
+
+    def val(info, clave):
+        return info[clave][1] if clave in info else ""
+
+    anios_mes = sorted({k[2] for k in cs})
+    meses = [texto_mes(am) for am in anios_mes]
+    i_mes = {am: i for i, am in enumerate(anios_mes)}
+    clientes = sorted(info_cli, key=lambda c: (val(info_cli[c], "nombre") or c))
+    i_cli = {c: i for i, c in enumerate(clientes)}
+    skus = sorted(info_sku, key=lambda s: (val(info_sku[s], "desc") or s))
+    i_sku = {s: i for i, s in enumerate(skus)}
+    pdvs = sorted(info_pdv)
+    i_pdv = {p: i for i, p in enumerate(pdvs)}
+    # PDV × BU sale del detalle con el BU FINAL de cada producto (el de la fuente
+    # más reciente), igual que los productos del cubo.
+    def bu_de(sku):
+        return ((productos.get(sku) or {}).get("bu") or SIN_BU).upper()
+    pb = defaultdict(lambda: [0.0, 0.0])
+    for (p, s, am), v in ps.items():
+        x = pb[(p, bu_de(s), am)]
+        x[0] += v[0]
+        x[1] += v[1]
+    bus = sorted({k[1] for k in pb})
+    i_bu = {b: i for i, b in enumerate(bus)}
+    generado = datetime.now().isoformat(timespec="seconds")
+
+    def r(x):
+        return redondear(x)
+
+    cubo = {
+        "v": 1, "generado": generado, "meses": meses,
+        "clientes": [[c, val(info_cli[c], "nombre") or c, kam_cli.get(c, (0, "SIN KAM"))[1]] for c in clientes],
+        "skus": [[s, val(info_sku[s], "desc") or s, bu_de(s), ""] for s in skus],
+        "pdv": [[p, val(info_pdv[p], "desc") or p, i_cli.get(val(info_pdv[p], "cli"), -1), val(info_pdv[p], "ciudad"),
+                 val(info_pdv[p], "depto"), val(info_pdv[p], "canal"), val(info_pdv[p], "subcanal"),
+                 val(info_pdv[p], "pos")] for p in pdvs],
+        "cs": [[i_cli[c], i_sku[s], i_mes[am], r(v[0]), r(v[1])] for (c, s, am), v in sorted(cs.items())],
+        "pm": [[i_pdv[p], i_mes[am], r(v[0]), r(v[1])] for (p, am), v in sorted(pm.items())],
+        "bus": bus,
+        "fragmentos": {"pdv": n_frag_pdv, "sku": n_frag_sku},
+        "meta": {"fuentes": origen, "filas": dict(sorted(conteo.items())),
+                 "filtros": dict(getattr(cfg, "FILTROS", None) or {})},
+    }
+    frag_pdv = [defaultdict(list) for _ in range(n_frag_pdv)]
+    frag_sku = [defaultdict(list) for _ in range(n_frag_sku)]
+    for (p, s, am), v in sorted(ps.items()):
+        ip, isk, im = i_pdv[p], i_sku[s], i_mes[am]
+        frag_pdv[ip % n_frag_pdv][ip].append([isk, im, r(v[0]), r(v[1])])
+        frag_sku[isk % n_frag_sku][isk].append([ip, im, r(v[0]), r(v[1])])
+
+    salida.mkdir(parents=True, exist_ok=True)
+    escritos = []
+
+    def guardar(nombre, datos):
+        escritos.append((nombre, escribir_json(salida / nombre, datos, ascii=True)))
+
+    # Un archivo por BU (todos juntos pasan de 5 MB y la web app ya no los podría cachear).
+    por_bu = [[] for _ in bus]
+    for (p, b, am), v in sorted(pb.items()):
+        por_bu[i_bu[b]].append([i_pdv[p], i_mes[am], r(v[0]), r(v[1])])
+    for n, filas_bu in enumerate(por_bu):
+        guardar(f"s3_pb_{n:02d}.json", {"generado": generado, "bu": bus[n], "pb": filas_bu})
+    for n, d in enumerate(frag_pdv):
+        guardar(f"s3_pdv_{n:02d}.json", {"generado": generado, "filas": d})
+    for n, d in enumerate(frag_sku):
+        guardar(f"s3_sku_{n:02d}.json", {"generado": generado, "filas": d})
+    guardar("s3_cubo.json", cubo)   # el cubo va de último: si está nuevo, el resto también
+
+    total = sum(b for _, b in escritos)
+    print(f"Ventas 3.0 listo en {time.perf_counter() - t0:.1f} s: {len(meses)} meses"
+          + (f" ({meses[0]} a {meses[-1]})" if meses else "")
+          + f", {len(clientes)} clientes, {len(pdvs):,} PDV, {len(skus)} productos; "
+          f"{len(escritos)} archivos s3_*, {total / 1e6:.1f} MB (s3_cubo.json "
+          f"{dict(escritos)['s3_cubo.json'] / 1e6:.1f} MB).")
+    descartadas = {k: v for k, v in conteo.items() if k.startswith("descartadas_")}
+    if descartadas:
+        print("  Filas descartadas: " + ", ".join(f"{k[12:]}={v:,}" for k, v in sorted(descartadas.items())))
+
+
+# ---------------------------------------------------------------------------
 
 def main():
     for flujo in (sys.stdout, sys.stderr):
@@ -816,6 +1038,10 @@ def main():
                         help="lista hojas, encabezados, mapeo de columnas y 3 filas de muestra")
     parser.add_argument("--limite", type=int, metavar="N",
                         help="procesa solo las primeras N filas de datos (pruebas)")
+    parser.add_argument("--solo-s3", action="store_true",
+                        help="genera solo los archivos s3_* de Ventas 3.0 (no toca los del mapa)")
+    parser.add_argument("--sin-s3", action="store_true",
+                        help="genera solo los archivos so_* del mapa (como antes)")
     args = parser.parse_args()
     if args.limite is not None and args.limite <= 0:
         parser.error("--limite debe ser un entero positivo")
@@ -823,8 +1049,11 @@ def main():
     cfg = cargar_config()
     if args.inspect:
         inspeccionar(cfg)
-    else:
+        return
+    if not args.solo_s3:
         ejecutar(cfg, args.limite)
+    if not args.sin_s3:
+        ejecutar_s3(cfg, args.limite)
 
 
 if __name__ == "__main__":

@@ -123,7 +123,7 @@
     </div>
 
     <div class="acciones">
-      <button class="btn" onclick="centrarBricks()" title="Encuadrar el mapa en los bricks">Centrar</button>
+      <button class="btn btn-centrar" onclick="centrarBricks()" title="Encuadrar el mapa en los bricks">Centrar</button>
       <button class="btn" onclick="abrirDiag()" title="Ver qué devolvieron las hojas y el ETL">Diagnóstico</button>
     </div>
   </header>
@@ -133,15 +133,49 @@
        activa. La vista oculta lleva [hidden] (display:none), así que no genera
        caja ni consume fila, y la visible siempre recibe el 1fr. ── -->
   <nav class="mtdtabs-top" role="tablist">
-    <button class="mtdtab-top activo" id="btnVistaVentasMtd" role="tab"
-            onclick="mostrarVistaSuperior('ventasmtd')">📊 Ventas MTD</button>
-    <button class="mtdtab-top" id="btnVistaSIvsSO" role="tab"
-            onclick="mostrarVistaSuperior('sivso')">🔁 SI vs SO</button>
+    <button class="mtdtab-top activo" id="btnVistaVentas" role="tab"
+            onclick="mostrarVistaSuperior('ventas')">📈 Ventas</button>
+    <button class="mtdtab-top" id="btnVistaVentas3" role="tab"
+            onclick="mostrarVistaSuperior('ventas3')">📊 Ventas 3.0</button>
     <button class="mtdtab-top" id="btnVistaMapa" role="tab"
             onclick="mostrarVistaSuperior('mapa')">🗺️ Mapa</button>
     <button class="mtdtab-top" id="btnVistaYoobic" role="tab"
             onclick="mostrarVistaSuperior('yoobic')">🏪 Yoobic · Perfect Store</button>
+    <!-- Informes anteriores: se conservan mientras el equipo valida "Ventas". -->
+    <button class="mtdtab-top clasico" id="btnVistaVentasMtd" role="tab"
+            onclick="mostrarVistaSuperior('ventasmtd')" title="Informe anterior de Ventas MTD">Ventas MTD (clásico)</button>
+    <button class="mtdtab-top clasico" id="btnVistaSIvsSO" role="tab"
+            onclick="mostrarVistaSuperior('sivso')" title="Informe anterior de Sell In vs Sell Out">SI vs SO (clásico)</button>
   </nav>
+
+  <!-- ═══ Ventas (JsVentas.html): cartera del KAM. Une Ventas MTD + SI vs SO. ═══ -->
+  <div id="vistaVentas">
+    <div class="card vt-barra">
+      <div class="vt-titulo"><h2>Ventas</h2><span class="sub" id="vtSub"></span></div>
+      <div class="vt-ctrl">
+        <label class="vt-campo"><span>KAM</span><select id="vtKam" onchange="vtSetKam(this.value)"></select></label>
+        <label class="vt-campo"><span>Canal</span><select id="vtCanal" onchange="vtSetCanal(this.value)"></select></label>
+        <button class="btn" onclick="vtActualizar()" title="Volver a leer las hojas">Actualizar</button>
+      </div>
+    </div>
+    <div class="vt-segmento" role="tablist">
+      <button type="button" role="tab" id="vtSegClientes" class="activo" onclick="vtVer('clientes')">Clientes</button>
+      <button type="button" role="tab" id="vtSegProductos" onclick="vtVer('productos')">Productos</button>
+    </div>
+    <div id="vtCuerpo"></div>
+  </div>
+
+  <!-- ═══ Ventas 3.0 (JsVentas3.html): sell-out estilo Zebra BI, fuente = ETL (Affiliate Master). ═══ -->
+  <div id="vistaVentas3" hidden>
+    <div class="card vt-barra">
+      <div class="vt-titulo"><h2>Ventas 3.0</h2><span class="sub" id="vt3Sub"></span></div>
+      <div class="vt-ctrl">
+        <label class="vt-campo"><span>KAM</span><select id="vt3Kam" onchange="vt3SetKam(this.value)"></select></label>
+        <button class="btn" onclick="vt3Cargar(true)" title="Volver a leer los archivos del ETL">Actualizar</button>
+      </div>
+    </div>
+    <div id="vt3Cuerpo"></div>
+  </div>
 
   <div id="vistaMapa" hidden>
     <div class="avisos" id="avisos"></div>
@@ -229,7 +263,7 @@
     </div>
   </div><!-- /#vistaMapa -->
 
-  <div id="vistaVentasMtd">
+  <div id="vistaVentasMtd" hidden>
     <div class="mtd-head">
       <h2>INFORME DE VENTAS MTD</h2>
       <span class="sub" id="mtdSubtitulo"></span>
@@ -631,6 +665,8 @@
 <?!= include('JsVentasMtd'); ?>
 <?!= include('JsSIvsSO'); ?>
 <?!= include('JsYoobic'); ?>
+<?!= include('JsVentas'); ?>
+<?!= include('JsVentas3'); ?>
 <script>iniciarUIBasica();</script>
 </body>
 </html>

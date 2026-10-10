@@ -10,8 +10,10 @@
 
 | Pestaña | Archivo cliente | Endpoint del servidor | Fuente |
 |---|---|---|---|
-| **Ventas MTD** (primera hoja, por defecto) | `JsVentasMtd.html` | `getVentasMtdCompletoJson(forzar)` | Libro `1hViwAW2…` ("Ventas - YTD"): hojas `CUMPLIMIENTO`, `PLANTILLA`, `Historico de ventas` |
-| **SI vs SO** | `JsSIvsSO.html` | `getSIvsSOJson(forzar)` | Libro "Carga Looker" `1_eW3f95…`, hoja `Data` |
+| **Ventas** (primera hoja, por defecto desde 2026-10-10) | `JsVentas.html` | ninguno propio: reutiliza los dos de abajo | Las de Ventas MTD + SI vs SO + hoja `Info SO-INV` (DOH objetivo) |
+| **Ventas 3.0** (sell-out estilo Zebra) | `JsVentas3.html` | `getVentas3Json`, `getVentas3PbJson`, `getVentas3DetalleJson` | Archivos `s3_*.json` del ETL de sell-out (`etl_sellout.py`, hoja 'Final' de los Affiliate Master 2025 y 2026) |
+| **Ventas MTD (clásico)** | `JsVentasMtd.html` | `getVentasMtdCompletoJson(forzar)` | Libro `1hViwAW2…` ("Ventas - YTD"): hojas `CUMPLIMIENTO`, `PLANTILLA`, `Historico de ventas` |
+| **SI vs SO (clásico)** | `JsSIvsSO.html` | `getSIvsSOJson(forzar)` | Libro "Carga Looker" `1_eW3f95…`, hojas `Data` e `Info SO-INV` (solo columnas SAP y DOH objetivo) |
 | **Mapa** | `JsMapa.html`, `JsFiltros.html`, `JsPaneles.html` | 5 endpoints (`getPuntosJson`, `getBricksJson`, `getVentasJson`, `getPortafolioJson`, `getAsignacionesJson`) | Hojas del MAESTRO PDV's + JSON del ETL en Drive |
 
 Todos los endpoints devuelven **strings JSON ASCII** (`jsonAscii_`), se cachean por trozos (`conCache_`) y aceptan `forzar=true`
@@ -22,7 +24,7 @@ Todos los endpoints devuelven **strings JSON ASCII** (`jsonAscii_`), se cachean 
 | Término | Significado real | Dónde se verificó |
 |---|---|---|
 | **Mes de corte / periodo** | Mes que indica la celda de control de `CUMPLIMIENTO` ("cambie el número para cambiar el mes", p. ej. `O1`=1-sep-2026, `P1`=9). **Es un mes CERRADO**, no el mes en curso. El servidor lo devuelve en `meta.periodo`. | Hoja CUMPLIMIENTO, fila 1 |
-| **"-1" (Real -1, A-1, YTD-1)** | **El mismo mes (o rango) del AÑO ANTERIOR.** NO es "el mes anterior". | PLANTILLA `Real -1` de Cruz Verde / Medipiel / Bella Piel = Histórico sep-2025 al peso (6.744 / 3.678 / 3.105 M) |
+| **"-1" (Real -1, A-1, YTD-1)** | **El mismo mes (o rango) del AÑO ANTERIOR.** NO es "el mes anterior". Con el mes **en curso**, PLANTILLA trae el año anterior **hasta la misma fecha**, no el mes completo. | Mes cerrado: PLANTILLA `Real -1` de Cruz Verde / Medipiel / Bella Piel = Histórico sep-2025 al peso (6.744 / 3.678 / 3.105 M). Mes en curso (2026-10-10): Cruz Verde `Real -1` = 461,6 M contra 4.789,8 M de oct-2025 completo |
 | **`Real` vs `Real (LOCAL)`** | En PLANTILLA, `Real` (última columna) concilia con CUMPLIMIENTO y el Histórico (17.722 M); `Real (LOCAL)` suma 17.375 M (28 filas difieren). Se usa `Real`. | Σ de las tres hojas, sep-2026 |
 | **`Real -1 (LOCAL)` de CUMPLIMIENTO** | Tiene **otra base** que el `Real -1` de PLANTILLA/Histórico (Cruz Verde: 6.152 M vs 6.744 M). **No se usa.** El A-1 sale de PLANTILLA. | Comparación por cliente |
 | **SAP ID (`id`)** | Clave común de las tres hojas de MTD. Sin SAP ID se usa `N:<nombre normalizado>`. | `mtdIdCliente_` |
@@ -66,6 +68,58 @@ Reglas:
 | **% Part SI / SO** | cuota sobre el universo de la tabla Clientes (todos los clientes mostrados): no cambia al elegir filas; el TOTAL con selección suma las partes elegidas |
 | **Donut BU** | Participación del SO por BU, **solo BU con SO neto > 0** (las devoluciones netas se avisan aparte); clic en la leyenda filtra por BU |
 | **DDI / Diferencia INV** | **No implementados** (la hoja `DIAS DE INV` está rota). Propuesta por confirmar con el equipo: `DDI = INV ÷ (Prom SO ÷ 30)` |
+
+### 3.3 Ventas (cartera del KAM, `JsVentas.html`)
+
+Une el sell-in del mes (Ventas MTD) con el sell-out y el inventario de cada cliente (SI vs SO). Todo se calcula en el navegador.
+**Regla del equipo (2026-10-10): solo datos reales.** No hay proyecciones, "esperado a hoy", estados derivados de proyecciones ni inventario estimado: los clientes compran a ritmos muy distintos (semanal, quincenal, mensual).
+
+| KPI | Fórmula | Nota |
+|---|---|---|
+| **Ventas al…** | Día anterior a la última modificación del libro de Ventas MTD (`meta.libroActualizado`) | La descarga diaria trae hasta ayer (`VT_DATOS_HASTA_AYER`) |
+| **Días hábiles** | Transcurridos / del mes / restantes | Lun–vie sin festivos de Colombia (fijos, Ley Emiliani y los de Pascua). Oct-2026: 21. Es un hecho de calendario: no se usa para proyectar |
+| **% del plan** | Venta del mes ÷ Plan del mes | |
+| **Falta para el plan** | Plan − Venta | |
+| **vs A-1** | Venta ÷ `Real -1` − 1 | **Sin prorratear**: con el mes en curso `Real -1` ya es "a la misma fecha" (ver §2) |
+| **Mismo mes del año pasado completo** (rayado) | Histórico del mismo mes del año anterior | |
+| **"El año pasado, a esta fecha, había facturado el X %"** | A-1 a la fecha ÷ mismo mes del año pasado completo | Dato real, no proyección |
+| **Año a la fecha** | `Real (año)` ÷ `Current Plan (año)`; vs A-1 = contra (meses anteriores del año pasado + A-1 a la fecha) | |
+| **Ventana "vs sell-out"** | Último mes / 3 meses / año, terminando en el último mes con sell-out en `Data` | Sell-in y sell-out de la ventana salen de `Data` (misma fuente para los dos) |
+| **Sell-out ÷ sell-in** | SO ÷ SI de la ventana | |
+| **Días de inventario (DOH)** | INV del último mes reportado por el cliente ÷ (SO de los 3 meses que terminan ahí ÷ 3 ÷ 30) | Siempre con su mes. En pesos: SO e INV valorizados a **PVL** (asterisco discreto) |
+| **DOH objetivo** | Hoja `Info SO-INV`, columna "DOH objetivo" ("60 // Depende" → 60) | Sin dato: 60 días, y se dice |
+| **Tendencia del sell-out** | SO de los 3 últimos meses reportados ÷ mismos meses del año anterior − 1 | Sin año anterior: "sin base" |
+
+**Acción sugerida** (inventario alto = DOH > objetivo × 1,25, bajo = < objetivo × 0,5):
+
+| | Sell-out crece | Sell-out cae |
+|---|---|---|
+| **Sobreinventario** | Vigilar inventario | Activar sell-out |
+| **Sano** | Oportunidad de pedido | Sin alerta |
+| **Bajo** | Empujar pedido | Revisar quiebre |
+
+Sin año anterior para comparar: se decide solo por el inventario (alto → vigilar, bajo → empujar, sano → sin alerta). Sin sell-out reciente (o más de 4 meses de rezago): "Sin sell-out".
+
+**Señal por producto** (con los meses de referencia del cliente): riesgo de quiebre (vende y su DOH < objetivo × 0,5, o inventario 0), sobrestock (DOH > objetivo × 2), sin rotación (tiene inventario y no vendió en 3 meses). Sin foto de inventario del cliente: sin señal.
+
+**Pendiente de confirmar con el equipo**: si los pedidos se facturan también los sábados (hoy `VT_DIAS_LABORALES` = lun–vie) y los umbrales de inventario.
+
+### 3.4 Ventas 3.0 (sell-out, `JsVentas3.html`)
+
+Réplica del visual de crecimiento del Power BI de sell-out. Fuente única: el ETL de sell-out sobre la hoja 'Final' de los "3. Affiliate_Master so" (Affiliate = Colombia). Definiciones confirmadas por el usuario el 2026-10-10:
+
+| KPI | Fórmula |
+|---|---|
+| **AC** | Suma de los meses elegidos (unidades `#` o importe `$`) |
+| **PY** | Los mismos meses del año anterior (vacío si el ETL no trae ese año) |
+| **ΔPY / ΔPY%** | AC − PY · AC ÷ PY − 1 |
+| **Var % vs mes pasado** | Último mes elegido ÷ el mes anterior − 1 |
+| **Promedio mensual** ("Promedio Selec") | AC ÷ número de meses elegidos |
+| **Resultado** | AC total, con ΔPY% y ΔPY |
+| **Total PDV** | Puntos de venta (SF_ID) con venta en los meses elegidos, con los filtros activos |
+| **Promedio por PDV** | Resultado ÷ Total PDV |
+
+Dimensiones: Cliente (`Origin`/`Sold To ID`), BU (`DIM Productos` › SUB FAMILIA), Producto (`Ean_isdin`), Punto de venta (`SF_ID`). Validación (2026-10-10): ene–ago 2026 = 127,70 MM / 1.765.276 und (el ETL del mapa da 126,02 MM porque descarta 6.466 filas sin POS_ID); vs ene–ago 2025: +9,4 % en importe.
 
 ## 4. Filtrado cruzado (clic en tablas y gráficos, estilo Looker Studio)
 
@@ -152,6 +206,7 @@ Helper único en `JsVentasMtd.html` (lo usan también las tablas de SI vs SO). `
 - **Comparativa mes-contra-mes real** (si se quiere "vs mes anterior" hay que definirla: `Real -1` es año anterior).
 - **`Real -1 (LOCAL)` de CUMPLIMIENTO ≠ `Real -1` de PLANTILLA**: se usa el de PLANTILLA/Histórico; conviene que quien mantiene la hoja confirme por qué difieren.
 - **Seguridad**: la web app corre `USER_DEPLOYING` con `access: DOMAIN`: cualquier usuario del dominio ve el detalle por KAM/cliente. No hay filtro por usuario.
+- **Seguridad (2026-10-10)**: la hoja `Info SO-INV` del libro "Carga Looker" guarda **usuarios y contraseñas de portales de clientes en texto plano** (columnas `Usuario`/`Contraseña`), visibles para todo el que tenga acceso al libro. El visor no las lee (`sivsoLeerDohObjetivo_` solo toca SAP y DOH objetivo, con prueba). Recomendación: moverlas a un gestor de contraseñas o a una hoja con acceso restringido.
 - ISDIN (SAP 1) entra al total porque CUMPLIMIENTO lo incluye; si se quiere excluir del KPI hay que decidirlo con Finanzas.
 - La hoja `CUMPLIMIENTO` guarda una **tabla dinámica** en las columnas `O:R` (por KAM). El código **no** la lee; los totales por KAM de la pantalla se recalculan (y coinciden: Angélica Monsalve 7.314 M / plan 7.249 M / 100,9 % en la fecha de la auditoría).
 
@@ -199,6 +254,9 @@ Viven en `tests/` (fuera de `Apps Script/` para que `clasp` no las suba). Requie
 node tests/test_servidor_mtd.js     # Code.js con hojas simuladas: caché, forzar, fechas/zona, columnas, dup de POS ID
 node tests/test_cliente_mtd.js      # JsVentasMtd: KPI, corte YTD (−28,9 % → +1,9 %), filtros que propagan, filtrado cruzado, orden
 node tests/test_cliente_sivso.js    # JsSIvsSO: INV, Δ al mismo corte, Prom SO calendario, donut, filtrado cruzado (producto/cliente/mes/BU), chips
+node tests/test_ventas3.js          # JsVentas3: medidas del Power BI, dimensiones, filtros/fuentes, drill, $/#, endpoints por fragmentos
+python tests/test_etl_s3.py         # ETL de Ventas 3.0 con libros de ejemplo
+node tests/test_ventas.js           # JsVentas: solo datos reales (falla si aparece una proyección), festivos CO, vs A-1, DOH reportado, matriz, ventana, $/#; DOH objetivo sin tocar contraseñas
 node tests/chequeo_sintaxis_html.js # un error de sintaxis en UN Js*.html rompe toda la web app
 ```
 Los casos usan los **números reales** de la auditoría (sep-2026). Para ver la interfaz: `python construir_preview.py` (modo mock; ver CLAUDE.md).

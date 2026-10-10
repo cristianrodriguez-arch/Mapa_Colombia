@@ -627,10 +627,10 @@ function iniciarUIBasica(){
   // Choices.js lo necesitan ya los filtros de Ventas MTD: se precarga en
   // paralelo con la llamada al servidor (no bloquea el pintado).
   cargarLib('choices',function(){});
-  // Ventas MTD es la vista por defecto (a pedido del usuario): dispara la
-  // misma carga perezosa + el ocultamiento de la barra de filtros del mapa
-  // que pasaría si el usuario acabara de hacer clic en esa pestaña.
-  mostrarVistaSuperior('ventasmtd');
+  // "Ventas" (cartera del KAM, JsVentas.html) es la vista por defecto desde el
+  // 2026-10-10: pide Ventas MTD y SI vs SO, y oculta la barra de filtros del
+  // mapa, igual que si el usuario acabara de hacer clic en esa pestaña.
+  mostrarVistaSuperior('ventas');
   iniciarDivisor();
   document.addEventListener('keydown',function(e){
     if(e.key==='Escape'){cerrarDiag();cerrarTabla();cerrarPopFiltros();

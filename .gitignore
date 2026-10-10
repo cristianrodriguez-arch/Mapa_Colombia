@@ -24,6 +24,7 @@ config.py
 # Salida del ETL (datos, no código)
 salida/
 so_*.json
+s3_*.json
 
 # Archivos de datos pesados
 *.xlsx

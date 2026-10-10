@@ -27,7 +27,7 @@
    Sell Through (Type=ST) tampoco se usa en esta pestaña.
    ═══════════════════════════════════════════════════════════════ */
 
-var sivsoData=null,sivsoCargando=false;
+var sivsoData=null,sivsoCargando=false,sivsoErrorCarga='';
 var SIVSO_MESES=['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
 var sivsoUnidad='$';           // '$' o '#' — mismo toggle que el parámetro "Unidad" de Looker
 var sivsoCortes={};            // año → último mes (1-12) con Sell In o Sell Out
@@ -53,11 +53,13 @@ function cargarSIvsSO(forzar){
   google.script.run
     .withSuccessHandler(function(j){
       try{onSIvsSOCargado(JSON.parse(j))}
-      catch(e){sivsoCargando=false;est.innerText='No pude leer la respuesta: '+me(e)}})
+      catch(e){sivsoCargando=false;sivsoErrorCarga='No pude leer la respuesta: '+me(e);est.innerText=sivsoErrorCarga;
+        if(typeof vtDatosListos==='function')vtDatosListos()}})
     .withFailureHandler(function(e){
-      sivsoCargando=false;
+      sivsoCargando=false;sivsoErrorCarga=me(e);
       est.innerHTML='<b>No pude cargar SI vs SO.</b><br>'+esc(me(e))+
-        '<br><span class="mini">Revisa la hoja Data del archivo Carga Looker.</span>'})
+        '<br><span class="mini">Revisa la hoja Data del archivo Carga Looker.</span>';
+      if(typeof vtDatosListos==='function')vtDatosListos()})
     .getSIvsSOJson(forzar===true)}
 
 /* Payload v2 → objetos con los mismos campos de siempre (+ campos derivados que
@@ -79,8 +81,9 @@ function sivsoExpandir_(d){
   return filas}
 
 function onSIvsSOCargado(data){
-  sivsoCargando=false;
-  sivsoData={filas:sivsoExpandir_(data),meta:(data&&data.meta)||{}};
+  sivsoCargando=false;sivsoErrorCarga='';
+  // doh = DOH objetivo por SAP ID (hoja 'Info SO-INV'); lo usa la pestaña Ventas.
+  sivsoData={filas:sivsoExpandir_(data),meta:(data&&data.meta)||{},doh:(data&&data.doh)||{}};
   sivsoCortes={};
   sivsoData.filas.forEach(function(f){
     if((f.si||f.so)&&(!sivsoCortes[f.a]||f.m>sivsoCortes[f.a]))sivsoCortes[f.a]=f.m});
@@ -91,7 +94,9 @@ function onSIvsSOCargado(data){
   sivsoInicializarAnio();
   document.getElementById('sivsoEstado').style.display='none';
   document.getElementById('sivsoContenido').style.display='block';
-  renderSIvsSO();
+  // Ventas se avisa aunque el informe clásico (oculto) falle al pintarse.
+  try{renderSIvsSO()}
+  finally{if(typeof vtDatosListos==='function')vtDatosListos()}
   // Los selectores se crean después del primer render (Choices puede tardar en
   // llegar del CDN y no debe retrasar las cifras), igual que en Ventas MTD.
   cargarLib('choices',function(){sivsoCrearSelectores()})}
@@ -558,51 +563,38 @@ function sivsoCsvClientes(){
     'si_vs_so_clientes_'+mtdCsvFecha()+'.csv')}
 
 /* ── Datos de ejemplo para abrir el HTML fuera de Apps Script ──
-   Genera filas YA agregadas (forma objeto, sin diccionarios: sivsoExpandir_ las
-   deja pasar), con LCG determinista igual que cargarMock() de JsNucleo. */
+   Mismo catálogo que mtdDatosDemo (DEMO_CLIENTES / DEMO_PRODUCTOS en JsVentasMtd)
+   para que la pestaña Ventas cruce por SAP ID y nombre de producto. Como en la hoja
+   real, el sell-in llega hasta el mes pasado y el sell-out/INV un mes después.
+   Casos sembrados a propósito: Cruz Verde sin inventario de un producto (quiebre),
+   Bella Piel con sobrestock de otro, Medipiel con un producto sin rotación. Filas
+   YA agregadas (forma objeto: sivsoExpandir_ las deja pasar). */
+/* Crecimiento anual del sell-out de ejemplo (1,06 por defecto): estos caen, para
+   que la matriz de Ventas tenga clientes en la columna "Sell-out cae". */
+var DEMO_CREC_SO={'11026688':0.82,'11049529':0.9,'11026702':0.88};
 function sivsoDatosDemo(){
-  var sem=7;function rnd(){sem=(sem*1103515245+12345)%2147483648;return sem/2147483648}
-  var CLIENTES=[
-    {sap:'1001',n:'DROGUERÍAS CRUZ VERDE',kam:'Sara Cardona',ch:'Cadenas'},
-    {sap:'1002',n:'FARMATODO',kam:'Manuel Camargo',ch:'Cadenas'},
-    {sap:'1003',n:'BELLA PIEL',kam:'Sara Cardona',ch:'Independientes'},
-    {sap:'1004',n:'LA REBAJA',kam:'Manuel Camargo',ch:'Cadenas'},
-    {sap:'1005',n:'COPIDROGAS',kam:'Julián Torres',ch:'Distribuidores'},
-    {sap:'1006',n:'DERMORIENTE S.A.S',kam:'Miguel Abadía',ch:'Tiendas de piel'},
-    {sap:'1007',n:'LOCATEL',kam:'Julián Torres',ch:'Cadenas'},
-    {sap:'1008',n:'COOSALUD IPS',kam:'Miguel Abadía',ch:'Dispensación médica'}];
-  var PRODUCTOS=[
-    {id:'P01',n:'FP FUSION WATER MAGIC SPF50 50ML',bu:'FOTO',br:'FOTOPROTECTOR'},
-    {id:'P02',n:'FP GEL CREAM SPF50 250ML',bu:'FOTO',br:'FOTOPROTECTOR'},
-    {id:'P03',n:'FOTOULTRA AGE REPAIR',bu:'FOTO',br:'FOTOULTRA'},
-    {id:'P04',n:'ISDIN REPARADOR LABIAL STICK 4G',bu:'DERMA',br:'ISDIN'},
-    {id:'P05',n:'ISDINCEUTICS MELACLEAR ADVANCE',bu:'ISDINCEUTICS',br:'ISDINCEUTICS'},
-    {id:'P06',n:'ISDINCEUTICS FLAVO-C',bu:'ISDINCEUTICS',br:'ISDINCEUTICS'},
-    {id:'P07',n:'UREADIN 10 LOCION',bu:'DERMA',br:'UREADIN'},
-    {id:'P08',n:'NUTRADEICA CHAMPU',bu:'DERMA',br:'NUTRADEICA'},
-    {id:'P09',n:'GERMISDIN HIGIENE',bu:'DERMA',br:'GERMISDIN'},
-    {id:'P10',n:'FOTOPROTECTOR PEDIATRICS',bu:'FOTO',br:'FOTOPROTECTOR'}];
-  var hoy=new Date(),meses=[];
-  for(var k=23;k>=0;k--){var d=new Date(hoy.getFullYear(),hoy.getMonth()-k,1);
-    meses.push(d.getFullYear()+'-'+(d.getMonth()+1<10?'0':'')+(d.getMonth()+1))}
-
-  var filas=[];
-  CLIENTES.forEach(function(cl){
-    PRODUCTOS.forEach(function(pr){
-      if(rnd()<0.3)return;   // no todo cliente compra todo producto
-      var base=400+rnd()*3200;
-      meses.forEach(function(mes,mi){
-        if(rnd()<0.12)return;   // meses sin movimiento
-        var estac=1+0.15*Math.sin(mi/12*2*Math.PI);
-        var tendencia=1+mi*0.006;
-        var siU=Math.round(base*estac*tendencia*(0.85+rnd()*0.3));
-        var soU=Math.round(siU*(0.75+rnd()*0.35));
-        var precio=38000+rnd()*45000;
-        var invU=Math.round(siU*(1.4+rnd()*1.2));
-        filas.push({mes:mes,sapId:cl.sap,productId:pr.id,
-          cliente:cl.n,kam:cl.kam,channel:cl.ch,producto:pr.n,bu:pr.bu,brand:pr.br,
-          si:Math.round(siU*precio),siU:siU,so:Math.round(soU*precio),soU:soU,
-          inv:Math.round(invU*precio),invU:invU,tieneInv:true})})})});
-
-  return{filas:filas,meta:{actualizadoEn:new Date().toISOString(),totalFilas:filas.length}}}
+  var sem=11;function rnd(){sem=(sem*1103515245+12345)%2147483648;return sem/2147483648}
+  var hoy=new Date(),kCur=hoy.getFullYear()*12+hoy.getMonth();
+  function mesTxt(k){var m=k%12+1;return Math.floor(k/12)+'-'+(m<10?'0':'')+m}
+  var filas=[],doh={};
+  var fuentes=DEMO_CLIENTES.filter(function(c){return c[10]}).map(function(c){
+    return{sap:c[0],n:c[1],kam:c[2],ch:c[3],base:c[5]*0.92/demoEstacion(hoy.getMonth()+1),inv:c[8],obj:c[9],rez:c[11]}})
+    .concat(DEMO_SOLO_SO.map(function(c){return{sap:c[0],n:c[1],kam:c[2],ch:c[3],base:c[4],inv:c[5],obj:c[6],rez:0}}));
+  fuentes.forEach(function(cl){
+    if(cl.obj)doh[cl.sap]=cl.obj;
+    var kSO=kCur-2-cl.rez;
+    DEMO_PRODUCTOS.forEach(function(pr,pi){
+      var w=pr[3]*(0.8+rnd()*0.4),precio=45000+pi*6000,fCrec=DEMO_CREC_SO[cl.sap]||1.06;
+      for(var k=kCur-24;k<=kCur-1;k++){
+        var m=k%12+1,crec=Math.pow(fCrec,(k-kCur)/12);
+        var so=cl.base*w*demoEstacion(m)*crec*(0.9+rnd()*0.2),si=so*(0.85+rnd()*0.3);
+        var hayInv=k<=kSO,inv=hayInv?cl.inv*(cl.obj||60)/30*so*(0.85+rnd()*0.3):0;
+        if(cl.sap==='11026707'&&pi===1&&k>=kSO-1)inv=0;                  // quiebre
+        if(cl.sap==='11026727'&&pi===6&&hayInv)inv*=4;                    // sobrestock
+        if(cl.sap==='11026712'&&pi===9&&k>kSO-3)so=0;                    // sin rotación
+        if(k>kSO){so=0;hayInv=false;inv=0}
+        filas.push({mes:mesTxt(k),sapId:cl.sap,productId:'P'+(pi+1),cliente:cl.n,kam:cl.kam,channel:cl.ch,
+          producto:pr[0],bu:pr[1],brand:pr[2],si:Math.round(si),siU:Math.round(si/precio),
+          so:Math.round(so),soU:Math.round(so/precio),inv:Math.round(inv),invU:Math.round(inv/precio),tieneInv:hayInv})}})});
+  return{filas:filas,doh:doh,meta:{actualizadoEn:new Date().toISOString(),totalFilas:filas.length}}}
 </script>
