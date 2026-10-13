@@ -1,4 +1,6 @@
-/* Pruebas de la pestaña "Ventas" (JsVentas.html) y del DOH objetivo del servidor, sin navegador.
+/* Pruebas del motor del resumen del mes (JsVentas.html, lo muestra arriba la pestaña "Ventas")
+ * y del DOH objetivo del servidor, sin navegador. La antigua pestaña Ventas (lista, matriz,
+ * fichas y productos) se retiró el 2026-10-13; sus pruebas de vista se fueron con ella.
  *   node tests/test_ventas.js
  *
  * Regla del usuario (2026-10-10): SOLO DATOS REALES. Hay una prueba que falla si
@@ -109,6 +111,12 @@ function nuevo(mtd, so) { const k = cargar(); k.onVentasMtdCargado(plano(mtd || 
 const c = nuevo();
 const M = c.vtModelo();
 const cli = id => M.todos.find(x => x.id === id);
+// El resumen del mes tal como lo pinta la pestaña Ventas (vt3PintarResumen), en el modo y la unidad dados.
+function resumen(k, modo, unidad) {
+  k.vtEstado.modo = modo || 'plan'; k.vtEstado.unidad = unidad || '$'; k.vtMod = null;
+  const m = k.vtModelo();
+  return k.vtHtmlHero(m.tot, m, 'Todos los clientes', m.todos.length, { pre: 'vt3Res', sinVentana: true });
+}
 
 console.log('Ventas · solo datos reales');
 t('no existe ninguna proyección, "esperado a hoy" ni inventario estimado en el modelo', () => {
@@ -117,16 +125,10 @@ t('no existe ninguna proyección, "esperado a hoy" ni inventario estimado en el 
   });
   ['invEst', 'dohEst', 'espacio', 'soEst'].forEach(k => assert.strictEqual(cli('11026707').sal[k], undefined, 'sal.' + k));
 });
-t('ninguna vista (clientes, fichas, productos, ambos modos) muestra proyecciones ni estimaciones', () => {
+t('el resumen del mes (vs plan y vs sell-out, $ y #) no muestra proyecciones ni estimaciones', () => {
   const k = nuevo(), malas = /proyecci|proyectad|esperado|estimad|cerraría|cabe /i;
-  const revisar = (que) => { const h = k.document.els.vtCuerpo.innerHTML + (k.document.els.vtLista.innerHTML || '');
-    const m = h.match(malas); assert.ok(!m, que + ': apareció "' + (m && m[0]) + '"'); };
-  ['plan', 'so'].forEach(modo => {
-    k.vtSetModo(modo);
-    k.vtVer('clientes'); revisar('clientes ' + modo);
-    k.vtAbrirClienteId('11026707'); revisar('ficha cliente ' + modo);
-    k.vtVer('productos'); revisar('productos ' + modo);
-    k.vtAbrirProducto(k.vtNormProd('FP FUSION WATER MAGIC SPF50 50ML')); revisar('ficha producto ' + modo);
+  [['plan', '$'], ['so', '$'], ['so', '#']].forEach(([modo, u]) => {
+    const m = resumen(k, modo, u).match(malas); assert.ok(!m, modo + ' ' + u + ': apareció "' + (m && m[0]) + '"');
   });
 });
 
@@ -148,11 +150,22 @@ t('Δ y Δ% contra la Venta -1 (a la misma fecha), y rótulos "Venta -1" / "Vent
   const x = cli('11026707');
   assert.strictEqual(x.dA1Abs, 680955516 - 461586108);
   assert.strictEqual(M.tot.dA1Abs, M.tot.real - M.tot.a1);
-  const k = nuevo(); k.vtSetModo('plan'); k.vtVer('clientes');
-  const h = k.document.els.vtCuerpo.innerHTML + k.document.els.vtLista.innerHTML;
+  const h = resumen(nuevo(), 'plan');
   assert.ok(/Venta -1/.test(h) && /Venta YTD/.test(h) && /Δ%/.test(h));
   assert.ok(!/A-1/.test(h), 'quedó un "A-1" visible');
   assert.ok(!/había facturado el/.test(h), 'quedó la frase del % facturado el año pasado');
+});
+t('la cifra grande de la derecha es el % de cumplimiento del plan; el Δ% vs Venta -1 va en su detalle', () => {
+  const k = nuevo(), h = resumen(k, 'plan'), m = k.vtModelo();
+  const der = h.slice(h.indexOf('vt-hero-der'));
+  const grande = der.match(/<div class="vt-num-l">([^<]*)<\/div>/);
+  assert.ok(/% cumplimiento del plan/.test(der), 'rótulo');
+  assert.ok(grande && grande[1] === k.vtPct(m.tot.real / m.tot.plan), 'cifra grande = venta ÷ plan: ' + (grande && grande[1]));
+  assert.ok(/Δ% vs Venta -1 <span class="vt-(pos|neg)">/.test(der), 'Δ% vs Venta -1 en el detalle');
+  // Sin plan: guion en vez de un % inventado.
+  const mtd = plano(MTD); mtd.clientes.forEach(c => { c.planMes = 0; });
+  const k2 = nuevo(mtd), d2 = resumen(k2, 'plan');
+  assert.ok(/<div class="vt-num-l">–<\/div>/.test(d2.slice(d2.indexOf('vt-hero-der'))) && /sin plan este mes/.test(d2));
 });
 t('falta para el plan y Venta YTD (real ÷ plan del año, Δ% vs Venta -1 YTD)', () => {
   const x = cli('11026707');
@@ -169,8 +182,8 @@ t('ventana de 3 meses = jun–ago (último mes con sell-out); el SI de septiembr
   cerca(x.dSO, 9000e6 / 8100e6 - 1, 1e-12);
 });
 t('ventana de 1 mes y unidades', () => {
-  const k = nuevo(); k.vtSetVent(1); k.vtSetUnidad('#');
-  const x = k.vtModelo().todos.find(z => z.id === '11026707');
+  const k = nuevo(); k.vtEstado.unidad = '#'; k.vtMod = null;
+  const x = k.vtModelo({ vent: 1 }).todos.find(z => z.id === '11026707');
   assert.strictEqual(x.si, 300); assert.strictEqual(x.so, 270);
 });
 t('días de inventario REPORTADOS: INV del último mes ÷ (SO promedio 3 meses ÷ 30)', () => {
@@ -205,32 +218,7 @@ t('sell-out con más de 4 meses de rezago = "sin sell-out reciente"', () => {
   assert.ok(x.sal.viejo); assert.strictEqual(x.eInv, 'sindatos'); assert.strictEqual(x.acc, 'sinso');
 });
 
-console.log('Ventas · productos');
-t('señales por producto (reportadas): quiebre, sobrestock, sin rotación', () => {
-  assert.strictEqual(c.vtSenal({ kInv: 5, promSOInv: 10, dohRep: 5, inv: 1 }, 60), 'quiebre');
-  assert.strictEqual(c.vtSenal({ kInv: 5, promSOInv: 10, dohRep: 130, inv: 1 }, 60), 'sobre');
-  assert.strictEqual(c.vtSenal({ kInv: 5, promSOInv: 0, dohRep: null, inv: 50 }, 60), 'sinrot');
-  assert.strictEqual(c.vtSenal({ kInv: 5, promSOInv: 10, dohRep: 60, inv: 1 }, 60), '');
-  assert.strictEqual(c.vtSenal({ kInv: -1, promSOInv: 10, inv: 0 }, 60), '');   // sin foto de inventario: sin señal
-});
-t('Cruz Verde, producto 2: inventario 0 en la foto del cliente → riesgo de quiebre', () => {
-  const P = c.vtModeloProductos();
-  const p2 = P.idx[c.vtNormProd('FP FWATER MAGIC COLOR MEDIUM SPF50 50ML')];
-  assert.strictEqual(p2.det.find(z => z.x.id === '11026707').senal, 'quiebre'); assert.strictEqual(p2.quiebre, 1);
-  cerca(p2.dA1, 280955516 / 161586108 - 1, 1e-9);
-  assert.strictEqual(p2.si, 3000e6); assert.strictEqual(p2.so, 3000e6);
-});
-t('DOH del producto solo con los clientes que reportan inventario', () => {
-  const so = plano(SO);
-  so.filas = so.filas.map(f => (f[1] === 1 ? [f[0], f[1], f[2], f[3], 0, f[5], 0, 0, 0, 0] : f));   // Medipiel sin inventario
-  const k = nuevo(MTD, so), p1 = k.vtModeloProductos().idx[k.vtNormProd('FP FUSION WATER MAGIC SPF50 50ML')];
-  const conInv = p1.det.filter(d => d.r && d.r.kInv >= 0);
-  assert.ok(!conInv.some(d => d.x.id === '11026712'));
-  const inv = conInv.reduce((a, d) => a + d.r.inv, 0), soInv = conInv.reduce((a, d) => a + d.r.promSOInv, 0);
-  cerca(p1.doh, inv / (soInv / 30), 1e-9);
-});
-
-console.log('Ventas · totales, filtros y render');
+console.log('Ventas · totales y filtro del resumen');
 t('cliente que solo reporta sell-out no suma venta, plan ni mes del año pasado', () => {
   const mtd = plano(MTD);
   mtd.hist.push([2025, 10, '111', 3000000000, 0]);
@@ -238,49 +226,23 @@ t('cliente que solo reporta sell-out no suma venta, plan ni mes del año pasado'
   const k = nuevo(mtd), m = k.vtModelo(), astor = m.todos.find(x => x.id === '111');
   assert.strictEqual(astor.a1Mes, 0); assert.strictEqual(astor.plan, 0); assert.strictEqual(astor.real, 0);
 });
-t('total vs A-1 incluye el A-1 de clientes perdidos (como Ventas MTD), filtrado por KAM', () => {
+t('total vs A-1 incluye el A-1 de clientes perdidos (como Ventas MTD), con el filtro de KAM del resumen', () => {
   const mtd = plano(MTD);
   mtd.prod.push(['11055555', 0, 0, 500000000, 0]);
   mtd.histClientes['11055555'] = ['PERDIDO SAS', 'SARA CARDONA', 'Tiendas de piel'];
   const k = nuevo(mtd), m = k.vtModelo();
-  cerca(m.tot.a1, m.filas.reduce((a, x) => a + x.a1, 0) + 500000000, 1);
-  k.vtSetKam('ANGELICA MONSALVE');
-  cerca(k.vtModelo().tot.a1, 461586108, 1);
-});
-t('filtro de KAM: la cartera y los totales se recalculan', () => {
-  const k = nuevo(); k.vtSetKam('SARA CARDONA');
-  const m = k.vtModelo();
-  assert.deepStrictEqual(plano(m.filas.map(x => x.id)).sort(), ['11026712', '11099998']);
-  cerca(m.tot.real, 28784218 + 30000000, 1);
-});
-t('un KAM recordado que ya no existe se descarta al pintar', () => {
-  const k = nuevo(); k.vtEstado.kam = 'KAM QUE YA NO ESTA'; k.vtMod = null; k.vtRender();
-  assert.strictEqual(k.vtEstado.kam, '');
-});
-t('casillas de la matriz y "sin sell-out" filtran la lista', () => {
-  const k = nuevo();
-  k.vtEstado.seg = 'm:alto:crece';
-  assert.deepStrictEqual(plano(k.vtFiltrarLista(k.vtModelo()).map(x => x.id)), ['11026707']);
-  k.vtEstado.seg = 'sinso';
-  assert.deepStrictEqual(plano(k.vtFiltrarLista(k.vtModelo()).map(x => x.id)).sort(), ['1', '11099998']);
-});
-t('orden por defecto: "vs plan" = mayor falta para el plan; "vs sell-out" = mayor sell-out', () => {
-  const k = nuevo();
-  k.vtSetModo('plan'); k.vtVer('clientes'); assert.strictEqual(k.vtListaVista[0].id, '11026707');
-  k.vtSetModo('so'); assert.strictEqual(k.vtEstado.orden, 'so'); assert.strictEqual(k.vtListaVista[0].id, '11026707');
-});
-t('Productos: el orden por encabezado se aplica a la lista completa, no solo a lo visible', () => {
-  const k = nuevo(); k.vtVer('productos'); k.vtEstado.topeProd = 1;
-  k.MTD_ORDEN.vtTablaProd = { k: 'nombre', dir: 'asc' }; k.vtPintarProductos();
-  assert.deepStrictEqual(plano(k.vtProdVista.map(p => p.nombre)),
-    ['FP FUSION WATER MAGIC SPF50 50ML', 'FP FWATER MAGIC COLOR MEDIUM SPF50 50ML']);
+  cerca(m.tot.a1, m.todos.reduce((a, x) => a + x.a1, 0) + 500000000, 1);
+  const kam = n => u => u.kam === n;   // como vt3PintarResumen
+  const de = n => k.vtTotales(m.todos.filter(kam(n)), k.vtA1Fuera(m.todos, kam(n)));
+  cerca(de('ANGELICA MONSALVE').a1, 461586108, 1);
+  cerca(de('SARA CARDONA').a1, 8055426 + 500000000, 1);   // Medipiel + el cliente perdido
+  cerca(de('SARA CARDONA').real, 28784218 + 30000000, 1);
 });
 t('mes cerrado: no se rotula "a la misma fecha" ni quedan días hábiles', () => {
   const mtd = plano(MTD); mtd.meta.libroActualizado = '2026-11-05T08:00:00';
   const k = nuevo(mtd), m = k.vtModelo();
   assert.strictEqual(m.av.cerrado, true); assert.strictEqual(m.av.rest, 0);
-  k.vtVer('clientes');
-  assert.ok(!/a la misma fecha/.test(k.document.els.vtCuerpo.innerHTML.split('Cómo leer')[0]));
+  assert.ok(!/a la misma fecha/.test(resumen(k, 'plan')));
 });
 
 /* ---- Servidor: DOH objetivo de 'Info SO-INV' sin leer las columnas de contraseñas ---- */

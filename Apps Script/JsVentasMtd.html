@@ -263,9 +263,9 @@ function mtdCsvProductos(){
 /* ── Vistas de nivel superior: mapa ↔ Ventas MTD ↔ SI vs SO ──
    Convive con verVista() de JsPaneles, que conmuta las pestañas internas del
    rail (Tabla/Análisis/Brick): son niveles distintos y no se pisan. */
-var mtdVistaActiva='ventas';
-var SIVSO_VISTAS=['ventas','ventas3','mapa','ventasmtd','sivso','yoobic'];
-var VISTA_SUFIJO={ventas:'Ventas',ventas3:'Ventas3',mapa:'Mapa',ventasmtd:'VentasMtd',sivso:'SIvsSO',yoobic:'Yoobic'};   // #vista<X> / #btnVista<X>
+var mtdVistaActiva='ventas3';   // 'ventas3' = pestaña "Ventas" (antes "Ventas 3.0")
+var SIVSO_VISTAS=['ventas3','mapa','ventasmtd','sivso','yoobic'];
+var VISTA_SUFIJO={ventas3:'Ventas3',mapa:'Mapa',ventasmtd:'VentasMtd',sivso:'SIvsSO',yoobic:'Yoobic'};   // #vista<X> / #btnVista<X>
 function mostrarVistaSuperior(v){
   mtdVistaActiva=v;
   SIVSO_VISTAS.forEach(function(id){
@@ -276,10 +276,10 @@ function mostrarVistaSuperior(v){
   // no aplica a Ventas MTD, SI vs SO ni Yoobic, que tienen sus propios filtros.
   var bf=document.getElementById('barraFiltros');
   if(bf){bf.hidden=(v!=='mapa');bf.classList.remove('abierto')}
-  // "Ventas" no tiene panel de filtros plegable (KAM y Canal siempre están a la
-  // vista): el botón "Filtros" del móvil sobra ahí. La clase vista-<v> del body
+  // "Ventas" no tiene panel de filtros plegable (el KAM siempre está a la vista):
+  // el botón "Filtros" del móvil sobra ahí. La clase vista-<v> del body
   // oculta además los botones que solo sirven en el mapa (Centrar).
-  var bm=document.getElementById('btnFiltrosMovil');if(bm)bm.hidden=(v==='ventas'||v==='ventas3');
+  var bm=document.getElementById('btnFiltrosMovil');if(bm)bm.hidden=(v==='ventas3');
   if(document.body)SIVSO_VISTAS.forEach(function(id){document.body.classList.toggle('vista-'+id,id===v)});
   document.querySelectorAll('.mtd-filtros').forEach(function(mf){mf.classList.remove('abierto')});
   if(typeof cerrarFiltrosMovil==='function')cerrarFiltrosMovil();
@@ -291,7 +291,6 @@ function mostrarVistaSuperior(v){
         map.invalidateSize()},60);
   }
   if(v==='ventasmtd'&&ventasMtdData===null&&!mtdCargando)cargarVentasMtd();
-  if(v==='ventas'&&typeof vtAlEntrar==='function')vtAlEntrar();
   if(v==='ventas3'&&typeof vt3AlEntrar==='function')vt3AlEntrar();
   if(v==='sivso'&&typeof sivsoAlEntrar==='function')sivsoAlEntrar();
   if(v==='yoobic'&&typeof ybAlEntrar==='function')ybAlEntrar()}

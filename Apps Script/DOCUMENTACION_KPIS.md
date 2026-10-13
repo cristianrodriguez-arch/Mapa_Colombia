@@ -10,8 +10,7 @@
 
 | Pestaña | Archivo cliente | Endpoint del servidor | Fuente |
 |---|---|---|---|
-| **Ventas** (primera hoja, por defecto desde 2026-10-10) | `JsVentas.html` | ninguno propio: reutiliza los dos de abajo | Las de Ventas MTD + SI vs SO + hoja `Info SO-INV` (DOH objetivo) |
-| **Ventas 3.0** (sell-out y sell-in estilo Zebra) | `JsVentas3.html` | `getVentas3Json`, `getVentas3PbJson`, `getVentas3DetalleJson`; sell-in: `getVentas3SiJson` | Sell-out: archivos `s3_*.json` del ETL (`etl_sellout.py`, hoja 'Final' de los Affiliate Master 2025 y 2026). Sell-in + plan: hojas `SI_Appscript` y `PPTO_Appscript` del libro "Ventas - YTD" |
+| **Ventas** (primera hoja, por defecto; antes "Ventas 3.0", renombrada el 2026-10-13) | `JsVentas3.html`; el resumen del mes de arriba, `JsVentas.html` | `getVentas3Json`, `getVentas3PbJson`, `getVentas3DetalleJson`; sell-in: `getVentas3SiJson` | Sell-out: archivos `s3_*.json` del ETL (`etl_sellout.py`, hoja 'Final' de los Affiliate Master 2025 y 2026). Sell-in + plan: hojas `SI_Appscript` y `PPTO_Appscript` del libro "Ventas - YTD". Resumen del mes: los payloads de Ventas MTD + SI vs SO (sin endpoint propio) |
 | **Ventas MTD (clásico)** | `JsVentasMtd.html` | `getVentasMtdCompletoJson(forzar)` | Libro `1hViwAW2…` ("Ventas - YTD"): hojas `CUMPLIMIENTO`, `PLANTILLA`, `Historico de ventas` |
 | **SI vs SO (clásico)** | `JsSIvsSO.html` | `getSIvsSOJson(forzar)` | Libro "Carga Looker" `1_eW3f95…`, hojas `Data` e `Info SO-INV` (solo columnas SAP y DOH objetivo) |
 | **Mapa** | `JsMapa.html`, `JsFiltros.html`, `JsPaneles.html` | 5 endpoints (`getPuntosJson`, `getBricksJson`, `getVentasJson`, `getPortafolioJson`, `getAsignacionesJson`) | Hojas del MAESTRO PDV's + JSON del ETL en Drive |
@@ -69,42 +68,33 @@ Reglas:
 | **Donut BU** | Participación del SO por BU, **solo BU con SO neto > 0** (las devoluciones netas se avisan aparte); clic en la leyenda filtra por BU |
 | **DDI / Diferencia INV** | **No implementados** (la hoja `DIAS DE INV` está rota). Propuesta por confirmar con el equipo: `DDI = INV ÷ (Prom SO ÷ 30)` |
 
-### 3.3 Ventas (cartera del KAM, `JsVentas.html`)
+### 3.3 Resumen del mes (arriba en la pestaña Ventas; motor `JsVentas.html`)
 
-Une el sell-in del mes (Ventas MTD) con el sell-out y el inventario de cada cliente (SI vs SO). Todo se calcula en el navegador.
+Explicación dato por dato (libro, hoja, columna y cuenta, con un ejemplo real): README.md § "Pestaña Ventas: el resumen del mes, dato por dato".
+
+`JsVentas.html` fue la pestaña "Ventas" (cartera del KAM: lista, matriz, fichas y productos), retirada el 2026-10-13; queda solo su resumen del mes, que la pestaña Ventas (antes "Ventas 3.0") muestra arriba filtrado por su KAM y los clientes elegidos. Une el sell-in del mes (Ventas MTD) con el sell-out y el inventario de cada cliente (SI vs SO). Todo se calcula en el navegador.
 **Regla del equipo (2026-10-10): solo datos reales.** No hay proyecciones, "esperado a hoy", estados derivados de proyecciones ni inventario estimado: los clientes compran a ritmos muy distintos (semanal, quincenal, mensual).
 
 | KPI | Fórmula | Nota |
 |---|---|---|
 | **Ventas al…** | Día anterior a la última modificación del libro de Ventas MTD (`meta.libroActualizado`) | La descarga diaria trae hasta ayer (`VT_DATOS_HASTA_AYER`) |
 | **Días hábiles** | Transcurridos / del mes / restantes | Lun–vie sin festivos de Colombia (fijos, Ley Emiliani y los de Pascua). Oct-2026: 21. Es un hecho de calendario: no se usa para proyectar |
-| **% del plan** | Venta del mes ÷ Plan del mes | |
+| **% del plan** | Venta del mes ÷ Plan del mes | **Es la cifra grande de la derecha del resumen** desde el 2026-10-13 (antes era el Δ% vs Venta -1, que pasó a su detalle). Sin color: no hay un "esperado a hoy" contra el cual juzgarlo. Plan 0 → "–" |
 | **Falta para el plan** | Plan − Venta | |
 | **vs A-1** | Venta ÷ `Real -1` − 1 | **Sin prorratear**: con el mes en curso `Real -1` ya es "a la misma fecha" (ver §2) |
 | **Mismo mes del año pasado completo** (rayado) | Histórico del mismo mes del año anterior | |
-| **"El año pasado, a esta fecha, había facturado el X %"** | A-1 a la fecha ÷ mismo mes del año pasado completo | Dato real, no proyección |
 | **Año a la fecha** | `Real (año)` ÷ `Current Plan (año)`; vs A-1 = contra (meses anteriores del año pasado + A-1 a la fecha) | |
-| **Ventana "vs sell-out"** | Último mes / 3 meses / año, terminando en el último mes con sell-out en `Data` | Sell-in y sell-out de la ventana salen de `Data` (misma fuente para los dos) |
+| **Ventana "vs sell-out"** | Los meses elegidos en el panel lateral de la pestaña Ventas (Año / Últ. 3 / Último o a mano), recortados al último mes con sell-out en `Data` | Sell-in y sell-out de la ventana salen de `Data` (misma fuente para los dos) |
 | **Sell-out ÷ sell-in** | SO ÷ SI de la ventana | |
 | **Días de inventario (DOH)** | INV del último mes reportado por el cliente ÷ (SO de los 3 meses que terminan ahí ÷ 3 ÷ 30) | Siempre con su mes. En pesos: SO e INV valorizados a **PVL** (asterisco discreto) |
 | **DOH objetivo** | Hoja `Info SO-INV`, columna "DOH objetivo" ("60 // Depende" → 60) | Sin dato: 60 días, y se dice |
 | **Tendencia del sell-out** | SO de los 3 últimos meses reportados ÷ mismos meses del año anterior − 1 | Sin año anterior: "sin base" |
 
-**Acción sugerida** (inventario alto = DOH > objetivo × 1,25, bajo = < objetivo × 0,5):
-
-| | Sell-out crece | Sell-out cae |
-|---|---|---|
-| **Sobreinventario** | Vigilar inventario | Activar sell-out |
-| **Sano** | Oportunidad de pedido | Sin alerta |
-| **Bajo** | Empujar pedido | Revisar quiebre |
-
-Sin año anterior para comparar: se decide solo por el inventario (alto → vigilar, bajo → empujar, sano → sin alerta). Sin sell-out reciente (o más de 4 meses de rezago): "Sin sell-out".
-
-**Señal por producto** (con los meses de referencia del cliente): riesgo de quiebre (vende y su DOH < objetivo × 0,5, o inventario 0), sobrestock (DOH > objetivo × 2), sin rotación (tiene inventario y no vendió en 3 meses). Sin foto de inventario del cliente: sin señal.
+El motor sigue calculando por cliente la **acción sugerida** (inventario alto = DOH > objetivo × 1,25, bajo = < objetivo × 0,5, cruzado con la tendencia del sell-out: Empujar pedido / Oportunidad / Activar sell-out / Vigilar inventario / Revisar quiebre / Sin alerta / Sin sell-out), pero desde el 2026-10-13 ninguna pantalla la muestra. Las señales por producto (quiebre, sobrestock, sin rotación) se retiraron con la pestaña.
 
 **Pendiente de confirmar con el equipo**: si los pedidos se facturan también los sábados (hoy `VT_DIAS_LABORALES` = lun–vie) y los umbrales de inventario.
 
-### 3.4 Ventas 3.0 (sell-out, `JsVentas3.html`)
+### 3.4 Ventas (antes "Ventas 3.0"; sell-in y sell-out, `JsVentas3.html`)
 
 Réplica del visual de crecimiento del Power BI de sell-out. Fuente única: el ETL de sell-out sobre la hoja 'Final' de los "3. Affiliate_Master so" (Affiliate = Colombia). Definiciones confirmadas por el usuario el 2026-10-10:
 
@@ -269,7 +259,7 @@ node tests/test_cliente_mtd.js      # JsVentasMtd: KPI, corte YTD (−28,9 % →
 node tests/test_cliente_sivso.js    # JsSIvsSO: INV, Δ al mismo corte, Prom SO calendario, donut, filtrado cruzado (producto/cliente/mes/BU), chips
 node tests/test_ventas3.js          # JsVentas3: medidas del Power BI, dimensiones, filtros/fuentes, drill, $/#, endpoints por fragmentos
 python tests/test_etl_s3.py         # ETL de Ventas 3.0 con libros de ejemplo
-node tests/test_ventas.js           # JsVentas: solo datos reales (falla si aparece una proyección), festivos CO, vs A-1, DOH reportado, matriz, ventana, $/#; DOH objetivo sin tocar contraseñas
+node tests/test_ventas.js           # JsVentas (motor del resumen del mes): solo datos reales (falla si aparece una proyección), festivos CO, Venta -1, DOH reportado, ventana, $/#; DOH objetivo sin tocar contraseñas
 node tests/chequeo_sintaxis_html.js # un error de sintaxis en UN Js*.html rompe toda la web app
 ```
 Los casos usan los **números reales** de la auditoría (sep-2026). Para ver la interfaz: `python construir_preview.py` (modo mock; ver CLAUDE.md).

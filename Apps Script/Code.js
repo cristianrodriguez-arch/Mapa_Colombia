@@ -371,7 +371,7 @@ function getVentas3DetalleJson(reqJson) {
     }
     generado = datos.generado;
     if (req.generado && generado !== req.generado) {
-      return JSON.stringify({ error: 'El ETL se actualizó mientras mirabas: vuelve a cargar Ventas 3.0.' });
+      return JSON.stringify({ error: 'El ETL se actualizó mientras mirabas: vuelve a cargar Ventas.' });
     }
     porFrag[f].forEach(function(i) {
       (datos.filas[i] || []).forEach(function(t) {

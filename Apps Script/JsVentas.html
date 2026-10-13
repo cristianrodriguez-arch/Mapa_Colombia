@@ -1,9 +1,10 @@
 <script>
-/* ══════════ JsVentas · pestaña "Ventas" (cartera del KAM) ══════════
-   Primera pestaña desde el 2026-10-10. Une en UNA vista lo que antes vivía en
-   "Ventas MTD" (sell-in del mes, se actualiza a diario) y "SI vs SO" (sell-out
-   e inventario que los clientes reportan cada mes), pensada para el KAM y
-   primero para el celular.
+/* ══════════ JsVentas · motor del resumen del mes (arriba en la pestaña "Ventas") ══════════
+   Hasta el 2026-10-13 esto era la pestaña "Ventas" (cartera del KAM: lista de clientes,
+   matriz, fichas y productos). El usuario la retiró y dejó "Ventas 3.0" (JsVentas3.html),
+   renombrada a "Ventas". De aquí solo queda el MOTOR del resumen del mes que esa pestaña
+   muestra arriba (vt3PintarResumen): sell-in del mes en curso ("Ventas MTD", se actualiza
+   a diario) contra plan y Venta -1, o contra el sell-out reportado ("SI vs SO").
 
    REGLA DEL USUARIO (2026-10-10): SOLO DATOS REALES. Nada de proyecciones,
    "esperado a hoy", estados derivados de una proyección ni inventario estimado:
@@ -16,11 +17,9 @@
    objetivo por SAP ID de la hoja 'Info SO-INV'). Todo se calcula aquí.
 
    Dependencias: FMT, esc, normTxt (JsNucleo) · ventasMtdData, mtdVenta1, mtdUlista,
-   mtdCargando, mtdErrorCarga, cargarVentasMtd, mtdMoneda, mtdMonedaCorta,
-   mtdPctEntero, mtdPctTxt, mtdTabla, mtdTd, mtdOrdenActual, mtdComparador,
-   MTD_ORDEN, mtdDescargarCsv, mtdCsvFecha, MTD_MESES, MTD_MESES_LARGO,
-   mtdVistaActiva (JsVentasMtd) · sivsoData, sivsoCargando, sivsoErrorCarga,
-   cargarSIvsSO (JsSIvsSO).
+   mtdErrorCarga, cargarVentasMtd, mtdMoneda, mtdMonedaCorta, mtdPctEntero, mtdPctTxt,
+   MTD_MESES, MTD_MESES_LARGO, mtdVistaActiva (JsVentasMtd) · sivsoData, sivsoErrorCarga,
+   cargarSIvsSO (JsSIvsSO) · vt3PintarResumen (JsVentas3).
 
    DEFINICIONES (ver DOCUMENTACION_KPIS.md §3.3):
      · Dos modos de la barra (switch): "vs plan" = sell-in del mes en curso contra
@@ -45,29 +44,13 @@ var VT_DATOS_HASTA_AYER=true;  // la descarga del día trae las ventas hasta aye
 var VT_DOH_DEF=60;             // DOH objetivo cuando 'Info SO-INV' no trae el del cliente
 var VT_ALTO=1.25;              // DOH reportado > objetivo × 1,25 → sobreinventario
 var VT_BAJO=0.5;               // DOH reportado < objetivo × 0,5  → bajo inventario
-var VT_SOBRE_PROD=2;           // por producto: DOH > objetivo × 2 → sobrestock
 var VT_PROM_N=3;               // meses del promedio de sell-out (DOH y tendencia)
 var VT_SO_REZAGO=4;            // meses sin reportar sell-out antes de tratarlo como "sin sell-out reciente"
 var VT_LS='vt_v2';
 
-/* Acción sugerida por cliente según SU inventario reportado y SU sell-out (datos
-   reportados, nada estimado): [texto, color del punto, explicación]. Color con
-   significado (Zebra BI): verde = oportunidad, rojo = problema, naranja = vigilar. */
-var VT_ACC={
-  empujar:['Empujar pedido','#1e8e3e','Poco inventario y su sell-out crece: necesita producto.'],
-  oportunidad:['Oportunidad de pedido','#1e8e3e','Inventario sano y sell-out creciendo: hay espacio para venderle más.'],
-  activar:['Activar sell-out','#e41f33','Sobreinventario y su sell-out cae: el producto no está rotando.'],
-  vigilar:['Vigilar inventario','#ef7d00','Tiene más inventario que su objetivo, pero su sell-out crece.'],
-  quiebre:['Revisar quiebre','#ef7d00','Poco inventario y su sell-out cae: puede estar vendiendo menos por falta de producto.'],
-  ok:['Sin alerta','#4b5563','Inventario dentro de su objetivo.'],
-  sinso:['Sin sell-out','#9ca3af','No reporta sell-out o inventario recientes.']};
-var VT_SENAL={quiebre:['Riesgo de quiebre','#e41f33'],sobre:['Sobrestock','#ef7d00'],sinrot:['Sin rotación','#ef7d00']};
-
-var vtEstado={kam:'',canal:'',vista:'clientes',modo:'plan',unidad:'$',vent:3,
-  seg:'',q:'',qp:'',bu:'',marca:'',orden:'',ficha:null,topeProd:60};
-var vtMod=null;                      // modelo derivado; se invalida con datos, filtros, unidad o ventana
+var vtEstado={modo:'plan',unidad:'$',vent:3};   // switches del resumen: vs plan / vs sell-out y $ / #
+var vtMod=null;                      // modelo derivado; se invalida con datos o unidad
 var vtSO=null,vtH=null,vtPM=null;    // índices por carga (sell-out, histórico, PLANTILLA)
-var vtListaVista=[],vtProdVista=[],vtVistaProdCli=[];   // lo que se ve (clic → ficha, CSV)
 
 /* ══════════ Calendario: días hábiles de Colombia ══════════ */
 function vtPascua(y){   // algoritmo de Meeus/Jones/Butcher (calendario gregoriano)
@@ -158,7 +141,7 @@ function vtU(x,campo){return vtEstado.unidad==='#'?(x[campo+'U']||0):(x[campo]||
 
 /* Ventana de meses cerrados del modo "vs sell-out": termina en el último mes con
    sell-out en 'Data'. vent = 1 | 3 | 'anio'. */
-/* op (opcional, lo usa Ventas 3.0 con sus meses): {vent: 1 | 3 | 'anio'} relativo al último
+/* op (opcional, lo usa la pestaña Ventas con sus meses): {vent: 1 | 3 | 'anio'} relativo al último
    mes con sell-out, o {k0, k1} meses exactos (k1 se recorta al último mes con sell-out). */
 function vtVentana(op){
   var k1=vtSO&&vtSO.kMax>=0?vtSO.kMax:-1;
@@ -219,14 +202,6 @@ function vtAccion(inv,so){
   if(inv==='bajo')return so==='cae'?'quiebre':'empujar';
   return so==='crece'?'oportunidad':'ok'}
 
-/* Señal por producto (dentro de un cliente, con los meses del cliente). */
-function vtSenal(r,obj){
-  if(!r||r.sinDatos||r.kInv==null||r.kInv<0)return'';
-  if(r.promSOInv>0&&(r.dohRep==null||r.dohRep<obj*VT_BAJO))return'quiebre';
-  if(r.dohRep!=null&&r.dohRep>obj*VT_SOBRE_PROD)return'sobre';
-  if(!(r.promSOInv>0)&&r.inv>0)return'sinrot';
-  return''}
-
 function vtObjetivo(sap){
   var d=sivsoData&&sivsoData.doh?sivsoData.doh[sap]:null;
   return d>0?{d:d,def:false}:{d:VT_DOH_DEF,def:true}}
@@ -263,7 +238,6 @@ function vtCalcCliente(u,av,w){
   if(!x.sal.sinDatos&&av.k-x.sal.kSO>VT_SO_REZAGO)x.sal.viejo=true;
   x.eInv=vtEstadoInv(x.sal,x.obj);x.eSO=vtEstadoSO(x.sal);
   x.acc=vtAccion(x.eInv,x.eSO);
-  // Para el resumen de su ficha en modo "vs sell-out" (mismos campos que vtTotales).
   x.conSO=(!x.sal.sinDatos&&!x.sal.viejo)?1:0;
   var hayInv=x.conSO&&x.sal.kInv>=0&&x.sal.dohRep!=null;
   x.inv=hayInv?x.sal.inv:0;x.invU=hayInv?x.sal.invU:0;x.dohRep=hayInv?x.sal.dohRep:null;
@@ -276,11 +250,11 @@ function vtCalcCliente(u,av,w){
 
 /* Venta -1 de los clientes que NO están en la cartera de CUMPLIMIENTO (perdidos, los que
    solo salen en PLANTILLA o en el Histórico, los que solo reportan sell-out),
-   filtrado por KAM/canal: el total "Δ% vs Venta -1" debe incluirlos, como en Ventas MTD
-   (si no, perder un cliente se vería como crecimiento). `pasa` = filtro de cliente (por
-   defecto KAM/canal de esta pestaña; Ventas 3.0 pasa el suyo). */
+   con el mismo filtro de clientes: el total "Δ% vs Venta -1" debe incluirlos, como en Ventas MTD
+   (si no, perder un cliente se vería como crecimiento). `pasa` = filtro de cliente (la pestaña
+   Ventas pasa el suyo: KAM y clientes elegidos); sin él, todos. */
 function vtA1Fuera(todos,pasa){
-  var conMes={},o={a1:0,a1Prev:0,a1Mes:0};pasa=pasa||vtPasa;
+  var conMes={},o={a1:0,a1Prev:0,a1Mes:0};pasa=pasa||function(){return true};
   todos.forEach(function(x){if(x.u.m)conMes[x.id]=1});
   (typeof mtdUlista!=='undefined'?mtdUlista:[]).forEach(function(u){
     if(conMes[u.id]||!pasa(u))return;
@@ -308,100 +282,40 @@ function vtTotales(filas,fuera){
   t.dohRep=t.promSOInv>0?t.inv/(t.promSOInv/30):null;
   return t}
 
-function vtPasa(u){return(!vtEstado.kam||u.kam===vtEstado.kam)&&(!vtEstado.canal||u.canal===vtEstado.canal)}
-
-/* opVent (opcional): ventana de sell-out propia (ver vtVentana); así el modelo se arma
-   aparte y no toca el de esta pestaña (vtMod). */
+/* Modelo de TODOS los clientes (el filtro de KAM y clientes lo aplica quien pinta).
+   opVent (opcional): ventana de sell-out propia (ver vtVentana); así el modelo se arma
+   aparte y no se guarda en vtMod. */
 function vtModelo(opVent){
   if(vtMod&&!opVent)return vtMod;
   var av=vtAvance();
   vtIndexar(av);
   var w=vtVentana(opVent);
   var todos=vtUniverso(av).map(function(u){return vtCalcCliente(u,av,w)});
-  var filas=todos.filter(function(x){return vtPasa(x.u)});
-  var M={av:av,w:w,todos:todos,filas:filas,tot:vtTotales(filas,vtA1Fuera(todos)),prods:null};
+  var M={av:av,w:w,todos:todos,tot:vtTotales(todos,vtA1Fuera(todos))};
   if(!opVent)vtMod=M;
   return M}
 
-/* Productos del contexto (KAM/canal): PLANTILLA del mes + sell-in/sell-out de la
-   ventana + inventario reportado por cliente × producto. Se calcula solo al abrir
-   Productos o una ficha. */
-function vtModeloProductos(){
-  var M=vtModelo();if(M.prods)return M.prods;
-  var g={},w=M.w;
-  M.filas.forEach(function(x){
-    var pm=vtPM[x.id]||{},ok=x.u.so&&!x.sal.sinDatos&&!x.sal.viejo,so=ok?x.u.so.prods:{},ks={};
-    Object.keys(pm).forEach(function(k){ks[k]=1});Object.keys(so).forEach(function(k){ks[k]=1});
-    Object.keys(ks).forEach(function(pk){
-      var a=pm[pk],s=so[pk],info=vtSO&&vtSO.prod[pk];
-      var p=g[pk]||(g[pk]={pk:pk,nombre:(a&&a.nombre)||(info&&info.nombre)||pk,bu:(info&&info.bu)||'',
-        brand:(info&&info.brand)||'',venta:0,a1:0,und:0,si:0,so:0,siLY:0,soLY:0,inv:0,invU:0,promSOInv:0,
-        cliCompra:0,cliSO:0,quiebre:0,sobre:0,det:[]});
-      var r=s?vtSalud(s.mens,x.obj,x.sal.kSO,x.sal.kInv):null,v=vtSumVentana(s?s.mens:null,w);
-      if(a){p.venta+=a.v;p.a1+=a.a1;p.und+=a.u;if(a.v>0)p.cliCompra++}
-      p.si+=v.si;p.so+=v.so;p.siLY+=v.siLY;p.soLY+=v.soLY;if(v.so>0)p.cliSO++;
-      var sg='';
-      if(r&&!r.sinDatos){
-        // DOH del producto solo con los clientes que reportan inventario.
-        if(r.kInv>=0){p.inv+=r.inv;p.invU+=r.invU;p.promSOInv+=r.promSOInv}
-        sg=vtSenal(r,x.obj);if(sg==='quiebre')p.quiebre++;if(sg==='sobre')p.sobre++}
-      p.det.push({x:x,a:a||null,r:r,v:v,senal:sg})})});
-  var lista=Object.keys(g).map(function(k){var p=g[k];
-    p.dA1=p.a1>0?p.venta/p.a1-1:null;
-    p.dSO=p.soLY>0?p.so/p.soLY-1:null;
-    p.doh=p.promSOInv>0?p.inv/(p.promSOInv/30):null;return p})
-    .filter(function(p){return p.venta||p.a1||p.si||p.so||p.inv});
-  M.prods={lista:lista,idx:g};
-  return M.prods}
-
-/* ══════════ Estado, filtros y navegación ══════════ */
+/* ══════════ Estado (los switches del resumen se recuerdan) ══════════ */
 function vtGuardar(){
-  try{localStorage.setItem(VT_LS,JSON.stringify({kam:vtEstado.kam,canal:vtEstado.canal,vista:vtEstado.vista,
-    modo:vtEstado.modo,unidad:vtEstado.unidad,vent:vtEstado.vent}))}catch(e){}}
+  try{localStorage.setItem(VT_LS,JSON.stringify({modo:vtEstado.modo,unidad:vtEstado.unidad,vent:vtEstado.vent}))}catch(e){}}
 function vtRestaurar(){
   try{var g=JSON.parse(localStorage.getItem(VT_LS)||'null');
-    if(g){vtEstado.kam=g.kam||'';vtEstado.canal=g.canal||'';vtEstado.vista=g.vista==='productos'?'productos':'clientes';
-      vtEstado.modo=g.modo==='so'?'so':'plan';vtEstado.unidad=g.unidad==='#'?'#':'$';
+    if(g){vtEstado.modo=g.modo==='so'?'so':'plan';vtEstado.unidad=g.unidad==='#'?'#':'$';
       vtEstado.vent=(g.vent===1||g.vent===3||g.vent==='anio')?g.vent:3}}
   catch(e){}}
 vtRestaurar();
 
-function vtAlEntrar(){
-  if(ventasMtdData===null&&!mtdCargando)cargarVentasMtd();
-  if(typeof sivsoData!=='undefined'&&sivsoData===null&&!sivsoCargando&&typeof cargarSIvsSO==='function')cargarSIvsSO();
-  vtRender()}
-
-/* Lo llaman onVentasMtdCargado / onSIvsSOCargado (y sus errores). Ventas 3.0 muestra
-   el mismo resumen del mes arriba (vt3PintarResumen). */
+/* Lo llaman onVentasMtdCargado / onSIvsSOCargado (y sus errores): repinta el resumen
+   del mes de la pestaña Ventas (vt3PintarResumen). */
 function vtDatosListos(){
   vtSO=vtH=vtPM=vtMod=null;
-  if(mtdVistaActiva==='ventas')vtRender();
   if(mtdVistaActiva==='ventas3'&&typeof vt3PintarResumen==='function')vt3PintarResumen()}
 
+/* Vuelve a leer Ventas MTD y SI vs SO (botón "Actualizar" de la pestaña Ventas). */
 function vtActualizar(){
   vtSO=vtH=vtPM=vtMod=null;
   cargarVentasMtd(true);
-  if(typeof cargarSIvsSO==='function')cargarSIvsSO(true);
-  vtRender()}
-
-function vtSetKam(v){vtEstado.kam=v;vtEstado.seg='';vtMod=null;vtEstado.ficha=null;vtGuardar();vtRender()}
-function vtSetCanal(v){vtEstado.canal=v;vtEstado.seg='';vtMod=null;vtEstado.ficha=null;vtGuardar();vtRender()}
-function vtSetModo(m){vtEstado.modo=m;vtEstado.orden='';vtGuardar();vtRender()}
-function vtSetUnidad(u){vtEstado.unidad=u;vtMod=null;vtGuardar();vtRender()}
-function vtSetVent(v){vtEstado.vent=v;vtMod=null;vtGuardar();vtRender()}
-function vtVer(v){vtEstado.vista=v;vtEstado.ficha=null;vtGuardar();vtRender();vtArriba()}
-function vtSetSeg(s){vtEstado.seg=vtEstado.seg===s?'':s;vtRender()}
-function vtSetOrden(o){vtEstado.orden=o;vtRender()}
-function vtBuscar(q){vtEstado.q=q;vtPintarLista()}
-function vtBuscarProd(q){vtEstado.qp=q;vtEstado.topeProd=60;vtPintarProductos()}
-function vtSetBu(b){vtEstado.bu=vtEstado.bu===b?'':b;vtEstado.topeProd=60;vtPintarProductos()}
-function vtSetMarca(m){vtEstado.marca=m;vtEstado.topeProd=60;vtPintarProductos()}
-function vtMasProd(){vtEstado.topeProd+=100;vtPintarProductos()}
-function vtAbrirCliente(i){var x=vtListaVista[i];if(!x)return;vtEstado.ficha={tipo:'cliente',id:x.id};vtRender();vtArriba()}
-function vtAbrirClienteId(id){vtEstado.ficha={tipo:'cliente',id:id};vtRender();vtArriba()}
-function vtAbrirProducto(pk){vtEstado.ficha={tipo:'producto',pk:pk};vtRender();vtArriba()}
-function vtCerrarFicha(){vtEstado.ficha=null;vtRender()}
-function vtArriba(){var v=document.getElementById('vistaVentas');if(v&&v.scrollTo)v.scrollTo(0,0)}
+  if(typeof cargarSIvsSO==='function')cargarSIvsSO(true)}
 
 /* ══════════ Formato ══════════ */
 function vtCorto(n){   // "ANGELICA MONSALVE" → "Angelica Monsalve"
@@ -421,10 +335,6 @@ function vtDeltaAbs(v){
 function vtDeltaUnd(v){
   if(v==null||!isFinite(v))return'<span class="vt-na">–</span>';
   return'<span class="'+(v>=0?'vt-pos':'vt-neg')+'">'+(v>0?'+':v<0?'−':'')+FMT.format(Math.round(Math.abs(v)))+' und</span>'}
-function vtChip(acc){var a=VT_ACC[acc]||VT_ACC.ok;
-  return'<span class="vt-chip" title="'+esc(a[2])+'"><span class="d" style="background:'+a[1]+'"></span><span class="t">'+esc(a[0])+'</span></span>'}
-function vtChipSenal(s){if(!s)return'';var a=VT_SENAL[s];
-  return'<span class="vt-chip"><span class="d" style="background:'+a[1]+'"></span>'+esc(a[0])+'</span>'}
 /* "Sell-out e inventario valorizados a PVL": asterisco discreto. */
 var VT_PVL='<span class="vt-pvl" title="Sell-out e inventario valorizados a PVL (precio de venta del laboratorio)">*</span>';
 var VT_PVL_NOTA='<div class="vt-pvl-nota">* Sell-out e inventario valorizados a PVL.</div>';
@@ -437,71 +347,10 @@ var VT_PVL_NOTA='<div class="vt-pvl-nota">* Sell-out e inventario valorizados a 
 function vtBarraDatos(x,modo){
   if(modo==='so')return{pista:x.si,rayado:x.soLY,barra:x.so,raya:null,color:'var(--accent)'};
   return{pista:x.plan,rayado:x.a1Mes,barra:x.real,raya:x.a1>0?x.a1:null,color:'var(--ink)'}}
-function vtBullet(x,modo){
-  var b=vtBarraDatos(x,modo),max=Math.max(b.pista||0,b.rayado||0,b.barra||0)*1.02;
-  if(!(max>0))return'<div class="vt-bul vacio"></div>';
-  function p(v){return(Math.max(0,Math.min(1,v/max))*100).toFixed(1)+'%'}
-  return'<div class="vt-bul">'+(b.pista>0?'<span class="pista" style="width:'+p(b.pista)+'"></span>':'')+
-    (b.rayado>0?'<span class="rayado" style="width:'+p(b.rayado)+'"></span>':'')+
-    '<span class="barra" style="width:'+p(b.barra)+';background:'+b.color+'"></span>'+
-    (b.raya?'<span class="raya" style="left:'+p(b.raya)+'"></span>':'')+'</div>'}
-
-/* ══════════ Render ══════════ */
-function vtRender(){
-  var cuerpo=document.getElementById('vtCuerpo');if(!cuerpo)return;
-  vtPintarSeg();
-  if(!ventasMtdData){
-    cuerpo.innerHTML=mtdErrorCarga?
-      '<div class="card mtd-estado"><b>No pude cargar las ventas.</b><br>'+esc(mtdErrorCarga)+
-        '<br><button class="btn" style="margin-top:10px" onclick="vtActualizar()">Reintentar</button></div>':
-      '<div class="mtd-estado"><span class="mtd-spinner"></span>Cargando ventas…</div>';
-    vtPintarControles(null);
-    return}
-  var M=vtModelo();
-  // Un KAM/canal recordado que ya no existe se descarta y el modelo se rehace.
-  if(vtPintarControles(M)){M=vtModelo();vtPintarControles(M)}
-  if(vtEstado.ficha&&vtEstado.ficha.tipo==='cliente'){vtRenderFichaCliente(M);return}
-  if(vtEstado.ficha&&vtEstado.ficha.tipo==='producto'){vtRenderFichaProducto(M);return}
-  if(vtEstado.vista==='productos'){vtRenderProductos(M);return}
-  vtRenderClientes(M)}
-
-function vtPintarSeg(){
-  ['clientes','productos'].forEach(function(v){
-    var b=document.getElementById('vtSeg'+(v==='clientes'?'Clientes':'Productos'));
-    if(b){b.classList.toggle('activo',vtEstado.vista===v);
-      b.setAttribute('aria-selected',vtEstado.vista===v?'true':'false')}})}
-
-/* Selectores de KAM y Canal (nativos: en el celular abren el selector del sistema). */
-function vtPintarControles(M){
-  var sk=document.getElementById('vtKam'),sc=document.getElementById('vtCanal');
-  var sub=document.getElementById('vtSub');
-  if(!M){if(sub)sub.innerText='';return false}
-  var kams={},canales={};
-  M.todos.forEach(function(x){
-    if(!vtEstado.canal||x.canal===vtEstado.canal)kams[x.kam]=(kams[x.kam]||0)+1;
-    if(!vtEstado.kam||x.kam===vtEstado.kam)canales[x.canal]=(canales[x.canal]||0)+1});
-  var reset=false;
-  if(vtEstado.kam&&!kams[vtEstado.kam]){vtEstado.kam='';reset=true}
-  if(vtEstado.canal&&!canales[vtEstado.canal]){vtEstado.canal='';reset=true}
-  if(reset){vtMod=null;return true}
-  function ops(obj,sel,todos){
-    return'<option value="">'+todos+'</option>'+Object.keys(obj).sort(function(a,b){return a.localeCompare(b,'es')})
-      .map(function(k){return'<option value="'+esc(k)+'"'+(k===sel?' selected':'')+'>'+esc(vtCorto(k))+' ('+obj[k]+')</option>'}).join('')}
-  if(sk)sk.innerHTML=ops(kams,vtEstado.kam,'Todos los KAM');
-  if(sc)sc.innerHTML=ops(canales,vtEstado.canal,'Todos los canales');
-  var av=M.av;
-  if(sub)sub.innerHTML=esc(MTD_MESES_LARGO[av.mes-1]+' '+av.anio)+' · '+
-    (av.cerrado?'mes cerrado':'día hábil <b>'+av.trans+'</b> de '+av.tot)+
-    ' · <span title="Día anterior a la última modificación del libro de Ventas MTD">ventas al '+
-    esc(av.fecha.toLocaleDateString('es-CO',{weekday:'short',day:'numeric',month:'short'}))+'</span>'+
-    (M.w?' · sell-out a '+esc(vtMesEtq(M.w.k1)):'');
-  return false}
-
-/* Switch de la barra (vs plan / vs sell-out) + unidad ($/#) + ventana de meses.
-   conModo=false (Productos y su ficha): sin el switch de la barra y con unidad y
-   ventana siempre activas, porque esas tablas muestran sell-in y sell-out.
-   op (opcional, Ventas 3.0): {pre: prefijo de los manejadores (aquí 'vt'), sinVentana: sin el
-   selector de meses (Ventas 3.0 usa los meses de su panel lateral)}. */
+/* Switch del resumen (vs plan / vs sell-out) + unidad ($/#) + ventana de meses.
+   conModo=false: sin el switch vs plan / vs sell-out y con unidad y ventana siempre activas.
+   op: {pre: prefijo de los manejadores (la pestaña Ventas pasa 'vt3Res'), sinVentana: sin el
+   selector de meses (la pestaña Ventas usa los meses de su panel lateral)}. */
 function vtHtmlSwitches(conModo,op){
   if(conModo===undefined)conModo=true;
   var pre=(op&&op.pre)||'vt',conVentana=!(op&&op.sinVentana);
@@ -516,31 +365,8 @@ function vtHtmlSwitches(conModo,op){
       b(vtEstado.vent==='anio','Año',"SetVent('anio')")+'</div>':'')+
   '</div>'}
 
-/* ── Vista Clientes: resumen + matriz + mensual + lista ── */
-function vtRenderClientes(M){
-  var soListo=!!vtSO,modo=vtEstado.modo;
-  var titulo=vtEstado.kam?'Cartera de '+vtCorto(vtEstado.kam):'Todos los clientes';
-  var ordenes=modo==='so'?
-    [['so','Mayor sell-out'],['dso','Peor Δ% sell-out'],['ratio','Menor sell-out ÷ sell-in'],['doh','Más días de inventario'],['nombre','Nombre A→Z']]:
-    [['falta','Mayor falta para el plan'],['venta','Mayor venta'],['plan','Mayor plan'],['cumpl','Menor % del plan'],
-     ['da1','Peor Δ% vs Venta -1'],['doh','Más días de inventario'],['nombre','Nombre A→Z']];
-  if(!vtEstado.orden||!ordenes.some(function(o){return o[0]===vtEstado.orden}))vtEstado.orden=ordenes[0][0];
-  var h='<div class="vt-inicio">'+
-    '<div class="vt-col-a">'+vtHtmlHero(M.tot,M,titulo,M.filas.length)+
-      '<section class="card vt-lista-card"><div class="vt-lista-cab"><h3>Clientes</h3>'+
-        '<span class="vt-acciones"><select class="vt-orden" onchange="vtSetOrden(this.value)" aria-label="Ordenar">'+
-          ordenes.map(function(o){return'<option value="'+o[0]+'"'+(vtEstado.orden===o[0]?' selected':'')+'>'+o[1]+'</option>'}).join('')+
-        '</select><button class="mtd-btn-csv" onclick="vtCsvClientes()" title="Descargar la lista">⬇ CSV</button></span></div>'+
-        '<div class="vt-segs" id="vtSegs"></div>'+
-        '<input type="search" class="vt-buscar" placeholder="Buscar cliente…" value="'+esc(vtEstado.q)+'" oninput="vtBuscar(this.value)">'+
-        (soListo?'':'<div class="vt-nota"><span class="mtd-spinner"></span>Cargando sell-out e inventario…</div>')+
-        '<div id="vtLista"></div></section></div>'+
-    '<div class="vt-col-b">'+vtHtmlMatriz(M)+vtHtmlMensual(M)+vtHtmlNotas(M)+'</div></div>';
-  document.getElementById('vtCuerpo').innerHTML=h;
-  vtPintarLista()}
-
-/* Resumen (cartera completa o un cliente, en su ficha). n = null en la ficha.
-   op = opciones de sus switches (ver vtHtmlSwitches; Ventas 3.0 pasa las suyas). */
+/* Resumen del mes (cartera, KAM o clientes elegidos); n = número de clientes (null: sin rótulo).
+   op = opciones de sus switches (ver vtHtmlSwitches). */
 function vtHtmlHero(t,M,titulo,n,op){
   var av=M.av,so=vtEstado.modo==='so';
   function stat(etq,val,det){return'<div class="vt-stat"><div class="vt-etq">'+etq+'</div><div class="vt-num-m">'+val+'</div>'+
@@ -565,9 +391,13 @@ function vtHtmlHero(t,M,titulo,n,op){
   return'<section class="card vt-hero">'+cab+
     '<div class="vt-hero-top"><div><div class="vt-etq">Venta del mes</div>'+
       '<div class="vt-num-xl">'+mtdMoneda(t.real)+'</div>'+
-      '<div class="vt-det">'+(t.plan>0?'de '+mtdMoneda(t.plan)+' de plan · <b>'+vtPct(t.cumpl)+'</b> cumplido':'sin plan este mes')+'</div></div>'+
-      '<div class="vt-hero-der"><div class="vt-etq">Δ% vs Venta -1</div><div class="vt-num-l">'+vtDelta(t.dA1)+'</div>'+
-        '<div class="vt-det">'+(t.a1>0?'Δ '+vtDeltaAbs(t.dA1Abs)+' · Venta -1 '+mtdMonedaCorta(t.a1)+(av.cerrado?'':' (a la misma fecha)'):'sin Venta -1')+
+      '<div class="vt-det">'+(t.plan>0?'de '+mtdMoneda(t.plan)+' de plan':'sin plan este mes')+'</div></div>'+
+      // La cifra grande de la derecha es el % de cumplimiento del plan (pedido del usuario
+      // 2026-10-13: es lo primero que debe verse); el Δ% vs Venta -1 pasa a su detalle.
+      // Sin color: no hay un "esperado a hoy" contra el cual juzgarlo (solo datos reales).
+      '<div class="vt-hero-der"><div class="vt-etq">% cumplimiento del plan</div><div class="vt-num-l">'+(t.plan>0?vtPct(t.cumpl):'–')+'</div>'+
+        '<div class="vt-det">'+(t.a1>0?'Δ% vs Venta -1 '+vtDelta(t.dA1)+' · Δ '+vtDeltaAbs(t.dA1Abs)+' · Venta -1 '+mtdMonedaCorta(t.a1)+
+          (av.cerrado?'':' (a la misma fecha)'):'sin Venta -1')+
         '</div></div></div>'+
     barra+
     '<div class="vt-stats">'+
@@ -610,385 +440,4 @@ function vtHtmlHeroSO(t,M,cab,stat,n){
       stat('Reportan sell-out',(n==null?(t.conSO?'Sí':'No'):t.conSO+' de '+n),'clientes con sell-out reciente')+
     '</div>'+VT_PVL_NOTA+'</section>'}
 
-/* Matriz: inventario reportado (filas) × tendencia del sell-out (columnas). */
-function vtHtmlMatriz(M){
-  if(!vtSO)return'<section class="card vt-matriz-card"><h3>¿Empujar pedido o activar sell-out?</h3>'+
-    '<div class="vt-nota"><span class="mtd-spinner"></span>'+
-    (sivsoErrorCarga?'No pude cargar el sell-out: '+esc(sivsoErrorCarga):'Cargando sell-out e inventario…')+'</div></section>';
-  var celdas={},sinSo=0,sinBase=0;
-  M.filas.forEach(function(x){
-    if(x.eInv==='sindatos'){sinSo++;return}
-    if(x.eSO==='sinbase'){sinBase++;return}
-    var k=x.eInv+':'+x.eSO,z=celdas[k]||(celdas[k]={n:0,so:0});
-    z.n++;z.so+=x.sal.so3||0});
-  function celda(inv,so,acc){
-    var z=celdas[inv+':'+so]||{n:0},k='m:'+inv+':'+so,sel=vtEstado.seg===k,a=VT_ACC[acc];
-    return'<button type="button" class="vt-m-celda'+(sel?' sel':'')+(z.n?'':' vacia')+'" onclick="vtSetSeg(\''+k+'\')"'+
-      (z.n?'':' disabled')+' title="'+esc(a[2])+'">'+
-      '<span class="acc"><span class="d" style="background:'+a[1]+'"></span>'+esc(a[0])+'</span>'+
-      '<span class="n">'+z.n+'</span><span class="det">'+(z.n?mtdMonedaCorta(z.so)+' de sell-out en 3 meses':'')+'</span></button>'}
-  return'<section class="card vt-matriz-card"><h3>¿Empujar pedido o activar sell-out?</h3>'+
-    '<div class="hint">Días de inventario que reporta cada cliente contra su objetivo (filas) y su sell-out de los últimos 3 meses '+
-      'reportados contra los mismos meses del año anterior (columnas). Clic en una casilla para ver esos clientes.</div>'+
-    '<div class="vt-matriz">'+
-      '<span></span><span class="vt-m-col">Sell-out crece</span><span class="vt-m-col">Sell-out cae</span>'+
-      '<span class="vt-m-fila">Sobre-<br>inventario</span>'+celda('alto','crece','vigilar')+celda('alto','cae','activar')+
-      '<span class="vt-m-fila">Inventario<br>sano</span>'+celda('sano','crece','oportunidad')+celda('sano','cae','ok')+
-      '<span class="vt-m-fila">Bajo<br>inventario</span>'+celda('bajo','crece','empujar')+celda('bajo','cae','quiebre')+
-    '</div>'+
-    ((sinSo||sinBase)?'<div class="vt-m-pie">'+(sinSo?'<button type="button" class="vt-link" onclick="vtSetSeg(\'sinso\')">'+sinSo+
-      (sinSo===1?' cliente':' clientes')+' sin sell-out reciente</button>':'')+(sinSo&&sinBase?' · ':'')+
-      (sinBase?'<button type="button" class="vt-link" onclick="vtSetSeg(\'sinbase\')">'+sinBase+' sin año anterior para comparar</button>':'')+'</div>':'')+
-  '</section>'}
-
-/* Sell-in vs sell-out por mes de la cartera (hoja Data), con los días de inventario. */
-function vtHtmlMensual(M){
-  if(!vtSO||!M.w)return'';
-  var mens={};
-  M.filas.forEach(function(x){
-    if(!x.u.so)return;
-    Object.keys(x.u.so.mens).forEach(function(k){var a=x.u.so.mens[k],z=mens[k]||(mens[k]={si:0,so:0,inv:0,siU:0,soU:0,invU:0,inv1:0});
-      z.si+=a.si;z.so+=a.so;z.siU+=a.siU;z.soU+=a.soU;if(a.inv1){z.inv+=a.inv;z.invU+=a.invU;z.inv1=1}})});
-  return'<section class="card mtd-panel vt-mensual"><h3>Sell-in vs sell-out por mes</h3>'+
-    '<div class="hint">Cartera filtrada · hoja Data · '+(vtEstado.unidad==='#'?'unidades':'pesos')+'</div>'+
-    vtGrafMeses(vtSerieData(mens,M.w.k1))+VT_PVL_NOTA+'</section>'}
-
-/* 12 meses de Data que terminan en kFin: sell-in, sell-out y DOH (si hay foto). */
-function vtSerieData(mens,kFin){
-  var s=[];
-  for(var k=kFin-11;k<=kFin;k++){var d=mens[k]||{};
-    s.push({k:k,si:vtU(d,'si'),so:vtU(d,'so'),doh:vtDohMes(mens,k)})}
-  return s}
-function vtDohMes(mens,k){
-  var x=mens[k];if(!x||!x.inv1)return null;
-  var s=0;for(var j=k-VT_PROM_N+1;j<=k;j++)s+=mens[j]?mens[j].so:0;
-  s/=VT_PROM_N;return s>0?x.inv/(s/30):null}
-
-/* Barras pareadas (sell-in oscuro · sell-out rojo), etiquetas directas y DOH abajo. */
-function vtGrafMeses(serie){
-  var max=0;serie.forEach(function(m){max=Math.max(max,m.si,m.so)});
-  if(max<=0)return'<div class="mtd-vacio">Sin datos en los últimos 12 meses</div>';
-  var ALTO=140,esc_=ALTO/(max*1.12),hayDoh=serie.some(function(m){return m.doh!=null});
-  function corta(v){return vtEstado.unidad==='#'?FMT.format(Math.round(v/1000))+'k':mtdMonedaCorta(v).replace('$','')}
-  var h=serie.map(function(m){
-    var si=Math.round(Math.max(0,m.si)*esc_),so=Math.round(Math.max(0,m.so)*esc_);
-    return'<div class="vt-g-col" title="'+esc(vtMesEtq(m.k)+' · sell-in '+vtCantLarga(m.si)+' · sell-out '+vtCantLarga(m.so)+
-      (m.doh!=null?' · '+Math.round(m.doh)+' días de inventario':''))+'">'+
-      '<div class="vt-g-val">'+(m.so?corta(m.so):'')+'</div>'+
-      '<div class="vt-g-par" style="height:'+ALTO+'px">'+
-        '<div class="vt-g-bar si" style="height:'+si+'px"></div>'+
-        '<div class="vt-g-bar so" style="height:'+so+'px"></div></div>'+
-      '<div class="vt-g-mes">'+MTD_MESES[m.k%12]+'</div>'+
-      (hayDoh?'<div class="vt-g-doh">'+(m.doh!=null?Math.round(m.doh):'')+'</div>':'')+'</div>'}).join('');
-  return'<div class="vt-graf">'+(hayDoh?'<div class="vt-g-dohetq">DOH</div>':'')+h+'</div>'+
-    '<div class="hist-legend"><span class="it"><span class="sw-venta"></span>Sell-in</span>'+
-    '<span class="it"><span class="sw-so"></span>Sell-out</span>'+
-    (hayDoh?'<span class="it">DOH = días de inventario reportados al cierre del mes</span>':'')+'</div>'}
-
-function vtHtmlNotas(M){
-  var defs=M.filas.filter(function(x){return x.objDef&&!x.sal.sinDatos}).length;
-  return'<section class="card vt-notas"><h3>Cómo leer esta vista</h3><ul>'+
-    '<li><b>vs plan</b>: la barra sólida es la venta del mes, el gris el plan y lo <b>rayado</b> el mismo mes del año pasado completo; '+
-      'la raya negra, lo que se llevaba el año pasado a la misma fecha.</li>'+
-    '<li><b>vs sell-out</b>: la barra roja es el sell-out, el gris el sell-in de los mismos meses y lo rayado el sell-out del año anterior.</li>'+
-    '<li><b>Venta -1</b> = lo vendido el año pasado <i>a la misma fecha</i>; <b>Δ%</b> = crecimiento o decrecimiento contra ella.</li>'+
-    '<li><b>Inventario</b> = días de inventario <i>reportados</i> por el cliente en su último mes, contra su objetivo de la hoja Info SO-INV'+
-      (defs?' ('+defs+' sin objetivo: se usan '+VT_DOH_DEF+' días)':'')+'.</li></ul></section>'}
-
-/* Lista (se repinta sola al buscar, sin rehacer la vista). */
-function vtFiltrarLista(M){
-  var seg=vtEstado.seg,q=normTxt(vtEstado.q||'');
-  return M.filas.filter(function(x){
-    if(q&&normTxt(x.cliente).indexOf(q)===-1)return false;
-    if(!seg)return true;
-    if(seg==='sinso')return x.eInv==='sindatos';
-    if(seg==='sinbase')return x.eInv!=='sindatos'&&x.eSO==='sinbase';
-    if(seg.indexOf('m:')===0){var p=seg.split(':');return x.eInv===p[1]&&x.eSO===p[2]}
-    return x.acc===seg})}
-
-function vtOrdenar(l){
-  function num(f,dir){return function(a,b){var x=f(a),y=f(b),nx=x==null||!isFinite(x),ny=y==null||!isFinite(y);
-    if(nx||ny)return nx&&ny?0:(nx?1:-1);return dir*(y-x)}}
-  var cmp={falta:num(function(x){return x.plan>0?x.falta:null},1),venta:num(function(x){return x.real},1),
-    plan:num(function(x){return x.plan},1),cumpl:num(function(x){return x.cumpl},-1),
-    da1:num(function(x){return x.dA1},-1),so:num(function(x){return x.so},1),
-    dso:num(function(x){return x.dSO},-1),ratio:num(function(x){return x.ratio},-1),
-    doh:num(function(x){return x.eInv==='sindatos'?null:x.sal.dohRep},1),
-    nombre:function(a,b){return a.cliente.localeCompare(b.cliente,'es')}}[vtEstado.orden]||function(){return 0};
-  return l.slice().sort(function(a,b){var r=cmp(a,b);return r||(b.real-a.real)})}
-
-function vtPintarLista(){
-  var M=vtModelo(),cont=document.getElementById('vtLista');if(!cont)return;
-  vtPintarSegs(M);
-  var l=vtOrdenar(vtFiltrarLista(M)),so=vtEstado.modo==='so';
-  vtListaVista=l;
-  if(!l.length){cont.innerHTML='<div class="mtd-vacio">Sin clientes con este filtro</div>';return}
-  cont.innerHTML='<div class="vt-fila vt-fila-cab" aria-hidden="true"><span>Cliente</span>'+
-    (so?'<span>Sell-out · sell-in · año anterior</span><span>Sell-in</span><span>Sell-out</span><span>SO ÷ SI</span><span>Δ% sell-out</span>':
-        '<span>Venta · plan · Venta -1</span><span>Venta</span><span>% plan</span><span>Δ% Venta -1</span><span>Falta</span>')+
-    '<span>Inventario</span><span>Acción</span></div>'+
-    l.map(function(x,i){return vtHtmlFila(x,i,M.av)}).join('')}
-
-function vtPintarSegs(M){
-  var cont=document.getElementById('vtSegs');if(!cont)return;
-  var n={};M.filas.forEach(function(x){n[x.acc]=(n[x.acc]||0)+1});
-  var segs=[['','Todos',M.filas.length]].concat(['empujar','oportunidad','activar','vigilar','quiebre']
-    .map(function(a){return[a,VT_ACC[a][0],n[a]||0]}));
-  var s=vtEstado.seg,extra='';
-  if(s.indexOf('m:')===0||s==='sinso'||s==='sinbase'){
-    var p=s.split(':'),et=s==='sinso'?'Sin sell-out reciente':(s==='sinbase'?'Sin año anterior para comparar':
-      ({alto:'Sobreinventario',sano:'Inventario sano',bajo:'Bajo inventario'}[p[1]]+' · sell-out '+p[2]));
-    extra='<button type="button" class="chip-filtro" onclick="vtSetSeg(\''+s+'\')" title="Quitar filtro">'+esc(et)+
-      '<span class="x" aria-hidden="true">×</span></button>'}
-  cont.innerHTML=segs.filter(function(g){return g[0]===''||g[2]>0}).map(function(g){
-    return'<button type="button" class="chip-periodo'+(s===g[0]?' activo':'')+'" onclick="vtSetSeg(\''+g[0]+'\')">'+
-      esc(g[1])+' <span class="vt-cnt">'+g[2]+'</span></button>'}).join('')+extra}
-
-function vtHtmlFila(x,i,av){
-  var so=vtEstado.modo==='so',inv='–',invDet='';
-  if(x.sal.sinDatos)invDet='sin sell-out';
-  else if(x.sal.viejo)invDet='reporta hasta '+vtMesEtq(x.sal.kSO);
-  else if(x.sal.dohRep==null)invDet='sin inventario';
-  else{inv=vtDias(x.sal.dohRep);invDet=vtMesEtq(x.sal.kInv)+' · objetivo '+x.obj+' d'}
-  function c(cls,etq,val,det){return'<span class="vt-f-num '+cls+'" data-th="'+etq+'"><b>'+val+'</b>'+
-    (det?'<small>'+det+'</small>':'')+'</span>'}
-  var cifras=so?
-    c('v','Sell-in',vtCant(x.si),x.siLY>0?'Δ% '+vtDelta(x.dSI):'')+
-    c('r','Sell-out',vtCant(x.so),'')+
-    c('p','SO ÷ SI',vtPct(x.ratio),'')+
-    c('a','Δ% sell-out',vtDelta(x.dSO),x.soLY>0?'año ant. '+vtCant(x.soLY):'sin año anterior'):
-    c('v','Venta',mtdMonedaCorta(x.real),x.plan>0?'de '+mtdMonedaCorta(x.plan):'sin plan')+
-    c('r','% plan',x.plan>0?vtPct(x.cumpl):'–','')+
-    c('p','Δ% Venta -1',vtDelta(x.dA1),x.a1>0?'Venta -1 '+mtdMonedaCorta(x.a1):'sin Venta -1')+
-    c('a','Falta',x.plan>0?(x.falta>0?mtdMonedaCorta(x.falta):'—'):'–',x.a1Mes>0?'Venta -1 mes '+mtdMonedaCorta(x.a1Mes):'');
-  return'<button type="button" class="vt-fila" onclick="vtAbrirCliente('+i+')">'+
-    '<span class="vt-f-nom"><b>'+esc(x.cliente)+(x.interno?' <small>(interno)</small>':'')+'</b><small>'+
-      esc(vtCorto(x.kam))+' · '+esc(x.canal)+'</small></span>'+
-    '<span class="vt-f-bul">'+vtBullet(x,so?'so':'plan')+'</span>'+cifras+
-    c('i','Inventario',inv,invDet)+
-    '<span class="vt-f-acc">'+vtChip(x.acc)+'</span></button>'}
-
-/* ── Ficha de cliente ── */
-function vtRenderFichaCliente(M){
-  var id=vtEstado.ficha.id,x=null;
-  M.todos.forEach(function(y){if(y.id===id)x=y});
-  if(!x){vtEstado.ficha=null;vtRender();return}
-  var h='<div class="vt-ficha">'+
-    '<div class="vt-ficha-cab"><button class="btn" onclick="vtCerrarFicha()">← Volver</button>'+
-      '<div><h2>'+esc(x.cliente)+'</h2><span class="sub">'+esc(vtCorto(x.kam))+' · '+esc(x.canal)+
-      (x.sap?' · SAP '+esc(x.sap):'')+'</span></div><span class="vt-ficha-acc">'+vtChip(x.acc)+'</span></div>'+
-    '<div class="vt-ficha-grid">'+
-      vtHtmlHero(x,M,vtEstado.modo==='so'?'Canal':MTD_MESES_LARGO[M.av.mes-1]+' '+M.av.anio,null).replace('vt-hero"','vt-hero vt-hero-ficha"')+
-      vtHtmlCanal(x)+
-    '</div>'+
-    '<section class="card mtd-panel"><h3>Últimos 12 meses · sell-in vs sell-out</h3>'+
-      '<div class="hint">Hoja Data · lo que este cliente compra (sell-in) y lo que reporta haber vendido al consumidor (sell-out).</div>'+
-      (x.u.so&&M.w?vtGrafMeses(vtSerieData(x.u.so.mens,M.w.k1))+VT_PVL_NOTA:'<div class="mtd-vacio">Este cliente no reporta sell-out en la hoja Data</div>')+
-    '</section>'+
-    '<section class="card mtd-panel"><div class="mtd-panel-cab"><h3>Productos de este cliente</h3>'+
-      '<button class="mtd-btn-csv" onclick="vtCsvProdCliente()">⬇ CSV</button></div>'+
-      '<div class="hint" id="vtHintProdCli"></div>'+
-      '<div class="mtd-scroll vt-scroll-alto"><table class="mtd-tabla" id="vtTablaProdCli"></table></div></section>'+
-  '</div>';
-  document.getElementById('vtCuerpo').innerHTML=h;
-  vtTablaProdCliente(x,M)}
-
-/* Tarjeta "Canal e inventario": solo lo que el cliente reportó. */
-function vtHtmlCanal(x){
-  var s=x.sal,obj=x.obj;
-  if(!vtSO)return'<section class="card vt-canal"><h3>Canal e inventario</h3><div class="vt-nota"><span class="mtd-spinner"></span>Cargando sell-out…</div></section>';
-  if(s.sinDatos)return'<section class="card vt-canal"><h3>Canal e inventario</h3>'+
-    '<p class="vt-frase">Este cliente no reporta sell-out en la hoja Data.</p></section>';
-  var frase=s.viejo?'Su último sell-out reportado es de <b>'+vtMesEtq(s.kSO)+'</b>.':'';
-  if(!s.viejo){
-    frase=s.kInv>=0&&s.dohRep!=null?
-      'Su último inventario reportado (<b>'+vtMesEtq(s.kInv)+'</b>) equivale a <b>'+vtDias(s.dohRep)+'</b> de su sell-out '+
-        '(objetivo '+obj+' d'+(x.objDef?', por defecto':'')+').':
-      'Reporta sell-out pero no inventario.';
-    if(s.dSO3!=null)frase+=' Su sell-out de los últimos 3 meses (a '+vtMesEtq(s.kSO)+') va <b>'+
-      (s.dSO3>=0?'+':'')+mtdPctTxt(s.dSO3)+'</b> contra los mismos meses del año pasado.';
-    if(s.sellThrough!=null)frase+=' De cada $100 que le facturamos en los últimos 6 meses, vendió <b>$'+
-      Math.round(s.sellThrough*100)+'</b> al consumidor.'}
-  function cif(etq,val,det){return'<div class="vt-stat"><div class="vt-etq">'+etq+'</div><div class="vt-num-m">'+val+'</div>'+
-    (det?'<div class="vt-det">'+det+'</div>':'')+'</div>'}
-  return'<section class="card vt-canal"><h3>Canal e inventario</h3><p class="vt-frase">'+frase+'</p><div class="vt-stats">'+
-    cif('Sell-out promedio'+VT_PVL,mtdMonedaCorta(s.promSO),'por mes · 3 meses a '+vtMesEtq(s.kSO))+
-    cif('Inventario reportado'+VT_PVL,s.kInv>=0?mtdMonedaCorta(s.inv):'–',s.kInv>=0?'al cierre de '+vtMesEtq(s.kInv):'sin foto')+
-    cif('Días de inventario',vtDias(s.dohRep),'objetivo '+obj+' d')+
-    cif('Sell-out ÷ sell-in',vtPct(s.sellThrough),'últimos 6 meses')+
-  '</div>'+VT_PVL_NOTA+'</section>'}
-
-/* Filas de producto de un cliente (o de un producto en todos los clientes). */
-function vtFilaProd(a,r,v,obj){
-  var f={venta:a?(vtEstado.unidad==='#'?a.u:a.v):0,a1:a?a.a1:0,si:v.si,so:v.so,soLY:v.soLY,
-    inv:r&&!r.sinDatos&&r.kInv>=0?(vtEstado.unidad==='#'?r.invU:r.inv):null,
-    doh:r&&!r.sinDatos?r.dohRep:null,senal:vtSenal(r,obj)};
-  f.dA1=vtEstado.unidad!=='#'&&f.a1>0?f.venta/f.a1-1:null;
-  f.dSO=f.soLY>0?f.so/f.soLY-1:null;
-  f.ord={quiebre:3,sobre:2,sinrot:1,'':0}[f.senal];
-  return f}
-function vtColsProd(primera){
-  var und=vtEstado.unidad==='#';
-  return[primera,
-    {k:'venta',t:'Venta mes',tipo:'num',celda:function(f,t){return mtdTd(und?FMT.format(Math.round(f.venta))+' und':mtdMonedaCorta(f.venta),t)}},
-    {k:'dA1',t:'Δ% Venta -1',tipo:'num',celda:function(f,t){return mtdTd(vtDelta(f.dA1),t)}},
-    {k:'si',t:'Sell-in',tipo:'num',celda:function(f,t){return mtdTd(f.si?vtCant(f.si):'–',t)}},
-    {k:'so',t:'Sell-out',tipo:'num',celda:function(f,t){return mtdTd(f.so?vtCant(f.so):'–',t)}},
-    {k:'dSO',t:'Δ% sell-out',tipo:'num',celda:function(f,t){return mtdTd(vtDelta(f.dSO),t)}},
-    {k:'inv',t:'Inventario',tipo:'num',celda:function(f,t){return mtdTd(f.inv==null?'–':vtCant(f.inv),t)}},
-    {k:'doh',t:'Días inv.',tipo:'num',celda:function(f,t){return mtdTd(vtDias(f.doh),t)}},
-    {k:'ord',t:'Señal',tipo:'num',celda:function(f,t){return mtdTd(vtChipSenal(f.senal),t)}}]}
-
-function vtTablaProdCliente(x,M){
-  var ok=x.u.so&&!x.sal.sinDatos&&!x.sal.viejo,pm=vtPM[x.id]||{},so=ok?x.u.so.prods:{},ks={},filas=[];
-  Object.keys(pm).forEach(function(k){ks[k]=1});Object.keys(so).forEach(function(k){ks[k]=1});
-  Object.keys(ks).forEach(function(pk){
-    var a=pm[pk],s=so[pk],info=vtSO&&vtSO.prod[pk];
-    var r=s?vtSalud(s.mens,x.obj,x.sal.kSO,x.sal.kInv):null,v=vtSumVentana(s?s.mens:null,M.w);
-    var f=vtFilaProd(a,r,v,x.obj);
-    f.pk=pk;f.nombre=(a&&a.nombre)||(info&&info.nombre)||pk;
-    if(f.venta||f.a1||f.si||f.so||f.inv)filas.push(f)});
-  var q=filas.filter(function(f){return f.senal==='quiebre'}).length,sb=filas.filter(function(f){return f.senal==='sobre'}).length;
-  document.getElementById('vtHintProdCli').innerText=filas.length+' productos'+
-    (q?' · '+q+' en riesgo de quiebre':'')+(sb?' · '+sb+' con sobrestock':'')+
-    ' · venta del mes y Δ% contra la Venta -1 · sell-in y sell-out '+(M.w?M.w.etq:'')+
-    ' · días de inventario reportados · clic en un producto para verlo en todos los clientes';
-  vtVistaProdCli=filas;
-  mtdTabla({id:'vtTablaProdCli',filas:filas,orden:{k:'ord',dir:'desc'},vacio:'Sin productos',
-    alOrdenar:function(v){vtVistaProdCli=v},
-    clic:{valor:function(f){return f.pk},activo:function(){return false},haySel:function(){return false},
-      alClic:function(pk){vtAbrirProducto(pk)},titulo:'Ver este producto en todos los clientes'},
-    columnas:vtColsProd({k:'nombre',t:'Producto',tipo:'txt',celda:function(f){return'<td>'+esc(f.nombre)+'</td>'}})})}
-
-/* ── Vista Productos ── */
-var vtBuLista=[],vtProdFirma='';
-function vtRenderProductos(M){
-  var P=vtModeloProductos(),bus={},marcas={};
-  P.lista.forEach(function(p){if(p.bu)bus[p.bu.toUpperCase()]=p.bu;
-    if(p.brand&&(!vtEstado.bu||p.bu.toUpperCase()===vtEstado.bu))marcas[p.brand]=1});
-  if(vtEstado.marca&&!marcas[vtEstado.marca])vtEstado.marca='';
-  var h='<section class="card mtd-panel vt-prod-card"><div class="vt-hero-cab"><h3>Productos'+
-    (vtEstado.kam?' · cartera de '+esc(vtCorto(vtEstado.kam)):'')+'</h3>'+vtHtmlSwitches(false)+'</div>'+
-    '<div class="hint">Venta del mes (PLANTILLA) y Δ% contra la Venta -1 · sell-in y sell-out '+(M.w?esc(M.w.etq):'')+
-      ' (hoja Data) · días de inventario reportados · clic en un producto para verlo cliente por cliente.'+
-      ' <button class="mtd-btn-csv" onclick="vtCsvProductos()">⬇ CSV</button></div>'+
-    '<div class="vt-prod-filtros"><input type="search" class="vt-buscar" placeholder="Buscar producto…" value="'+esc(vtEstado.qp)+
-      '" oninput="vtBuscarProd(this.value)"><div class="vt-prod-fila"><div class="chips-periodo" id="vtBus">'+
-      (vtBuLista=Object.keys(bus).sort()).map(function(k,i){return'<button type="button" class="chip-periodo'+
-        (vtEstado.bu===k?' activo':'')+'" data-bu="'+esc(k)+'" onclick="vtSetBu(vtBuLista['+i+'])">'+esc(bus[k])+'</button>'}).join('')+
-      '</div><select class="vt-orden" onchange="vtSetMarca(this.value)" aria-label="Marca"><option value="">Todas las marcas</option>'+
-      Object.keys(marcas).sort().map(function(m){return'<option value="'+esc(m)+'"'+(vtEstado.marca===m?' selected':'')+'>'+esc(m)+'</option>'}).join('')+
-      '</select></div></div>'+
-    (vtSO?'':'<div class="vt-nota"><span class="mtd-spinner"></span>Cargando sell-out…</div>')+
-    '<div class="mtd-scroll vt-scroll-alto"><table class="mtd-tabla" id="vtTablaProd"></table></div>'+
-    '<div id="vtProdMas"></div>'+VT_PVL_NOTA+'</section>';
-  document.getElementById('vtCuerpo').innerHTML=h;
-  vtPintarProductos()}
-
-function vtFirmaOrden(){var o=MTD_ORDEN.vtTablaProd;return o?o.k+'|'+o.dir:''}
-function vtPintarProductos(){
-  var P=vtModeloProductos(),q=normTxt(vtEstado.qp||''),bu=vtEstado.bu,marca=vtEstado.marca,und=vtEstado.unidad==='#';
-  if(!document.getElementById('vtTablaProd'))return;
-  document.querySelectorAll('#vtBus .chip-periodo').forEach(function(b){
-    b.classList.toggle('activo',!!bu&&b.getAttribute('data-bu')===bu)});
-  var l=P.lista.filter(function(p){return(!q||normTxt(p.nombre).indexOf(q)!==-1)&&
-      (!bu||p.bu.toUpperCase()===bu)&&(!marca||p.brand===marca)})
-    .map(function(p){var f={pk:p.pk,nombre:p.nombre,bu:p.bu,venta:und?p.und:p.venta,a1:p.a1,
-      dA1:und?null:p.dA1,si:p.si,so:p.so,soLY:p.soLY,dSO:p.dSO,inv:und?p.invU:p.inv,doh:p.doh,
-      cliCompra:p.cliCompra,cliSO:p.cliSO,quiebre:p.quiebre,sobre:p.sobre};
-      f.alertas=f.quiebre*10+f.sobre;return f});
-  var columnas=VT_COLS_PROD();
-  // Se pintan solo los primeros `tope`, pero el orden elegido con clic en un
-  // encabezado se aplica a la lista COMPLETA (y el CSV sale en ese orden).
-  var ord=mtdOrdenActual({id:'vtTablaProd',columnas:columnas,orden:null});
-  l.sort(ord?mtdComparador(ord.col,ord.dir):function(a,b){return b.venta-a.venta||b.so-a.so});
-  var tope=vtEstado.topeProd,vis=l.slice(0,tope);
-  vtProdVista=l;vtProdFirma=vtFirmaOrden();
-  mtdTabla({id:'vtTablaProd',filas:vis,orden:null,vacio:'Sin productos con este filtro',
-    // Un clic en un encabezado repinta solo `vis`: si cambió el orden, se rehace todo.
-    alOrdenar:function(){if(vtFirmaOrden()!==vtProdFirma)setTimeout(vtPintarProductos,0)},
-    clic:{valor:function(p){return p.pk},activo:function(){return false},haySel:function(){return false},
-      alClic:function(pk){vtAbrirProducto(pk)},titulo:'Ver este producto cliente por cliente'},
-    columnas:columnas});
-  var mas=document.getElementById('vtProdMas');
-  if(mas)mas.innerHTML=l.length>tope?'<button class="btn vt-mas" onclick="vtMasProd()">Mostrar más ('+
-    (l.length-tope)+' restantes)</button>':(l.length?'<div class="hint">'+l.length+' productos · "Clientes" = compraron este mes / con sell-out en la ventana</div>':'')}
-function VT_COLS_PROD(){
-  var c=vtColsProd({k:'nombre',t:'Producto',tipo:'txt',celda:function(p){return'<td>'+esc(p.nombre)+'<span class="sub">'+esc(p.bu||'')+'</span></td>'}});
-  c.splice(c.length-1,1,
-    {k:'cliCompra',t:'Clientes',tipo:'num',celda:function(p,t){return mtdTd(p.cliCompra+' / '+p.cliSO,t)}},
-    {k:'alertas',t:'Alertas',tipo:'num',celda:function(p,t){
-      return mtdTd((p.quiebre?'<span class="vt-alerta q">'+p.quiebre+' quiebre</span>':'')+
-        (p.sobre?'<span class="vt-alerta s">'+p.sobre+' sobrestock</span>':'')||'–',t)}});
-  return c}
-
-/* ── Ficha de producto: cliente por cliente ── */
-function vtRenderFichaProducto(M){
-  var P=vtModeloProductos(),p=P.idx[vtEstado.ficha.pk];
-  if(!p){vtEstado.ficha=null;vtRender();return}
-  var und=vtEstado.unidad==='#',mens={};
-  p.det.forEach(function(d){
-    var cp=d.x.u.so&&d.x.u.so.prods[p.pk];if(!cp)return;
-    Object.keys(cp.mens).forEach(function(k){var a=cp.mens[k],z=mens[k]||(mens[k]={si:0,so:0,inv:0,siU:0,soU:0,invU:0,inv1:0});
-      z.si+=a.si;z.so+=a.so;z.siU+=a.siU;z.soU+=a.soU;if(a.inv1){z.inv+=a.inv;z.invU+=a.invU;z.inv1=1}})});
-  function cif(etq,val,det){return'<div class="vt-stat"><div class="vt-etq">'+etq+'</div><div class="vt-num-m">'+val+'</div>'+
-    (det?'<div class="vt-det">'+det+'</div>':'')+'</div>'}
-  var h='<div class="vt-ficha">'+
-    '<div class="vt-ficha-cab"><button class="btn" onclick="vtCerrarFicha()">← Volver</button>'+
-      '<div><h2>'+esc(p.nombre)+'</h2><span class="sub">'+esc([p.bu,p.brand].filter(Boolean).join(' · '))+
-      (vtEstado.kam?' · cartera de '+esc(vtCorto(vtEstado.kam)):'')+'</span></div>'+vtHtmlSwitches(false)+'</div>'+
-    '<section class="card vt-canal"><div class="vt-stats">'+
-      cif('Venta del mes',und?FMT.format(Math.round(p.und))+' und':mtdMonedaCorta(p.venta),und?'':'Δ% '+vtDelta(p.dA1)+' vs Venta -1')+
-      cif('Sell-out'+VT_PVL+' '+(M.w?esc(M.w.etq):''),vtCant(p.so),'Δ% '+vtDelta(p.dSO)+' vs año anterior · '+p.cliSO+' clientes')+
-      cif('Días de inventario',vtDias(p.doh),'reportados, clientes con foto de inventario')+
-      cif('Alertas',(p.quiebre||0)+' · '+(p.sobre||0),'clientes en riesgo de quiebre · con sobrestock')+
-    '</div>'+VT_PVL_NOTA+'</section>'+
-    '<section class="card mtd-panel"><h3>Últimos 12 meses · sell-in vs sell-out</h3>'+
-      '<div class="hint">Hoja Data · clientes de la cartera filtrada.</div>'+
-      (M.w?vtGrafMeses(vtSerieData(mens,M.w.k1)):'')+'</section>'+
-    '<section class="card mtd-panel"><div class="mtd-panel-cab"><h3>Cliente por cliente</h3></div>'+
-      '<div class="hint">Clic en un cliente para abrir su ficha.</div>'+
-      '<div class="mtd-scroll vt-scroll-alto"><table class="mtd-tabla" id="vtTablaProdDet"></table></div></section></div>';
-  document.getElementById('vtCuerpo').innerHTML=h;
-  var filas=p.det.map(function(d){var f=vtFilaProd(d.a,d.r,d.v,d.x.obj);
-      f.id=d.x.id;f.cliente=d.x.cliente;f.kam=d.x.kam;return f})
-    .filter(function(f){return f.venta||f.a1||f.si||f.so||f.inv});
-  mtdTabla({id:'vtTablaProdDet',filas:filas,orden:{k:'venta',dir:'desc'},vacio:'Ningún cliente del filtro tiene este producto',
-    clic:{valor:function(f){return f.id},activo:function(){return false},haySel:function(){return false},
-      alClic:function(id){vtAbrirClienteId(id)},titulo:'Abrir la ficha de este cliente'},
-    columnas:vtColsProd({k:'cliente',t:'Cliente',tipo:'txt',celda:function(f){return'<td>'+esc(f.cliente)+'<span class="sub">'+esc(vtCorto(f.kam))+'</span></td>'}})})}
-
-/* ══════════ CSV (lo que se ve, en el orden mostrado) ══════════ */
-function vtCsvClientes(){
-  var und=vtEstado.unidad==='#'?' (und)':'';
-  mtdDescargarCsv(vtListaVista.map(function(x){return{cliente:x.cliente,kam:x.kam,canal:x.canal,real:Math.round(x.real),
-    plan:Math.round(x.plan),cumpl:x.cumpl,a1:Math.round(x.a1),dA1:x.dA1,a1Mes:Math.round(x.a1Mes),
-    si:Math.round(x.si),so:Math.round(x.so),ratio:x.ratio,dSO:x.dSO,
-    doh:x.eInv==='sindatos'?'':Math.round(x.sal.dohRep),mesInv:x.sal.kInv>=0?vtMesEtq(x.sal.kInv):'',obj:x.obj,
-    accion:(VT_ACC[x.acc]||VT_ACC.ok)[0]}}),[
-    {clave:'cliente',titulo:'Cliente'},{clave:'kam',titulo:'KAM'},{clave:'canal',titulo:'Canal'},
-    {clave:'real',titulo:'Venta mes'},{clave:'plan',titulo:'Plan mes'},{clave:'cumpl',titulo:'% Cumplimiento'},
-    {clave:'a1',titulo:'Venta -1'},{clave:'dA1',titulo:'Δ% vs Venta -1'},{clave:'a1Mes',titulo:'Venta -1 mes completo'},
-    {clave:'si',titulo:'Sell-in ventana'+und},{clave:'so',titulo:'Sell-out ventana'+und},{clave:'ratio',titulo:'Sell-out / Sell-in'},
-    {clave:'dSO',titulo:'Δ% sell-out vs año anterior'},{clave:'doh',titulo:'Días de inventario reportados'},
-    {clave:'mesInv',titulo:'Mes del inventario'},{clave:'obj',titulo:'DOH objetivo'},{clave:'accion',titulo:'Acción sugerida'}],
-    'ventas_clientes_'+mtdCsvFecha()+'.csv')}
-function vtCsvProductos(){
-  mtdDescargarCsv(vtProdVista.map(function(p){return{nombre:p.nombre,bu:p.bu,venta:Math.round(p.venta),dA1:p.dA1,
-    si:Math.round(p.si),so:Math.round(p.so),dSO:p.dSO,inv:Math.round(p.inv||0),doh:p.doh==null?'':Math.round(p.doh),
-    cliCompra:p.cliCompra,cliSO:p.cliSO,quiebre:p.quiebre,sobre:p.sobre}}),[
-    {clave:'nombre',titulo:'Producto'},{clave:'bu',titulo:'BU'},{clave:'venta',titulo:'Venta mes'},{clave:'dA1',titulo:'Δ% vs Venta -1'},
-    {clave:'si',titulo:'Sell-in ventana'},{clave:'so',titulo:'Sell-out ventana'},{clave:'dSO',titulo:'Δ% sell-out vs año anterior'},
-    {clave:'inv',titulo:'Inventario reportado'},{clave:'doh',titulo:'Días de inventario reportados'},
-    {clave:'cliCompra',titulo:'Clientes que compraron'},{clave:'cliSO',titulo:'Clientes con sell-out'},
-    {clave:'quiebre',titulo:'Clientes en riesgo de quiebre'},{clave:'sobre',titulo:'Clientes con sobrestock'}],
-    'ventas_productos_'+mtdCsvFecha()+'.csv')}
-function vtCsvProdCliente(){
-  mtdDescargarCsv(vtVistaProdCli.map(function(f){return{nombre:f.nombre,venta:Math.round(f.venta),dA1:f.dA1,
-    si:Math.round(f.si),so:Math.round(f.so),dSO:f.dSO,inv:f.inv==null?'':Math.round(f.inv),
-    doh:f.doh==null?'':Math.round(f.doh),senal:f.senal?VT_SENAL[f.senal][0]:''}}),[
-    {clave:'nombre',titulo:'Producto'},{clave:'venta',titulo:'Venta mes'},{clave:'dA1',titulo:'Δ% vs Venta -1'},
-    {clave:'si',titulo:'Sell-in ventana'},{clave:'so',titulo:'Sell-out ventana'},{clave:'dSO',titulo:'Δ% sell-out vs año anterior'},
-    {clave:'inv',titulo:'Inventario reportado'},{clave:'doh',titulo:'Días de inventario reportados'},{clave:'senal',titulo:'Señal'}],
-    'ventas_cliente_productos_'+mtdCsvFecha()+'.csv')}
 </script>

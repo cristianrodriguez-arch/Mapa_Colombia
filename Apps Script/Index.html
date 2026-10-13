@@ -133,10 +133,10 @@
        activa. La vista oculta lleva [hidden] (display:none), así que no genera
        caja ni consume fila, y la visible siempre recibe el 1fr. ── -->
   <nav class="mtdtabs-top" role="tablist">
-    <button class="mtdtab-top activo" id="btnVistaVentas" role="tab"
-            onclick="mostrarVistaSuperior('ventas')">📈 Ventas</button>
-    <button class="mtdtab-top" id="btnVistaVentas3" role="tab"
-            onclick="mostrarVistaSuperior('ventas3')">📊 Ventas 3.0</button>
+    <!-- "Ventas" es la antigua "Ventas 3.0" (ids internos ventas3 / vt3); la pestaña Ventas
+         anterior (cartera del KAM) se retiró el 2026-10-13. -->
+    <button class="mtdtab-top activo" id="btnVistaVentas3" role="tab"
+            onclick="mostrarVistaSuperior('ventas3')">📊 Ventas</button>
     <button class="mtdtab-top" id="btnVistaMapa" role="tab"
             onclick="mostrarVistaSuperior('mapa')">🗺️ Mapa</button>
     <button class="mtdtab-top" id="btnVistaYoobic" role="tab"
@@ -148,28 +148,11 @@
             onclick="mostrarVistaSuperior('sivso')" title="Informe anterior de Sell In vs Sell Out">SI vs SO (clásico)</button>
   </nav>
 
-  <!-- ═══ Ventas (JsVentas.html): cartera del KAM. Une Ventas MTD + SI vs SO. ═══ -->
-  <div id="vistaVentas">
-    <div class="card vt-barra">
-      <div class="vt-titulo"><h2>Ventas</h2><span class="sub" id="vtSub"></span></div>
-      <div class="vt-ctrl">
-        <label class="vt-campo"><span>KAM</span><select id="vtKam" onchange="vtSetKam(this.value)"></select></label>
-        <label class="vt-campo"><span>Canal</span><select id="vtCanal" onchange="vtSetCanal(this.value)"></select></label>
-        <button class="btn" onclick="vtActualizar()" title="Volver a leer las hojas">Actualizar</button>
-      </div>
-    </div>
-    <div class="vt-segmento" role="tablist">
-      <button type="button" role="tab" id="vtSegClientes" class="activo" onclick="vtVer('clientes')">Clientes</button>
-      <button type="button" role="tab" id="vtSegProductos" onclick="vtVer('productos')">Productos</button>
-    </div>
-    <div id="vtCuerpo"></div>
-  </div>
-
-  <!-- ═══ Ventas 3.0 (JsVentas3.html): estilo Zebra BI. Sell-out = ETL (Affiliate Master);
+  <!-- ═══ Ventas (JsVentas3.html; antes "Ventas 3.0"): estilo Zebra BI. Sell-out = ETL (Affiliate Master);
        sell-in + plan = hojas SI_Appscript y PPTO_Appscript del libro Ventas - YTD. ═══ -->
-  <div id="vistaVentas3" hidden>
+  <div id="vistaVentas3">
     <div class="card vt-barra vt3-barra">
-      <!-- Resumen del mes: el mismo de la pestaña Ventas (vt3PintarResumen). -->
+      <!-- Resumen del mes (vt3PintarResumen, motor en JsVentas.html). -->
       <div class="vt3-res" id="vt3Resumen"></div>
       <div class="vt-ctrl">
         <label class="vt-campo"><span>KAM</span><select id="vt3Kam" onchange="vt3SetKam(this.value)"></select></label>
