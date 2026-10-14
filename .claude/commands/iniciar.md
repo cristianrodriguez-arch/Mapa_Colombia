@@ -1,16 +1,16 @@
 ---
-description: Inicio — trae lo último de GitHub y Apps Script y resume qué hizo el compañero
+description: Inicio — trae lo último de main, resume qué hizo el equipo y deja el git configurado
 disable-model-invocation: true
-allowed-tools: Bash(bash .claude/scripts/iniciar.sh:*), Bash(git stash:*), Bash(git checkout:*), Bash(git add:*), Bash(git commit:*)
+allowed-tools: Bash(bash .claude/scripts/iniciar.sh:*), Bash(bash .claude/scripts/rama.sh:*), Bash(git branch -D:*)
 ---
 
 Resultado de la sincronización (ya ejecutada):
 
 !`bash .claude/scripts/iniciar.sh`
 
-Responde en español y breve. No leas archivos ni ejecutes nada más salvo que arriba haya un PARADO o un DESFASE: el resumen sale solo de los mensajes de commit.
+Responde en español y breve. No leas archivos ni ejecutes nada más salvo que arriba haya un PARADO: el resumen sale solo de los mensajes de commit.
 
-**Si hubo commits nuevos**, resúmelos agrupados por persona, en lenguaje claro (qué cambió en el visor o en los datos y para qué), sin hashes ni nombres de archivo salvo que importen. Si algún commit trae "Ojo:", ponlo primero. Formato:
+**Si hubo commits nuevos en main**, resúmelos agrupados por persona, en lenguaje claro (qué cambió en el visor o en los datos y para qué), sin hashes ni nombres de archivo salvo que importen. Si algún commit trae "Ojo:", ponlo primero. Formato:
 
 > **Sebitotis** — 2 cambios (jue 08/10, noche)
 > - Nueva pestaña Yoobic · Perfect Store: …
@@ -20,9 +20,14 @@ Responde en español y breve. No leas archivos ni ejecutes nada más salvo que a
 
 **Sin commits nuevos** → una línea.
 
-**Si algo se paró:**
-- Cambios sin commitear → muéstralos y pregunta: guardarlos aparte (`git stash`), commitearlos o dejarlo así. Después vuelve a ejecutar `bash .claude/scripts/iniciar.sh`.
-- Conflicto en git pull o fallo de clasp → explica qué pasó en 1–2 líneas y para.
-- DESFASE con Apps Script (alguien editó en el editor web sin pasar por GitHub) → muestra la lista y pregunta si conservar esos cambios (commit `chore(apps-script): traer cambios hechos en el editor web`) o descartarlos (`git checkout -- "Apps Script/"`). No decidas tú.
+**Además, solo si aparecen en la salida:**
+- **EN CURSO**: dile qué tiene el compañero en marcha (rama y de qué trata, por el nombre y el último commit) para que no dupliquen trabajo ni toquen los mismos archivos.
+- **TU RAMA … le faltan N de main**: avisa que /probar y /enviar la ponen al día.
+- **PULL REQUESTS ABIERTOS**: menciónalos; si alguno espera revisión suya, dilo.
+- **RAMAS TERMINADAS**: ofrece borrarlas (`git branch -D <rama>`); solo las borras si el usuario dice que sí.
 
-Termina con "Listo para trabajar." (o qué falta para estarlo).
+**Si se paró** (PARADO) → explica qué pasó en 1–2 líneas y para.
+
+**Cierre según dónde esté el usuario:**
+- Está en **main** (o sin rama) → pregúntale qué va a trabajar. Con su respuesta propón un nombre de rama `tipo/descripcion-corta` (tipo: feat, fix, docs, chore, refactor o test; minúsculas y guiones) y **pide confirmación**; con el visto bueno ejecuta `bash .claude/scripts/rama.sh <nombre>`. Si ya tiene cambios sin commitear en main, la rama se los lleva consigo: avísalo.
+- Ya está en una **rama de trabajo** → "Listo para trabajar en `<rama>`."

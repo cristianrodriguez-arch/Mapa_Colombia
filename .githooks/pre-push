@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# Hook versionado del equipo. main se actualiza SOLO con el merge de un pull request en GitHub.
+# Salida de emergencia (solo el líder, y avisando): PERMITIR_MAIN=1 git push ...
+[ -n "$PERMITIR_MAIN" ] && exit 0
+while read -r _ _ remote_ref _; do
+  if [ "$remote_ref" = refs/heads/main ]; then
+    echo "BLOQUEADO: no se hace push a main. Sube tu rama con /enviar y abre un pull request."
+    exit 1
+  fi
+done
+exit 0

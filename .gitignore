@@ -43,3 +43,6 @@ preview_visor.html
 
 # Capturas temporales de revision visual
 _*.png
+
+# Proyecto de Apps Script de PRUEBAS de cada persona (su propio scriptId; no se comparte)
+.clasp.dev.json

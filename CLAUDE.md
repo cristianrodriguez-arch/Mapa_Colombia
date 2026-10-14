@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Qué es este directorio
 
-Proyecto de datos geoespaciales: 4 archivos KML con polígonos de zonas ("bricks") de ciudades de Colombia — Bogotá, Medellín, Cali y Cartagena. No es un repositorio git.
+Proyecto de datos geoespaciales: 4 archivos KML con polígonos de zonas ("bricks") de ciudades de Colombia — Bogotá, Medellín, Cali y Cartagena. Repositorio git en GitHub (`cristianrodriguez-arch/Mapa_Colombia`); flujo de equipo en [COLABORACION.md](COLABORACION.md).
 
 - `kml_fuentes/` — copia de los 4 KML originales (los del directorio raíz son los originales sin tocar).
 - `Localidad_Bogota.kml` — 20 localidades de Bogotá; capa de referencia (NO es fuente de bricks, vive en la raíz). Se usa para asignar la `zona` de cada brick de Bogotá por mayor área de traslape.
@@ -23,23 +23,21 @@ Proyecto de datos geoespaciales: 4 archivos KML con polígonos de zonas ("bricks
 
 ## Colaboración en Equipo
 
-Ver [COLABORACION.md](COLABORACION.md) para el flujo completo de trabajo colaborativo:
+Ver [COLABORACION.md](COLABORACION.md) para el flujo completo. Resumen: **`main` solo cambia con el merge de un pull request**; cada tarea va en su rama (`tipo/descripcion-corta`), la revisa otra persona (**Sebas es el líder**: aprueba los PR de Cristian y decide cuándo se publica; Cristian revisa los de Sebas) y se publica a producción aparte, con `/publicar`.
 
-- **Una rama**: siempre `main`, sin branches feature
-- **Commits pequeños**: cada cambio es un commit descriptivo
-- **PRs en lenguaje natural**: el equipo describe tareas; Claude las implementa
-- **Sin bifurcaciones**: todos sincronizados en el mismo punto
+Comandos del equipo (`.claude/commands/`, scripts en `.claude/scripts/`): `/iniciar` → `/rama` → `/probar` → `/enviar` → (PR revisado y mergeado) → `/publicar`.
 
-Resumen rápido:
-1. `git pull origin main` (antes de trabajar)
-2. Haz el cambio (tú o pídele a Claude)
-3. `git add .` → `git commit -m "feat: descripción"`
-4. `git push origin main`
-5. Si necesitas review: crea un PR con descripción en lenguaje natural
+**Reglas para Claude en este repo:**
+- **Nunca** commitear ni hacer push en `main` (los hooks de `.githooks/` lo bloquean; `PERMITIR_MAIN=1` solo si el usuario lo pide explícitamente como emergencia). Si el usuario pide un cambio estando en `main`, propón una rama `tipo/descripcion-corta`, **pide confirmación del nombre** y créala con `/rama`.
+- Una rama = una tarea = un PR. Si el pedido mezcla temas independientes, propón ramas separadas.
+- No hagas `git push` (salvo `/enviar`, de la rama del usuario), `clasp push` ni `clasp deploy` por tu cuenta: `/probar` sube a **el proyecto de pruebas personal** (`.clasp.dev.json`, ignorado por git) y `/publicar` a producción, solo con la confirmación del usuario. Nunca `--force` ni `--no-verify`.
+- Commits y títulos de PR: `tipo(área): qué cambió`, en español y en lenguaje de negocio — son lo que el compañero lee en su `/iniciar`. PR con la plantilla de `.github/pull_request_template.md`.
+- Nunca commitear secretos ni datos de clientes (`sfe-prod-*.json`, `config.py`, `MAESTRO PDV's*.xlsx`, `Apps Script/datos_sheets/`).
+- Si cambia una cifra o su fuente, actualizar README / `Apps Script/CLAUDE.md` / `DOCUMENTACION_KPIS.md` en el mismo PR.
 
 ## Visor web (Apps Script) y pruebas
 
-El visor vive en `Apps Script/` (ver [Apps Script/CLAUDE.md](Apps%20Script/CLAUDE.md)). Las **definiciones de KPI, sus fuentes, los hallazgos de la auditoría del 2026-10-03 y el checklist de despliegue** están en [Apps Script/DOCUMENTACION_KPIS.md](Apps%20Script/DOCUMENTACION_KPIS.md). Las pruebas en Node están en `tests/` (fuera de `Apps Script/` para que `clasp push` no las suba): `node tests/test_servidor_mtd.js`, `node tests/test_cliente_mtd.js`, `node tests/test_cliente_sivso.js`, `node tests/test_yoobic.js`, `node tests/test_tabla_pdv.js`, `node tests/test_ventas.js`, `node tests/test_ventas3.js`, `node tests/chequeo_sintaxis_html.js` y, para el ETL de Ventas 3.0, `python tests/test_etl_s3.py` (`/finalizar` corre todo `tests/*.js`). La pestaña **Yoobic · Perfect Store** (hojas `Yoobic` + `Direcciones con sus cuentas CO (Appsheets)` del MAESTRO PDV's) está documentada en [Apps Script/CLAUDE.md](Apps%20Script/CLAUDE.md) § "Yoobic".
+El visor vive en `Apps Script/` (ver [Apps Script/CLAUDE.md](Apps%20Script/CLAUDE.md)). Las **definiciones de KPI, sus fuentes, los hallazgos de la auditoría del 2026-10-03 y el checklist de despliegue** están en [Apps Script/DOCUMENTACION_KPIS.md](Apps%20Script/DOCUMENTACION_KPIS.md). Las pruebas en Node están en `tests/` (fuera de `Apps Script/` para que `clasp push` no las suba): `node tests/test_servidor_mtd.js`, `node tests/test_cliente_mtd.js`, `node tests/test_cliente_sivso.js`, `node tests/test_yoobic.js`, `node tests/test_tabla_pdv.js`, `node tests/test_ventas.js`, `node tests/test_ventas3.js`, `node tests/chequeo_sintaxis_html.js` y, para el ETL de Ventas 3.0, `python tests/test_etl_s3.py` (`/probar`, `/enviar` y `/publicar` corren todo `tests/*.js` y el test de Python; GitHub Actions también, en cada PR). La pestaña **Yoobic · Perfect Store** (hojas `Yoobic` + `Direcciones con sus cuentas CO (Appsheets)` del MAESTRO PDV's) está documentada en [Apps Script/CLAUDE.md](Apps%20Script/CLAUDE.md) § "Yoobic".
 
 ## Cómo trabajar con los archivos
 
