@@ -68,16 +68,17 @@ function vt3AlEntrar(){
 /* "Actualizar": la fuente activa y el resumen del mes. */
 function vt3Actualizar(){
   vt3Cargar(true);
+  if(vt3E.src!=='si')vt3Cache.si=null;   // el resumen "vs plan" usa el sell-in: se vuelve a pedir al pintarlo
   if(typeof vtActualizar==='function')vtActualizar()}
 /* Apunta vt3Data a la fuente activa y la pide si todavía no está. */
 function vt3Usar(){
   var s=vt3E.src;vt3Error=vt3Errores[s]||'';vt3Cargando=!!vt3EnVuelo[s];
   if(vt3Cache[s])vt3Activar(vt3Cache[s]);
   else{vt3Data=null;if(!vt3Cargando&&!vt3Error)vt3Cargar(false)}}
-function vt3Cargar(forzar){
-  var s=vt3E.src;
-  vt3EnVuelo[s]=1;vt3Cargando=true;vt3Error=vt3Errores[s]='';
-  if(forzar){vt3Cache[s]=null;vt3Data=null;if(s==='so'){vt3Det={};vt3Pb={}}}
+function vt3Cargar(forzar,fuente){
+  var s=fuente||vt3E.src,activa=s===vt3E.src;   // `fuente`: carga de fondo de la que no está activa
+  vt3EnVuelo[s]=1;if(activa)vt3Cargando=true;vt3Error=vt3Errores[s]='';
+  if(forzar){vt3Cache[s]=null;if(activa)vt3Data=null;if(s==='so'){vt3Det={};vt3Pb={}}}
   vt3Render();
   if(!esGas()){setTimeout(function(){vt3Recibir(s==='si'?vt3DemoSi():vt3Demo(),s)},250);return}
   var r=google.script.run
@@ -197,17 +198,21 @@ function vt3AjustarSel(A){
   vt3E.sel=s.length?s:vt3Rapida('anio')}
 /* Filtros de los datos A en los de B: cliente por SAP ID, BU por nombre, producto por EAN
    (el sell-in agrupa por Product ID, que puede tener varios EAN) y PDV por su clave. */
-function vt3RemapFiltros(A,B){
-  var f=vt3E.f,porId={},bus={},porEan={},porPdv={};
+function vt3RemapFiltros(A,B){vt3E.f=vt3TraducirF(A,B,vt3E.f)}
+/* Los filtros f (índices de A) en índices de B, sin tocar el estado. */
+function vt3TraducirF(A,B,f){
+  var porId={},bus={},porEan={},porPdv={};
   B.clientes.forEach(function(c,i){porId[c.id]=i});
   B.skus.forEach(function(s,i){bus[s.bu]=1;s.eans.forEach(function(e){(porEan[e]=porEan[e]||[]).push(i)})});
   B.pdv.forEach(function(p,i){porPdv[p.clave]=i});
-  f.cli=f.cli.map(function(i){var c=A.clientes[i];return c?porId[c.id]:null}).filter(function(i){return i!=null});
-  f.bu=f.bu.filter(function(b){return bus[b]});
   var sk=[];f.sku.forEach(function(i){var s=A.skus[i];(s?s.eans:[]).forEach(function(e){
     (porEan[e]||[]).forEach(function(j){if(sk.indexOf(j)===-1)sk.push(j)})})});
-  f.sku=sk;
-  f.pdv=f.pdv.map(function(i){var p=A.pdv[i];return p?porPdv[p.clave]:null}).filter(function(i){return i!=null})}
+  return{cli:f.cli.map(function(i){var c=A.clientes[i];return c?porId[c.id]:null}).filter(function(i){return i!=null}),
+    bu:f.bu.filter(function(b){return bus[b]}),sku:sk,
+    pdv:f.pdv.map(function(i){var p=A.pdv[i];return p?porPdv[p.clave]:null}).filter(function(i){return i!=null})}}
+/* Meses sel (índices de A) en índices de B, por nombre de mes. */
+function vt3TraducirMeses(A,B,sel){
+  return sel.map(function(i){return B.ip[A.meses[i]]}).filter(function(i){return i!=null}).sort(function(a,b){return a-b})}
 function vt3SetFuente(s){
   if(s===vt3E.src||!VT3_FUENTES.some(function(x){return x[0]===s}))return;
   vt3E.src=s;vt3E.unidad=vt3E.uni[s];vt3E.tope=40;vt3E.q='';
@@ -381,8 +386,12 @@ function vt3Pct(v){if(v==null||!isFinite(v))return'–';var n=Math.round(Math.ab
 function vt3Cump(v){return v==null||!isFinite(v)?'–':FMT.format(Math.round(v*100))+'%'}
 function vt3CumpCls(v){return v==null?'':(v>=1?'pos':'neg')}
 function vt3MesEtq(i){var m=vt3Data.meses[i];return MTD_MESES[Number(m.slice(5,7))-1]+' '+m.slice(0,4)}
-function vt3EtqSel(){var s=vt3E.sel;if(!s.length)return'';
-  return s.length===1?vt3MesEtq(s[0]):MTD_MESES[Number(vt3Data.meses[s[0]].slice(5,7))-1]+'–'+vt3MesEtq(s[s.length-1])+
+function vt3EtqSel(){return vt3EtqDe(vt3Data,vt3E.sel)}
+/* "Sep 2026" · "Ene–Sep 2026" · "Ene–Sep 2026 (5 meses)" (si hay huecos) de los meses s de los datos D. */
+function vt3EtqDe(D,s){
+  function e(i){var m=D.meses[i];return MTD_MESES[Number(m.slice(5,7))-1]+' '+m.slice(0,4)}
+  if(!s.length)return'';
+  return s.length===1?e(s[0]):MTD_MESES[Number(D.meses[s[0]].slice(5,7))-1]+'–'+e(s[s.length-1])+
     (s.length!==s[s.length-1]-s[0]+1?' ('+s.length+' meses)':'')}
 
 /* ══════════ Render ══════════ */
@@ -437,18 +446,22 @@ function vt3Render(){
   var sub=document.getElementById('vt3Sub');if(sub)sub.innerText=subTxt;
   pintarSw();vt3PintarCuerpo()}
 
-/* ══════════ Resumen del mes (arriba; motor en JsVentas.html) ══════════
-   Mismo bloque y mismas cuentas de la antigua pestaña Ventas (vtModelo / vtHtmlHero: venta del mes
-   de la descarga diaria contra plan y Venta -1, falta para el plan, mismo mes del año
-   pasado y YTD, o vs sell-out), filtrado por el KAM y los clientes elegidos aquí.
-   Sus switches (vs plan / vs sell-out, $ / #) viven en vtEstado (JsVentas.html); los meses
-   del "vs sell-out" son los del panel lateral (vt3VentanaResumen), no tiene selector propio. */
+/* ══════════ Resumen de arriba (motor en JsVentas.html) ══════════
+   TODO lo que se filtra en la pestaña mueve también este resumen (pedido del usuario, 2026-10-15):
+   - "vs plan" (el modo por defecto) sale del MISMO cubo de sell-in + plan que el panel, con los
+     meses elegidos a la izquierda, el KAM y los filtros de cliente, BU y producto (vt3ResPlan).
+     Ya no es el mes en curso de Ventas MTD: ese mes solo existe en esa descarga diaria, no en el
+     cubo, así que no se puede elegir en el panel (sigue en la pestaña "Ventas MTD (clásico)").
+   - "vs sell-out" sigue con vtModelo / vtHtmlHero: los meses del panel (vt3VentanaResumen), el KAM
+     y los clientes elegidos. Ese modelo no conoce BU, producto ni PDV: se avisa (vt3NotaFiltros).
+   Sus switches (vs plan / vs sell-out, $ / #) viven en vtEstado (JsVentas.html). */
 function vt3SapsElegidos(){
   if(!vt3Data||!vt3E.f.cli.length)return null;
   var o={};vt3E.f.cli.forEach(function(i){var c=vt3Data.clientes[i];if(c)o[c.id]=1});return o}
 function vt3PintarResumen(){
   var el=document.getElementById('vt3Resumen');if(!el)return;
   if(typeof vtModelo!=='function'||typeof vtHtmlHero!=='function'){el.innerHTML='';return}
+  if(vtEstado.modo==='plan'){vt3PintarResumenPlan(el);return}
   if(!ventasMtdData){
     el.innerHTML=mtdErrorCarga?'<div class="vt-nota">No pude cargar las ventas del mes: '+esc(mtdErrorCarga)+'</div>':
       '<div class="vt-nota"><span class="mtd-spinner"></span>Cargando ventas del mes…</div>';
@@ -458,7 +471,12 @@ function vt3PintarResumen(){
   var filas=M.todos.filter(function(x){return pasa({kam:x.kam,sap:x.sap,id:x.id})});
   var t=vtTotales(filas,vtA1Fuera(M.todos,pasa));
   var tit=saps?(filas.length===1?filas[0].cliente:'Clientes elegidos'):(kam?'Cartera de '+vtCorto(kam):'Todos los clientes');
-  el.innerHTML=vtHtmlHero(t,M,tit,filas.length,{pre:'vt3Res',sinVentana:true})}
+  el.innerHTML=vtHtmlHero(t,M,tit,filas.length,{pre:'vt3Res',sinVentana:true})+vt3NotaFiltros()}
+/* Filtros que el "vs sell-out" no sabe aplicar (su modelo es por cliente, no por producto ni punto de venta). */
+function vt3NotaFiltros(){
+  var f=vt3E.f;if(!f.bu.length&&!f.sku.length&&!f.pdv.length)return'';
+  return'<div class="vt-nota">Este resumen (vs sell-out) aplica los meses, el KAM y los clientes elegidos; '+
+    'los filtros de BU, producto y punto de venta no: usa "vs plan" o las tarjetas de la izquierda.</div>'}
 /* Meses del "vs sell-out" del resumen = los del panel lateral (un solo selector de meses):
    Año / Últ. 3 / Último cuentan desde el último mes con sell-out de su fuente; una
    selección a mano va de su primer a su último mes. */
@@ -467,6 +485,69 @@ function vt3VentanaResumen(){
   if(r||!vt3Data||!vt3E.sel||!vt3E.sel.length)return{vent:r==='anio'?'anio':(r==='u3'?3:1)};
   var k=vt3E.sel.map(function(i){var m=vt3Data.meses[i];return Number(m.slice(0,4))*12+Number(m.slice(5,7))-1});
   return{k0:Math.min.apply(null,k),k1:Math.max.apply(null,k)}}
+
+/* ── "vs plan": cubo de sell-in + plan con el estado de la pestaña ── */
+/* Contexto del sell-in (siempre es el cubo de sell-in, aunque el panel esté en sell-out): sus datos,
+   los meses y los filtros del panel traducidos a sus índices. null = todavía no hay sell-in. */
+function vt3CtxPlan(){
+  var B=vt3Cache.si,A=vt3Ultimo;
+  if(!B||!A||!vt3E.sel||!vt3E.sel.length)return null;
+  if(A===B)return{D:B,sel:vt3E.sel,f:vt3E.f,pdv:false};
+  return{D:B,sel:vt3TraducirMeses(A,B,vt3E.sel),f:vt3TraducirF(A,B,vt3E.f),pdv:vt3E.f.pdv.length>0}}
+/* Totales "vs plan" de los meses sel: venta (AC), plan, mismos meses del año anterior (Venta -1) y
+   YTD hasta el último mes elegido; con los filtros f y el KAM. Misma regla que las tarjetas del
+   panel: el plan es por cliente y en $ (con filtro de BU o producto no aplica). */
+function vt3ResPlan(C){
+  var D=C.D,sel=C.sel,f=C.f,kam=vt3E.kam;
+  function okCli(i){var c=D.clientes[i];return(!f.cli.length||f.cli.indexOf(i)!==-1)&&(!kam||!!(c&&c.kam===kam))}
+  function okSku(i){var s=D.skus[i];return(!f.sku.length||f.sku.indexOf(i)!==-1)&&(!f.bu.length||!!(s&&f.bu.indexOf(s.bu)!==-1))}
+  var ult=sel[sel.length-1],anio=Number(D.meses[ult].slice(0,4));
+  var enSel={},enPy={},enYtd={},enYtdPy={},pyMeses=[];
+  sel.forEach(function(i){enSel[i]=1;var j=D.py[i];if(j>=0){enPy[j]=1;pyMeses.push(j)}});
+  D.meses.forEach(function(m,i){if(Number(m.slice(0,4))===anio&&i<=ult){enYtd[i]=1;if(D.py[i]>=0)enYtdPy[D.py[i]]=1}});
+  var r={real:0,plan:0,a1:0,realAnio:0,planAnio:0,a1Ytd:0},activos={};
+  D.cs.forEach(function(x){
+    if(!okCli(x[0])||!okSku(x[1]))return;
+    var m=x[2],v=x[4];
+    if(enSel[m]){r.real+=v;if(v>0)activos[x[0]]=1}
+    if(enPy[m])r.a1+=v;
+    if(enYtd[m])r.realAnio+=v;
+    if(enYtdPy[m])r.a1Ytd+=v});
+  var sinPlan=!D.plan?'no hay plan cargado':((f.sku.length||f.bu.length)?'el plan es por cliente, no por producto ni BU':
+    (!sel.some(function(i){return D.planMes[i]})?'sin plan para estos meses':''));
+  if(!sinPlan)D.clientes.forEach(function(c,i){
+    var p=D.plan[i];if(!p||!okCli(i))return;
+    var pl=0;sel.forEach(function(m){pl+=p[m]});
+    D.meses.forEach(function(m,k){if(enYtd[k])r.planAnio+=p[k]});
+    r.plan+=pl;if(pl>0)activos[i]=1});
+  r.a1Mes=r.a1;
+  r.cumpl=r.plan>0?r.real/r.plan:null;
+  r.dA1=r.a1>0?r.real/r.a1-1:null;r.dA1Abs=r.a1>0?r.real-r.a1:null;
+  r.falta=r.plan>0?Math.max(0,r.plan-r.real):0;
+  r.dA1Ytd=r.a1Ytd>0?r.realAnio/r.a1Ytd-1:null;
+  r.cumplAnio=r.planAnio>0?r.realAnio/r.planAnio:null;
+  var ly=pyMeses.sort(function(a,b){return a-b});
+  return{t:r,n:Object.keys(activos).length,sinPlan:sinPlan,
+    per:{etq:vt3EtqDe(D,sel),etqLY:ly.length?vt3EtqDe(D,ly):'sin año anterior',etqYtd:'a '+vt3EtqDe(D,[ult]),sinPlan:sinPlan}}}
+function vt3PintarResumenPlan(el){
+  var C=vt3CtxPlan();
+  if(!C){
+    // Sin sell-in todavía (el panel está en sell-out, o se está recargando): se pide de fondo.
+    if(!vt3Cache.si&&!vt3EnVuelo.si&&!vt3Errores.si)vt3Cargar(false,'si');
+    el.innerHTML=vt3Errores.si?'<div class="vt-nota">No pude cargar el sell-in y el plan: '+esc(vt3Errores.si)+'</div>':
+      '<div class="vt-nota"><span class="mtd-spinner"></span>Cargando sell-in y plan…</div>';
+    return}
+  var f=C.f,kam=vt3E.kam,D=C.D;
+  var tit=f.cli.length?(f.cli.length===1&&D.clientes[f.cli[0]]?D.clientes[f.cli[0]].nombre:'Clientes elegidos'):(kam?'Cartera de '+vtCorto(kam):'Todos los clientes');
+  if(C.pdv||!C.sel.length){   // el sell-in no trae punto de venta: no hay cómo aplicar ese filtro
+    el.innerHTML='<section class="card vt-hero"><div class="vt-hero-cab"><div class="vt-hero-tit">'+esc(tit)+'</div>'+
+      vtHtmlSwitches(true,{pre:'vt3Res',sinVentana:true})+'</div><div class="vt-nota">'+
+      (C.pdv?'El sell-in no trae punto de venta, así que no se puede comparar contra el plan con un punto de venta elegido. Quita ese filtro o mira el sell-out.':
+        'El sell-in no tiene los meses elegidos.')+'</div></section>';
+    return}
+  var R=vt3ResPlan(C),m=D.meses[C.sel[C.sel.length-1]];
+  var M={av:{anio:Number(m.slice(0,4)),mes:Number(m.slice(5,7)),cerrado:true,rest:0},per:R.per};
+  el.innerHTML=vtHtmlHero(R.t,M,tit,R.n,{pre:'vt3Res',sinVentana:true})}
 function vt3ResSetModo(m){vtEstado.modo=m;vtGuardar();vt3PintarResumen()}
 function vt3ResSetUnidad(u){vtEstado.unidad=u;vtMod=null;vtGuardar();vt3PintarResumen()}
 

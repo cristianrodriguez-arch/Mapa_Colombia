@@ -72,11 +72,14 @@ Reglas:
 
 Explicación dato por dato (libro, hoja, columna y cuenta, con un ejemplo real): README.md § "Pestaña Ventas: el resumen del mes, dato por dato".
 
-`JsVentas.html` fue la pestaña "Ventas" (cartera del KAM: lista, matriz, fichas y productos), retirada el 2026-10-13; queda solo su resumen del mes, que la pestaña Ventas (antes "Ventas 3.0") muestra arriba filtrado por su KAM y los clientes elegidos. Une el sell-in del mes (Ventas MTD) con el sell-out y el inventario de cada cliente (SI vs SO). Todo se calcula en el navegador.
+`JsVentas.html` fue la pestaña "Ventas" (cartera del KAM: lista, matriz, fichas y productos), retirada el 2026-10-13; queda solo su resumen, que la pestaña Ventas (antes "Ventas 3.0") muestra arriba. **Desde el 2026-10-15 lo que se filtra en la pestaña (meses, KAM, clientes, BU, producto) mueve también este resumen:** el modo **vs plan** sale del cubo de sell-in + plan de §3.4 (`vt3ResPlan` en `JsVentas3.html`; los rótulos los pone `vtHtmlHero` con `M.per`) y el **vs sell-out** une ese periodo con el sell-out y el inventario de cada cliente (SI vs SO; solo conoce meses, KAM y clientes). Todo se calcula en el navegador.
+
+**El mes en curso (MTD) ya no está en este resumen**: solo existe en la descarga diaria de Ventas MTD, no en el cubo (el sell-in llega al último mes cerrado), y por eso no se puede marcar en el panel de meses. Sigue en *Ventas MTD (clásico)*. Las filas de abajo que hablan de "mes en curso", "Ventas al…" y días hábiles describen ese modelo (`vtHtmlHero` sin `M.per`), que hoy usa solo la pestaña clásica y las pruebas.
 **Regla del equipo (2026-10-10): solo datos reales.** No hay proyecciones, "esperado a hoy", estados derivados de proyecciones ni inventario estimado: los clientes compran a ritmos muy distintos (semanal, quincenal, mensual).
 
 | KPI | Fórmula | Nota |
 |---|---|---|
+| **vs plan (pestaña Ventas)** | Venta = Σ sell-in de los meses marcados · Plan = Σ plan de esos meses · % = venta ÷ plan · Venta -1 = Σ sell-in de los mismos meses del año anterior · YTD = enero → último mes marcado | Con filtro de BU o producto el plan es n/d (es por cliente). Mismas cifras que las tarjetas del panel (hay prueba que lo exige) |
 | **Ventas al…** | Día anterior a la última modificación del libro de Ventas MTD (`meta.libroActualizado`) | La descarga diaria trae hasta ayer (`VT_DATOS_HASTA_AYER`) |
 | **Días hábiles** | Transcurridos / del mes / restantes | Lun–vie sin festivos de Colombia (fijos, Ley Emiliani y los de Pascua). Oct-2026: 21. Es un hecho de calendario: no se usa para proyectar |
 | **% del plan** | Venta del mes ÷ Plan del mes | **Es la cifra grande de la derecha del resumen** desde el 2026-10-13 (antes era el Δ% vs Venta -1, que pasó a su detalle). Sin color: no hay un "esperado a hoy" contra el cual juzgarlo. Plan 0 → "–" |

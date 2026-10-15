@@ -366,7 +366,11 @@ function vtHtmlSwitches(conModo,op){
   '</div>'}
 
 /* Resumen del mes (cartera, KAM o clientes elegidos); n = número de clientes (null: sin rótulo).
-   op = opciones de sus switches (ver vtHtmlSwitches). */
+   op = opciones de sus switches (ver vtHtmlSwitches).
+   M.per (opcional): lo pone la pestaña Ventas cuando el modo "vs plan" sigue SUS meses y filtros
+   (cubo de sell-in + plan) en vez del mes en curso de Ventas MTD: {etq, etqLY, etqYtd, sinPlan}
+   con los rótulos del periodo elegido ("Sep 2026", "Sep 2025", "a Sep 2026") y el motivo por el
+   que no hay plan ('' si lo hay). Un periodo elegido es siempre cerrado: sin "a la misma fecha". */
 function vtHtmlHero(t,M,titulo,n,op){
   var av=M.av,so=vtEstado.modo==='so';
   function stat(etq,val,det){return'<div class="vt-stat"><div class="vt-etq">'+etq+'</div><div class="vt-num-m">'+val+'</div>'+
@@ -374,24 +378,25 @@ function vtHtmlHero(t,M,titulo,n,op){
   var cab='<div class="vt-hero-cab"><div class="vt-hero-tit">'+esc(titulo)+
     (n==null?'':' <span>'+n+(n===1?' cliente':' clientes')+'</span>')+'</div>'+vtHtmlSwitches(true,op)+'</div>';
   if(so)return vtHtmlHeroSO(t,M,cab,stat,n);
-  var mesLY=MTD_MESES_LARGO[av.mes-1].toLowerCase()+' '+(av.anio-1);
+  var per=M.per,mesLY=per?per.etqLY:MTD_MESES_LARGO[av.mes-1].toLowerCase()+' '+(av.anio-1),
+      completo=per?'':' completo';
   var b=vtBarraDatos(t,'plan'),max=Math.max(b.pista,b.rayado,b.barra)*1.03;
   function p(v){return(Math.max(0,Math.min(1,v/max))*100).toFixed(2)+'%'}
   var barra=max>0?'<div class="vt-bg" role="img" aria-label="Venta '+esc(mtdMoneda(t.real))+' de un plan de '+esc(mtdMoneda(t.plan))+'">'+
       (t.plan>0?'<div class="vt-bg-pista" style="width:'+p(t.plan)+'"></div>':'')+
-      (t.a1Mes>0?'<div class="vt-bg-rayado" style="width:'+p(t.a1Mes)+'" title="'+esc(vtCorto(mesLY))+' completo: '+esc(mtdMoneda(t.a1Mes))+'"></div>':'')+
+      (t.a1Mes>0?'<div class="vt-bg-rayado" style="width:'+p(t.a1Mes)+'" title="'+esc(vtCorto(mesLY))+completo+': '+esc(mtdMoneda(t.a1Mes))+'"></div>':'')+
       '<div class="vt-bg-barra" style="width:'+p(t.real)+'"></div>'+
       (t.a1>0&&!av.cerrado?'<div class="vt-bg-raya'+(t.a1/max<0.2?' izq':(t.a1/max>0.8?' der':''))+'" style="left:'+p(t.a1)+'" title="'+
         esc(vtCorto(mesLY))+' a la misma fecha: '+esc(mtdMoneda(t.a1))+'"><span>Venta -1 '+mtdMonedaCorta(t.a1)+'</span></div>':'')+
       (t.plan>0?'<div class="vt-bg-meta" style="left:'+p(t.plan)+'"><span>plan</span></div>':'')+
     '</div>'+
-    '<div class="vt-bg-ley"><span><i class="sw-barra"></i>Venta del mes</span><span><i class="sw-pista"></i>Plan del mes</span>'+
-      '<span><i class="sw-rayado"></i>'+esc(vtCorto(mesLY))+' completo</span>'+
+    '<div class="vt-bg-ley"><span><i class="sw-barra"></i>'+(per?'Venta '+esc(per.etq):'Venta del mes')+'</span><span><i class="sw-pista"></i>'+(per?'Plan':'Plan del mes')+'</span>'+
+      '<span><i class="sw-rayado"></i>'+esc(vtCorto(mesLY))+completo+'</span>'+
       (av.cerrado?'':'<span><i class="sw-raya"></i>'+esc(vtCorto(mesLY))+' a la misma fecha</span>')+'</div>':'';
   return'<section class="card vt-hero">'+cab+
-    '<div class="vt-hero-top"><div><div class="vt-etq">Venta del mes</div>'+
+    '<div class="vt-hero-top"><div><div class="vt-etq">'+(per?'Venta '+esc(per.etq):'Venta del mes')+'</div>'+
       '<div class="vt-num-xl">'+mtdMoneda(t.real)+'</div>'+
-      '<div class="vt-det">'+(t.plan>0?'de '+mtdMoneda(t.plan)+' de plan':'sin plan este mes')+'</div></div>'+
+      '<div class="vt-det">'+(t.plan>0?'de '+mtdMoneda(t.plan)+' de plan':(per&&per.sinPlan?'sin plan: '+esc(per.sinPlan):'sin plan este mes'))+'</div></div>'+
       // La cifra grande de la derecha es el % de cumplimiento del plan (pedido del usuario
       // 2026-10-13: es lo primero que debe verse); el Δ% vs Venta -1 pasa a su detalle.
       // Sin color: no hay un "esperado a hoy" contra el cual juzgarlo (solo datos reales).
@@ -403,9 +408,9 @@ function vtHtmlHero(t,M,titulo,n,op){
     '<div class="vt-stats">'+
       stat(av.cerrado?'Faltó para el plan':'Falta para el plan',t.plan>0?(t.falta>0?mtdMonedaCorta(t.falta):'—'):'–',
         t.plan>0&&t.falta<=0?'Plan cumplido':(av.cerrado?'':'quedan '+av.rest+' días hábiles'))+
-      stat(esc(vtCorto(mesLY))+' completo',t.a1Mes>0?mtdMonedaCorta(t.a1Mes):'–','mismo mes del año pasado')+
-      stat('Venta YTD',mtdMonedaCorta(t.realAnio),
-        (t.cumplAnio!=null?vtPct(t.cumplAnio)+' del plan del año · ':'')+'Δ% '+vtDelta(t.dA1Ytd)+' vs Venta -1 YTD')+
+      stat(esc(vtCorto(mesLY))+completo,t.a1Mes>0?mtdMonedaCorta(t.a1Mes):'–',per?'mismos meses del año pasado':'mismo mes del año pasado')+
+      stat('Venta YTD'+(per?' '+esc(per.etqYtd):''),mtdMonedaCorta(t.realAnio),
+        (t.cumplAnio!=null?vtPct(t.cumplAnio)+(per?' del plan acumulado':' del plan del año')+' · ':'')+'Δ% '+vtDelta(t.dA1Ytd)+' vs Venta -1 YTD')+
     '</div></section>'}
 
 function vtHtmlHeroSO(t,M,cab,stat,n){

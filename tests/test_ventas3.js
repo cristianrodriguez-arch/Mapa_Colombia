@@ -303,7 +303,7 @@ t('el sell-out sigue igual: sin columnas de plan y con Total PDV', () => {
 });
 
 /* ---- Resumen del mes arriba (el de la pestaña Ventas), con sus datos de ejemplo ---- */
-console.log('Ventas 3.0 · resumen del mes (el de la pestaña Ventas)');
+console.log('Ventas 3.0 · resumen de arriba (sigue los meses y filtros de la pestaña)');
 function conVentas() {
   const k = cargar();
   const leer = f => fs.readFileSync(path.join(dir, f), 'utf8').match(/<script>([\s\S]*)<\/script>/)[1];
@@ -314,24 +314,83 @@ function conVentas() {
   k.mtdVistaActiva = 'ventas3';
   return k;
 }
-t('arriba va el mismo resumen de Ventas: venta del mes vs plan, Venta -1 y YTD; sus switches mandan a Ventas 3.0', () => {
-  const k = conVentas(); k.vt3Recibir(plano(SI), 'si'); k.vt3Render();
-  const h = k.document.els.vt3Resumen.innerHTML;
-  assert.ok(/Venta del mes/.test(h) && /Venta YTD/.test(h) && /Todos los clientes/.test(h), 'resumen');
+const rx = s => new RegExp(String(s).replace(/[$.]/g, '\\$&'));
+/* Resumen "vs plan" con el cubo SI de arriba (Ventas 3.0): 'anio' = ene–abr 2026 (idx 4..7), 'u1' = abr 2026 (idx 7).
+ *   ene–abr 2026: Cruz Verde 400 (plan 320) · Medipiel 200 (plan 250) · Farmatodo 0 (plan 120) → 600 de 690
+ *   mismos meses de 2025 (ene–mar, idx 1..3): Cruz Verde 240 + Medipiel 180 = 420
+ *   abr 2026: Cruz Verde 100 (plan 80) · Medipiel 50 (plan 100) · Farmatodo 0 (plan 30) → 150 de 210, sin abr 2025 */
+t('arriba, "vs plan" sigue los MESES del panel: venta, plan, % de cumplimiento, Venta -1 y YTD', () => {
+  const k = conVentas(); k.vt3Recibir(plano(SI), 'si'); k.vt3SelRapida('anio');
+  let h = k.document.els.vt3Resumen.innerHTML;
+  assert.ok(/Venta Ene–Abr 2026/.test(h) && /Todos los clientes/.test(h), 'rótulo del periodo');
+  assert.ok(rx(k.mtdMoneda(600)).test(h) && rx('de ' + k.mtdMoneda(690) + ' de plan').test(h), 'venta y plan de los 4 meses');
+  assert.ok(/87%/.test(h), '% de cumplimiento = 600 / 690');
+  assert.ok(rx('Venta -1 ' + k.mtdMonedaCorta(420)).test(h) && /Venta YTD a Abr 2026/.test(h), 'Venta -1 de ene–mar 2025 y YTD');
+  assert.ok(!/a la misma fecha|días hábiles/.test(h), 'un periodo elegido es cerrado');
   assert.ok(/vt3ResSetModo\('so'\)/.test(h) && !/onclick="vtSetModo/.test(h), 'switches propios');
-  const todos = k.vtTotales(k.vtModelo().todos, k.vtA1Fuera(k.vtModelo().todos, () => true)).real;
-  assert.ok(new RegExp(k.mtdMoneda(todos).replace(/[$.]/g, '\\$&')).test(h), 'venta del mes de toda la cartera');
+  k.vt3SelRapida('u1'); h = k.document.els.vt3Resumen.innerHTML;       // cambia el mes: cambia TODO el resumen
+  assert.ok(/Venta Abr 2026/.test(h) && rx(k.mtdMoneda(150)).test(h) && rx('de ' + k.mtdMoneda(210) + ' de plan').test(h) && /71%/.test(h));
+  assert.ok(/Venta YTD a Abr 2026/.test(h) && /sin Venta -1/.test(h), 'abr 2025 no existe en el cubo: sin Venta -1');
+  k.vt3AlternarMes(5); h = k.document.els.vt3Resumen.innerHTML;        // a mano: feb + abr
+  assert.ok(/Venta Feb 2026 \(2 meses\)|Venta Feb–Abr 2026 \(2 meses\)/.test(h), 'meses con hueco');
 });
-t('el resumen sigue el KAM y los clientes elegidos con clic en Ventas 3.0', () => {
+t('el resumen "vs plan" coincide con las tarjetas de la izquierda (mismo cubo, mismos meses)', () => {
+  const k = conVentas(); k.vt3Recibir(plano(SI), 'si'); k.vt3SelRapida('anio');
+  const T = k.vt3Modelo().tot, R = k.vt3ResPlan(k.vt3CtxPlan());
+  assert.strictEqual(R.t.real, T.ac); assert.strictEqual(R.t.plan, T.pl); cerca(R.t.cumpl, T.cump);
+  k.vt3SetKam('SARA CARDONA'); const T2 = k.vt3Modelo().tot, R2 = k.vt3ResPlan(k.vt3CtxPlan());
+  assert.strictEqual(R2.t.real, T2.ac); assert.strictEqual(R2.t.plan, T2.pl);
+});
+t('el resumen "vs plan" sigue el KAM y los clientes elegidos con clic', () => {
+  const k = conVentas(); k.vt3Recibir(plano(SI), 'si'); k.vt3SelRapida('u1');
+  k.vt3SetKam('SARA CARDONA');
+  let h = k.document.els.vt3Resumen.innerHTML;
+  assert.ok(/Cartera de Sara Cardona/.test(h) && rx(k.mtdMoneda(50)).test(h) && rx('de ' + k.mtdMoneda(100) + ' de plan').test(h) && /50%/.test(h), 'KAM');
+  k.vt3SetKam(''); k.vt3E.f.cli = [0]; k.vt3Render();                  // Cruz Verde
+  h = k.document.els.vt3Resumen.innerHTML;
+  assert.ok(/DROGUERIAS CRUZ VERDE SAS/.test(h) && rx(k.mtdMoneda(100)).test(h) && rx('de ' + k.mtdMoneda(80) + ' de plan').test(h), 'cliente elegido');
+  k.vt3E.f.cli = [0, 1]; k.vt3Render();
+  h = k.document.els.vt3Resumen.innerHTML;
+  assert.ok(/Clientes elegidos/.test(h) && rx(k.mtdMoneda(150)).test(h) && rx('de ' + k.mtdMoneda(180) + ' de plan').test(h), 'dos clientes');
+});
+t('el resumen "vs plan" aplica el filtro de BU y de producto a la venta; el plan (por cliente) pasa a n/d', () => {
+  const k = conVentas(); k.vt3Recibir(plano(SI), 'si'); k.vt3SelRapida('u1');
+  k.vt3E.f.bu = ['FOTO']; k.vt3Render();
+  let h = k.document.els.vt3Resumen.innerHTML;
+  assert.ok(rx(k.mtdMoneda(100)).test(h) && /sin plan: el plan es por cliente/.test(h) && /% cumplimiento del plan<\/div><div class="vt-num-l">–/.test(h));
+  k.vt3E.f.bu = []; k.vt3E.f.sku = [1]; k.vt3Render();                 // PROD B = solo Medipiel
+  h = k.document.els.vt3Resumen.innerHTML;
+  assert.ok(rx(k.mtdMoneda(50)).test(h) && /sin plan: el plan es por cliente/.test(h));
+});
+t('con el panel en sell-out, el resumen "vs plan" sigue usando el sell-in: meses por nombre, cliente por SAP ID, KAM', () => {
+  const k = conVentas(); k.vt3Recibir(plano(SI), 'si');
+  k.vt3Recibir(plano(CUBO), 'so'); k.vt3SetFuente('so'); k.vt3SelRapida('anio');      // sell-out: ene–mar 2026 (idx 3..5)
+  let h = k.document.els.vt3Resumen.innerHTML;
+  assert.ok(/Venta Ene–Mar 2026/.test(h) && rx(k.mtdMoneda(450)).test(h) && rx('de ' + k.mtdMoneda(480) + ' de plan').test(h), 'ene–mar 2026 del sell-in');
+  k.vt3E.f.cli = [1]; k.vt3Render();                                   // Medipiel (índice 1 también en el sell-out)
+  h = k.document.els.vt3Resumen.innerHTML;
+  assert.ok(/MEDIPIEL S\.A\./.test(h) && rx(k.mtdMoneda(150)).test(h) && rx('de ' + k.mtdMoneda(150) + ' de plan').test(h));
+  k.vt3E.f.cli = []; k.vt3E.f.pdv = [0]; k.vt3Render();                // un punto de venta: el sell-in no lo tiene
+  assert.ok(/no trae punto de venta/.test(k.document.els.vt3Resumen.innerHTML));
+});
+t('con el panel en sell-out y sin sell-in cargado, el resumen lo pide de fondo', () => {
+  const k = conVentas(); k.vt3Recibir(plano(CUBO), 'so'); k.vt3SetFuente('so');
+  assert.ok(k.vt3Cache.si, 'al pintar el resumen se pidió el sell-in (aquí el demo responde al instante)');
+  k.vt3PintarResumen();
+  assert.ok(/Venta /.test(k.document.els.vt3Resumen.innerHTML) && !/Cargando sell-in/.test(k.document.els.vt3Resumen.innerHTML));
+  assert.strictEqual(k.vt3E.src, 'so'); assert.ok(k.vt3Data.meses.indexOf('2026-03') !== -1, 'el panel sigue en sell-out');
+});
+t('"vs sell-out": sigue el KAM y los clientes elegidos, y avisa que BU / producto / PDV no los aplica', () => {
   const k = conVentas(); k.vt3Recibir(plano(SI), 'si');
   const M = k.vtModelo(), kam = M.todos[0].kam;
+  k.vt3ResSetModo('so'); assert.strictEqual(k.vtEstado.modo, 'so');
   k.vt3SetKam(kam);
   assert.ok(new RegExp('Cartera de ' + k.vtCorto(kam)).test(k.document.els.vt3Resumen.innerHTML), 'cartera del KAM');
-  k.vt3SetKam(''); k.vt3E.f.cli = [0]; k.vt3Render();   // Cruz Verde (11026707), también en el demo de Ventas
-  const cv = M.todos.find(x => x.sap === '11026707');
-  assert.ok(cv && new RegExp(k.mtdMoneda(cv.real).replace(/[$.]/g, '\\$&')).test(k.document.els.vt3Resumen.innerHTML), 'venta del cliente elegido');
-  k.vt3ResSetModo('so'); assert.strictEqual(k.vtEstado.modo, 'so');
+  k.vt3SetKam(''); k.vt3E.f.cli = [0]; k.vt3Render();                  // Cruz Verde (11026707), también en el demo de Ventas
   assert.ok(/vs sell-out/.test(k.document.els.vt3Resumen.innerHTML));
+  assert.ok(!/filtros de BU/.test(k.document.els.vt3Resumen.innerHTML));
+  k.vt3E.f.bu = ['FOTO']; k.vt3Render();
+  assert.ok(/filtros de BU, producto y punto de venta no/.test(k.document.els.vt3Resumen.innerHTML), 'aviso');
   assert.ok(!/proyecci|esperado|estimad/i.test(k.document.els.vt3Resumen.innerHTML));
 });
 t('un solo selector de meses: el resumen no trae el suyo y su "vs sell-out" usa los meses del panel lateral', () => {

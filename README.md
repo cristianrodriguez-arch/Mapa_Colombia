@@ -187,27 +187,27 @@ La API key de Google Maps (`GOOGLE_MAPS_API_KEY`) vive en **Script Properties**,
 
 ## Pestaña Ventas: el resumen del mes, dato por dato
 
-El bloque de arriba de la pestaña **Ventas** responde *¿cómo vamos este mes contra el plan?*. Esta sección explica de dónde sale cada cifra: libro, hoja, columna y cuenta. El código está en `Apps Script/JsVentas.html` (`vtHtmlHero`, `vtModelo`, `vtTotales`). Las hojas las lee `Apps Script/Code.js` (`mtdLeerCumplimiento_`, `mtdLeerProductos_`, `mtdLeerHistorico_`, `sivsoLeerDatos_`).
+El bloque de arriba de la pestaña **Ventas** responde *¿cómo vamos contra el plan?* **para lo que esté filtrado en la pestaña** (meses, KAM, clientes, BU, producto). Esta sección explica de dónde sale cada cifra: libro, hoja, columna y cuenta. El código está en `Apps Script/JsVentas.html` (`vtHtmlHero`, `vtModelo`, `vtTotales`). Las hojas las lee `Apps Script/Code.js` (`mtdLeerCumplimiento_`, `mtdLeerProductos_`, `mtdLeerHistorico_`, `sivsoLeerDatos_`).
 
 ```
- TODOS LOS CLIENTES  74 clientes                          [vs plan | vs sell-out]  [$ | #]
- VENTA DEL MES                    Venta -1 $3.83 MM                     % CUMPLIMIENTO DEL PLAN
- $ 3.467.577.739     ■■■■■■■■■■■■■|////////////////////////░░░░░░░░░░░:         16%
- de $ 21.340.944.269 de plan                                          :  Δ% vs Venta -1 −9,5% · Δ −$365,1 M ·
-                                                                    plan  Venta -1 $3.83 MM (a la misma fecha)
- FALTA PARA EL PLAN $17.87 MM  quedan 14 días hábiles · OCTUBRE 2025 COMPLETO $13.70 MM
- VENTA YTD $141.45 MM  63% del plan del año · Δ% +1,6% vs Venta -1 YTD
+ TODOS LOS CLIENTES  <N> clientes                          [vs plan | vs sell-out]  [$ | #]
+ VENTA <MESES ELEGIDOS>                                                % CUMPLIMIENTO DEL PLAN
+ $ <venta>          ■■■■■■■■■■■■■■■■■■■■■░░░░░░░░░░░░░░░░░:           <venta ÷ plan>
+ de $ <plan> de plan                                                  :  Δ% vs Venta -1 <±%> · Δ <±$> ·
+                                                                    plan  Venta -1 $<mismos meses, año anterior>
+ FALTÓ PARA EL PLAN $<plan − venta> · <MESES AÑO-1> $<…> · VENTA YTD A <MES> $<…> <%> del plan acumulado · Δ% <±%> vs Venta -1 YTD
 ```
 
-*(Cifras de la pantalla del 13-oct-2026, todos los clientes, para seguir las cuentas.)*
+*(El panel de la izquierda —meses marcados— y las tarjetas Promedio mensual / Resultado / Plan / % Cumplimiento usan exactamente los mismos datos: la venta, el plan y el % de arriba son los de las tarjetas.)*
 
 ### Las fuentes
 
-Las cifras del modo **vs plan** salen de un solo libro de Google Sheets. Las del modo **vs sell-out** salen de otro.
+Las cifras del modo **vs plan** salen de las hojas `SI_Appscript` y `PPTO_Appscript` del libro *Ventas - YTD* (las mismas del gráfico de abajo). Las del modo **vs sell-out** salen de `CUMPLIMIENTO` (la cartera) y del libro *Carga Looker*.
 
 | Libro | Hoja | Qué se lee | Para qué |
 | --- | --- | --- | --- |
-| **Ventas - YTD** (`SPREADSHEET_ID_MTD`, `1hViwAW2…`) | `CUMPLIMIENTO` | Una fila por cliente: `SAP ID`, `CLIENTE`, `KAM ENCARGADO`, `CANAL`, `Real (LOCAL)`, `Current Plan (LOCAL)`, `Real (AÑO)`, `Current Plan (AÑO)`; y la celda de control "cambie el número…" de la fila 1 | Venta y plan del mes, venta y plan del año, KAM, y qué mes es el informe |
+| **Ventas - YTD** (`SPREADSHEET_ID_MTD`, `1hViwAW2…`) | `SI_Appscript` y `PPTO_Appscript` | Sell-in (`Type` = SI) y plan por cliente × mes, de ene-2025 al último mes con sell-in (detalle en `Apps Script/CLAUDE.md` § "Ventas") | **Todo el modo vs plan** (desde el 2026-10-15) |
+| | `CUMPLIMIENTO` | Una fila por cliente: `SAP ID`, `CLIENTE`, `KAM ENCARGADO`, `CANAL`, `Real (LOCAL)`, `Current Plan (LOCAL)`, `Real (AÑO)`, `Current Plan (AÑO)`; y la celda de control "cambie el número…" de la fila 1 | Venta y plan del mes, venta y plan del año, KAM, y qué mes es el informe |
 | | `PLANTILLA` | Una fila por cliente × EAN: `SAP ID`, `CLIENTE`, `Product`, `Real`, `Real -1`, `Real #` | La **Venta -1** (`Real -1`) |
 | | `Historico de ventas` | Una fila por mes × cliente: `Fecha`, `SAP ID`, `CLIENTE`, `KAM ENCARGADO`, `CANAL`, `Real (LOCAL)`, `Current Plan (LOCAL)` | El **mismo mes del año pasado completo** y los meses anteriores del año pasado (para la Venta -1 YTD) |
 | | *(el archivo en Drive)* | Fecha de la última modificación | El **día al que llegan los datos** y los días hábiles |
@@ -232,38 +232,33 @@ Cómo lee el servidor las hojas:
 
 ### Modo "vs plan" (el que abre por defecto)
 
-| Lo que se ve | Cuenta | De dónde sale | Ejemplo |
-| --- | --- | --- | --- |
-| **Mes del informe** (p. ej. "octubre") | El de la celda de control de `CUMPLIMIENTO`: la fecha 2 celdas a la izquierda de la nota "cambie el número…", o el número de mes 1 celda a la izquierda. Si no hay, el último mes con venta del Histórico | `CUMPLIMIENTO`, fila 1 | Octubre 2026 |
-| **VENTA DEL MES** | Σ `Real (LOCAL)` de los clientes filtrados | `CUMPLIMIENTO` | $ 3.467.577.739 |
-| **de $X de plan** | Σ `Current Plan (LOCAL)` de los mismos clientes | `CUMPLIMIENTO` | $ 21.340.944.269 |
-| **% CUMPLIMIENTO DEL PLAN** (cifra grande) | Venta del mes ÷ plan del mes. Con plan 0 muestra "–". **No** se toma la columna de % de la hoja: ahí vale 100 % cuando el plan está vacío. Va sin color: no hay un "esperado a hoy" contra el cual juzgarlo | Las dos de arriba | 3.467.577.739 ÷ 21.340.944.269 = **16 %** |
-| **Venta -1** | Σ `Real -1` de cada cliente (todas sus filas cliente × EAN), más la de los clientes que no están en `CUMPLIMIENTO`. Con el mes **en curso**, `Real -1` ya es el año anterior **hasta la misma fecha**: el visor no prorratea nada | `PLANTILLA` | $ 3.832.663.223 |
-| **Δ% vs Venta -1** | Venta del mes ÷ Venta -1 − 1 | | 3.467.577.739 ÷ 3.832.663.223 − 1 = **−9,5 %** |
-| **Δ** | Venta del mes − Venta -1 | | −$ 365,1 M |
-| **FALTA PARA EL PLAN** | Plan − venta, del total (no cliente por cliente). Si la venta ya pasó el plan: "—" y "Plan cumplido". Con el mes cerrado dice "Faltó para el plan" | | 21.340.944.269 − 3.467.577.739 = $ 17,87 MM |
-| **quedan N días hábiles** | Días hábiles del mes − días hábiles hasta el **día de los datos**. Hábil = lunes a viernes sin festivos de Colombia (Ley Emiliani y los de Pascua). Día de los datos = fecha de la última modificación del libro *Ventas - YTD* en Drive **menos un día**, porque la descarga diaria trae las ventas hasta ayer. Es un dato de calendario: no se usa para proyectar | Drive + calendario | Oct-2026 tiene 21; libro modificado el 13-oct → datos al 12-oct (festivo) → van 7, **quedan 14** |
-| **<MES> <AÑO-1> COMPLETO** | Σ `Real (LOCAL)` de las filas del mismo mes del año anterior, por cliente (más los clientes que no están en `CUMPLIMIENTO`) | `Historico de ventas` | Octubre 2025: $ 13,70 MM |
-| **VENTA YTD** | Σ `Real (AÑO)` | `CUMPLIMIENTO` | $ 141,45 MM |
-| **% del plan del año** | Σ `Real (AÑO)` ÷ Σ `Current Plan (AÑO)`. Es el plan del **año completo**, no el plan a la fecha | `CUMPLIMIENTO` | 141,45 ÷ 224,04 MM = 63 % |
-| **Δ% vs Venta -1 YTD** | Venta YTD ÷ (Σ `Real (LOCAL)` del Histórico del año anterior en los meses **antes** del mes del informe + Venta -1) − 1 | `CUMPLIMIENTO`, `Historico de ventas`, `PLANTILLA` | +1,6 % |
+**Sigue los filtros de la pestaña** (pedido del 2026-10-15): cambia con los **meses marcados** a la izquierda, el **KAM**, los **clientes** elegidos con clic, la **BU** y el **producto**. Sale del mismo cubo de sell-in y plan que el gráfico y las tarjetas, así que las cifras coinciden con ellas. Si el panel está en *Sell-out*, el resumen sigue usando el sell-in: traduce los meses por nombre y los clientes por SAP ID (y lo pide de fondo si aún no está cargado).
 
-**La barra.** Todo se dibuja a la misma escala: la más larga de las tres longitudes (plan, mismo mes del año pasado completo, venta del mes), × 1,03, es el ancho total.
+> **Lo que cambió:** antes este modo mostraba solo el **mes en curso** de la descarga diaria (`CUMPLIMIENTO`, con "quedan N días hábiles" y la raya "Venta -1 a la misma fecha"). Ese mes no está en el cubo —el sell-in llega hasta el último mes cerrado— y por eso no se puede marcar en el panel. Sigue disponible en la pestaña *Ventas MTD (clásico)*.
 
-| Elemento | Qué es | Dato |
+| Lo que se ve | Cuenta | De dónde sale |
 | --- | --- | --- |
-| Pista **gris claro** + línea punteada "plan" al final | El plan del mes | Σ `Current Plan (LOCAL)` (`CUMPLIMIENTO`) |
-| Franja **rayada** | El mismo mes del año pasado **completo** | Σ `Real (LOCAL)` del Histórico (mismo mes, año −1) |
-| Barra **negra** sólida | La venta del mes hasta hoy | Σ `Real (LOCAL)` (`CUMPLIMIENTO`) |
-| Raya vertical **"Venta -1"** | Lo que se había vendido el año pasado a la misma fecha. No aparece cuando el mes ya cerró | Σ `Real -1` (`PLANTILLA`) |
+| **VENTA <meses>** (p. ej. "Sep 2026", "Ene–Sep 2026") | Σ importe de sell-in de los meses marcados, de los clientes, BU y productos filtrados | `SI_Appscript` |
+| **de $X de plan** | Σ plan de los clientes filtrados en esos meses. Solo en pesos y por cliente: con filtro de **BU o producto**, o en meses sin plan, dice "sin plan: <motivo>" | `PPTO_Appscript` |
+| **% CUMPLIMIENTO DEL PLAN** | Venta ÷ plan, solo con plan > 0 (si no, "–"). Sin color: no hay un "esperado a hoy" contra el cual juzgarlo | Las dos de arriba |
+| **Venta -1** y **Δ% / Δ** | Σ sell-in de los **mismos meses del año anterior**; Δ% = venta ÷ Venta -1 − 1; Δ = venta − Venta -1. Si esos meses no están en el cubo: "sin Venta -1". Un periodo marcado siempre está cerrado: no hay "a la misma fecha" | `SI_Appscript` |
+| **FALTÓ PARA EL PLAN** | Plan − venta del total. Si ya pasó el plan: "—" y "Plan cumplido" | |
+| **<MESES AÑO-1>** (franja rayada) | Lo mismo que la Venta -1 (mismos meses, año anterior) | `SI_Appscript` |
+| **VENTA YTD A <mes>** | Σ sell-in de enero al **último mes marcado** de ese año | `SI_Appscript` |
+| **% del plan acumulado** | Venta YTD ÷ Σ plan de enero al último mes marcado (solo meses con plan cargado). No es el plan del año completo | `PPTO_Appscript` |
+| **Δ% vs Venta -1 YTD** | Venta YTD ÷ Σ sell-in de los mismos meses del año anterior − 1 | `SI_Appscript` |
+| **N clientes** | Clientes con venta o plan en los meses marcados, después de los filtros | |
 
-Cómo se lee: si la barra negra pasa la raya "Venta -1", vamos por encima del año pasado a la misma fecha. La distancia hasta el final de la pista gris es lo que falta para el plan. La franja rayada muestra cuánto vendimos el año pasado en todo el mes.
+**La barra.** Pista **gris claro** + línea "plan" = plan; franja **rayada** = los mismos meses del año anterior; barra **negra** = venta. Todo a la misma escala (la más larga de las tres × 1,03).
+
+**Punto de venta.** El sell-in no trae punto de venta: con un PDV elegido (solo posible en la vista de sell-out), el resumen avisa en vez de mostrar una cifra que no sería comparable con el plan.
 
 ### Modo "vs sell-out" (switch arriba a la derecha)
 
 Compara lo que facturamos (sell-in) con lo que el cliente le vendió al consumidor (sell-out). Ambos salen de la hoja `Data` del libro *Carga Looker*, que es la misma fuente para los dos. Según el equipo, el sell-out y el inventario de `Data` vienen valorizados a **PVL** (por eso el asterisco).
 
 - **Meses.** Son los marcados en el panel **Meses** de la izquierda de la pestaña (Año / Últ. 3 / Último, o a mano). Se recortan al **último mes con sell-out en `Data`**: si el panel llega a septiembre pero `Data` solo trae sell-out hasta agosto, se usa hasta agosto.
+- **Filtros.** Aplica los meses, el KAM y los clientes elegidos. **No** aplica BU, producto ni punto de venta (este modelo es por cliente): si hay uno elegido, el resumen lo avisa y las tarjetas de la izquierda sí lo respetan.
 - **$ / #.** En `$` se suma `Real (LOCAL)`; en `#`, `Real #` (unidades).
 
 | Lo que se ve | Cuenta (`Data`, filas del cliente en los meses elegidos) |
@@ -279,9 +274,9 @@ Compara lo que facturamos (sell-in) con lo que el cliente le vendió al consumid
 
 ### Cómo comprobar una cifra a mano
 
-1. **Venta del mes y plan.** En *Ventas - YTD › CUMPLIMIENTO*, suma `Real (LOCAL)` y `Current Plan (LOCAL)` de todas las filas de cliente, sin las de total. Debe dar lo mismo que el resumen con "Todos los KAM".
-2. **Venta -1.** En *PLANTILLA*, suma `Real -1` de todas las filas, sin las de total. Debe coincidir, porque el resumen también suma la de los clientes que no están en `CUMPLIMIENTO`. Si no coincide, busca celdas con error: el visor las cuenta como 0.
-3. **Mismo mes del año pasado completo.** En *Historico de ventas*, filtra `Fecha` = el mes del informe del año anterior y suma `Real (LOCAL)`.
+1. **Venta y plan (vs plan).** En *Ventas - YTD › SI_Appscript*, filtra los meses marcados y suma `Real (LOCAL)` (solo `Type` = SI); en *PPTO_Appscript*, suma `Plan` de esos meses. Deben dar lo mismo que el resumen y que las tarjetas de la izquierda.
+2. **Venta -1 (vs plan).** Lo mismo en `SI_Appscript`, con los mismos meses del año anterior.
+3. **Modo vs sell-out.** En *Carga Looker › Data*, suma `Real (LOCAL)` por `Type` (SI / SO) de los meses de la ventana.
 4. Si algo no cuadra, presiona **Actualizar**, porque la caché puede tener hasta 30 minutos. El botón **Diagnóstico** muestra qué devolvió cada hoja.
 
 Las definiciones completas de todos los KPI del visor están en [`Apps Script/DOCUMENTACION_KPIS.md`](Apps%20Script/DOCUMENTACION_KPIS.md) (§3.3 este resumen, §3.4 el gráfico de crecimiento de abajo).
