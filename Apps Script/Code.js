@@ -63,7 +63,7 @@ function doGet(e) {
   // createTemplateFromFile + evaluate(): obligatorio para que se procesen los
   // <?!= include('...') ?> con los que Index.html ensambla Estilos y los Js*.
   return HtmlService.createTemplateFromFile('Index').evaluate()
-    .setTitle('Cobertura Estratégica · ISDIN Colombia')
+    .setTitle('Isdin CORE · Colombia')
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL)
     .addMetaTag('viewport', 'width=device-width, initial-scale=1');
 }
