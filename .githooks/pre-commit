@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# Hook versionado del equipo. Se activa con `git config core.hooksPath .githooks`
+# (lo hace /iniciar solo). Salida de emergencia: PERMITIR_MAIN=1 git commit ...
+
+# 1. No se commitea en main: todo cambio va en una rama y entra por pull request.
+if [ "$(git branch --show-current)" = main ] && [ -z "$PERMITIR_MAIN" ]; then
+  echo "BLOQUEADO: no se hacen commits en main. Todo cambio va en una rama y entra por pull request."
+  echo "  Crea la rama con /rama, o a mano (tus cambios sin commitear se llevan contigo):"
+  echo "    git switch -c feat/lo-que-estoy-haciendo"
+  exit 1
+fi
+
+# 2. Nada de secretos ni datos de clientes (el .gitignore no frena un 'git add -f').
+prohibidos='(^|/)(sfe-prod-[^/]*\.json|[^/]*service-account[^/]*\.json|[^/]*credentials[^/]*\.json|[^/]*\.json\.key|config\.py|MAESTRO PDV[^/]*\.xlsx)$|^Apps Script/datos_sheets/'
+malos=$(git diff --cached --name-only --diff-filter=ACMR | grep -E "$prohibidos")
+if [ -n "$malos" ]; then
+  echo "BLOQUEADO: estos archivos son secretos o datos de clientes y no se suben a Git:"
+  echo "$malos" | sed 's/^/  /'
+  echo "  Quítalos con: git restore --staged <archivo>"
+  exit 1
+fi
+
+# 3. Llaves dentro del contenido (cuenta de servicio, API key de Google).
+if git diff --cached -U0 | grep -E '^\+' | grep -qE 'BEGIN (RSA |EC )?PRIVATE KEY|"private_key"[[:space:]]*:|AIza[0-9A-Za-z_-]{35}'; then
+  echo "BLOQUEADO: se ve una llave privada o una API key en lo que vas a commitear."
+  echo "  Las llaves viven en Script Properties o en config.py, nunca en el código."
+  exit 1
+fi
+exit 0

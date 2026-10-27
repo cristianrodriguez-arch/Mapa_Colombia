@@ -228,8 +228,8 @@ Helper único en `JsVentasMtd.html` (lo usan también las tablas de SI vs SO). `
 
 ## 8. Operación y despliegue
 
-1. `clasp push` — suben **juntos** `Code.js` y los 6 `.html` (`Index`, `Estilos`, `JsNucleo`, `JsFiltros`, `JsMapa`, `JsPaneles`) **más** `JsVentasMtd` y `JsSIvsSO`. Un push parcial rompe la plantilla (ver CLAUDE.md).
-2. Crear **nueva versión** del deployment (o probar en la URL `/dev`).
+1. Subir el código (`/probar` a tu proyecto de pruebas; `/publicar` a producción, ver [../COLABORACION.md](../COLABORACION.md)) — suben **juntos** `Code.js` y los 11 `.html` (`Index`, `Estilos`, `JsNucleo`, `JsFiltros`, `JsMapa`, `JsPaneles`, `JsVentasMtd`, `JsSIvsSO`, `JsYoobic`, `JsVentas`, `JsVentas3`). Un push parcial rompe la plantilla (ver CLAUDE.md).
+2. `/publicar` crea la **nueva versión** y mueve a ella la implementación de producción (o se prueba antes en la URL `/dev` de tu proyecto de pruebas).
 3. **Una sola vez**, desde el editor de Apps Script: ejecutar `instalarTriggerCache()` (pedirá autorizar un permiso nuevo para triggers). Programa `calentarCache` cada 15 min. `quitarTriggerCache()` lo retira.
 4. Verificar con `verVentasMtd()` y `verSIvsSO()` (Registro de ejecución). `verVentasMtd` imprime la **conciliación** de las tres hojas; los tres importes del mes de corte deben coincidir (17.722 M en sep-2026). El Diagnóstico de la web app muestra lo mismo y la app avisa en pantalla si difieren > 0,5 %.
 5. Tras cambiar datos en las hojas: botón **Actualizar** (fuerza lectura) o `limpiarCacheMtd()` / `limpiarCacheSIvsSO()`. Tras el ETL del mapa: `limpiarCache()` (ahora también borra las capas del mapa).

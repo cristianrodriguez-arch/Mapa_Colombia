@@ -1,0 +1,29 @@
+name: Pruebas
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  pruebas:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Pruebas del visor (Node)
+        run: |
+          for t in tests/*.js; do
+            echo "== $t"
+            node "$t" || exit 1
+          done
+      - name: Prueba del ETL de Ventas (Python)
+        run: |
+          pip install -r requirements.txt
+          cp config.example.py config.py
+          python tests/test_etl_s3.py

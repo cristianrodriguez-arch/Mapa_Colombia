@@ -1,278 +1,117 @@
-**# Guía de Colaboración del Equipo
+# Guía de colaboración del equipo
 
-## Principios Fundamentales
+Cómo trabajamos Cristian y Sebas (y quien se sume) sobre este repositorio sin pisarnos y sin romper producción. Lo importante lo hacen los comandos de Claude Code; esta guía explica el porqué.
 
-- **Una sola rama (`main`)**: Todos trabajan en `main` directamente, sin crear ramas feature.
-- **Cambios pequeños y frecuentes**: Commits descriptivos; cada commit es una pieza de trabajo que funciona.
-- **Claude como asistente**: Tu equipo describe tareas en lenguaje natural; Claude las implementa y propone pull requests.
-- **Transparencia**: Todos ven qué está haciendo el otro a través de los commits y PRs.
+## Principios
+
+1. **`main` siempre funciona y es lo que se publica.** Nadie trabaja ni sube directo a `main`: se actualiza solo con el *merge* de un pull request (PR).
+2. **Una tarea = una rama = un PR.** Ramas cortas (horas o pocos días), de una sola persona.
+3. **Otra persona revisa antes de que entre.** Sebas es el **líder**: revisa y aprueba los PR de Cristian y decide cuándo se publica a producción. Los PR de Sebas los revisa Cristian.
+4. **Cada quien prueba en su propia copia del script de Apps Script.** Nadie toca el `/dev` del otro ni producción para probar.
+5. **Publicar es un paso aparte y deliberado**, después del merge. Un commit o un merge nunca cambia por sí solo lo que ve el equipo.
+6. **Los mensajes de commit y de PR se escriben para una persona**, en lenguaje de negocio: es lo que el compañero lee al empezar su día.
+
+> `main` **no** está protegida en la configuración de GitHub (decisión del equipo). Las reglas se sostienen con estos comandos, con los *hooks* versionados de `.githooks/` (bloquean commits y push a `main` y los secretos) y con la disciplina de todos.
+
+## El flujo, paso a paso
+
+```
+/iniciar → /rama → (trabajar con Claude) → /probar → /enviar → PR revisado y aprobado → merge → /publicar
+```
+
+| Comando | Qué hace | Quién |
+|---|---|---|
+| `/iniciar` | Trae lo último de `main`, **resume qué hizo el compañero**, avisa qué tiene en curso y deja el git configurado (hooks, rebase). Si estás en `main`, te ayuda a abrir la rama de la tarea. | Todos, cada vez que empiezan |
+| `/rama [qué vas a hacer]` | Crea `tipo/descripcion-corta` desde el `main` de hoy. Claude propone el nombre y **te pregunta antes de crearla**. | Todos |
+| `/probar` | Pone tu rama al día con `main`, corre las pruebas y sube el código a **tu** proyecto de pruebas (URL `/dev`). No toca GitHub ni producción. | Todos |
+| `/enviar [nota]` | Commit con buen mensaje, rebase sobre `main`, pruebas y `git push` **de tu rama**. Te entrega el enlace y el texto del PR. No publica nada. | Todos |
+| `/publicar` | Sube `main` a producción: versión nueva, la misma URL de siempre y un tag `produccion-vNN`. Primero muestra qué saldría y **pide confirmación**. | El líder, o quien él autorice |
+
+Los comandos viven en `.claude/commands/` y sus scripts en `.claude/scripts/` (todo versionado). Si algo se detiene, el script dice `PARADO:` y por qué; Claude lo explica y propone qué hacer.
+
+### 1. Empezar el día: `/iniciar`
+Siempre. Te cuenta los cambios nuevos de `main` agrupados por persona, las ramas que el compañero tiene en marcha (para no duplicar trabajo ni tocar los mismos archivos) y los PR abiertos. También limpia el aviso de ramas ya terminadas.
+
+### 2. Una rama por tarea: `/rama`
+Nombre `tipo/descripcion-corta`, en minúsculas y con guiones:
+
+| Tipo | Para | Ejemplo |
+|---|---|---|
+| `feat` | algo nuevo | `feat/ventas-cumplimiento` |
+| `fix` | un arreglo | `fix/mtd-fechas` |
+| `docs` | solo documentación | `docs/guia-colaboracion` |
+| `chore` | mantenimiento, scripts, configuración | `chore/limpiar-kml` |
+| `refactor` / `test` | reordenar código / pruebas | `refactor/selectores` |
+
+- **Una rama es de una sola persona.** Si necesitas algo de la rama del compañero, pídele que la envíe y la mergee.
+- Si la tarea mezcla temas independientes, son **ramas distintas** (PR chicos se revisan rápido y se revierten fácil).
+- Si ya empezaste a editar estando en `main`, no pasa nada: la rama nueva se lleva tus cambios sin commitear. Lo que no se puede es *commitear* en `main` (el hook lo bloquea).
+
+### 3. Trabajar y probar: `/probar`
+Pide los cambios a Claude en lenguaje natural y, cuando quieras verlos funcionando, `/probar`. Sube el código de tu rama a **tu** proyecto de pruebas.
+
+**Una sola vez por persona** (si falta `.clasp.dev.json`, `/probar` te guía):
+```bash
+npm i -g @google/clasp && clasp login            # cuenta con acceso a los libros
+pip install -r requirements.txt                   # para la prueba del ETL
+bash .claude/scripts/crear_proyecto_prueba.sh "<tu nombre>"
+```
+Eso crea un script vacío en tu cuenta y guarda su id en `.clasp.dev.json` (ignorado por git, nunca se sube). Luego, en su editor: *Implementar → Probar implementaciones* para obtener tu URL `/dev` y autorizar permisos. El script usa `openById`, así que lee los mismos libros que producción: **ojo, es el mismo dato real**; el visor (`Code.js`) solo lee, así que probar no modifica los libros. Las herramientas del menú de la hoja (geocodificación, cruce) sí escriben, pero no corren desde tu proyecto de pruebas.
+
+### 4. Enviar: `/enviar`
+Claude escribe el commit para el revisor, el script pone la rama al día con `main` (rebase), corre **todas** las pruebas (`tests/*.js` y `tests/test_etl_s3.py`) y sube la rama. Después abres el PR con el enlace que te da, usando la plantilla (`.github/pull_request_template.md`): **qué cambia, por qué, cómo se probó y ojo para el equipo**.
+
+- **Título del PR = `tipo(área): qué cambió`** (p. ej. `feat(visor): % de cumplimiento arriba en Ventas`). Los PR se mergean con **Squash and merge**, y ese título queda como el mensaje en `main`.
+- GitHub corre las mismas pruebas en el PR (`.github/workflows/tests.yml`); no se mergea con la marca roja.
+- Si tienes que cambiar algo tras la revisión, commitea en la misma rama y `/enviar` otra vez: el PR se actualiza solo.
+
+### 5. Revisar y mergear (el líder)
+Revisa el PR en GitHub: ¿se entiende qué cambia?, ¿las pruebas pasan?, ¿algo toca un archivo delicado (ver abajo)? Aprueba y mergea con **Squash and merge**, marcando **Delete branch**. Comenta en el PR en vez de arreglar por tu cuenta en la rama del otro.
+
+### 6. Publicar: `/publicar`
+Con el PR ya en `main`: `git switch main` y `/publicar`. Muestra los commits que saldrían, pide confirmación, sube a producción y deja el tag `produccion-vNN`. Se detiene si en el editor web de producción alguien cambió código que no está en GitHub. **Nadie edita código directo en el editor de Apps Script de producción.**
+
+## Commits y PR
+
+```
+feat:     algo nuevo
+fix:      un arreglo
+refactor: cambia el código sin cambiar lo que hace
+docs:     documentación
+test:     pruebas
+chore:    mantenimiento (scripts, configuración, colaboración)
+```
+Formato: `tipo(área): una frase`, y debajo una línea por cambio en lenguaje de negocio, y `Ojo:` si el otro debe hacer algo (correr el ETL, `limpiarCache()`…). Áreas: `visor`, `mapa`, `mtd`, `sivso`, `yoobic`, `bricks`, `etl`, `colaboracion`.
+
+## Reglas
+
+**Siempre**
+- Empezar con `/iniciar`; una rama nueva por tarea.
+- Probar en tu proyecto de pruebas antes de enviar.
+- Commits y PR chicos y de un solo tema.
+- Si cambia una cifra o su fuente, actualizar README / `Apps Script/CLAUDE.md` / `DOCUMENTACION_KPIS.md` en el mismo PR.
+
+**Nunca**
+- Commit ni push a `main` (los hooks lo bloquean). Salida de emergencia: `PERMITIR_MAIN=1`, solo el líder y avisando en el equipo.
+- `git push --force` (el script usa `--force-with-lease` solo en tu rama).
+- `git add -f`, ni `--no-verify` para saltarse los hooks.
+- Subir secretos o datos de clientes: `sfe-prod-*.json`, `config.py`, `MAESTRO PDV's*.xlsx`, `Apps Script/datos_sheets/`. Las llaves viven en Script Properties o en `config.py` (local). Si una llave se sube por error, **se considera filtrada**: se revoca y se crea otra, no basta con borrar el commit.
+- Editar a mano `brick_ids.csv` (memoria de códigos) ni los generados `Colombia_Bricks.kml/xlsx/geojson` (salen de `unificar_bricks.py`; un cambio ahí va en su propio PR).
+- `clasp push` ni `clasp deploy` a mano: para eso están `/probar` y `/publicar`.
+
+## Qué hacer cuando…
+
+- **Mi rama quedó atrás de `main`** → `/probar` y `/enviar` la ponen al día solas (rebase).
+- **Hay conflicto** → el script se detiene y lista los archivos. Díselo a Claude: resuelve manteniendo lo de ambos, `git rebase --continue` y repites. `git rebase --abort` deja todo como estaba.
+- **El compañero y yo tocamos el mismo archivo** → `/iniciar` te muestra en qué anda cada uno; coordinen antes de empezar, sobre todo en `Code.js`, `Index.html` y los `Js*.html` grandes.
+- **Algo roto llegó a producción** → *Implementar → Administrar implementaciones → editar → elegir la versión anterior* (vuelve en segundos), y después se arregla con un PR `fix/…` normal.
+- **Urgencia real** → misma ruta, más corta: `fix/…`, `/enviar`, el líder aprueba en cuanto lo ve, `/publicar`. No hay atajos a `main`.
+- **Tareas y pendientes** → *Issues* del repositorio en GitHub (con quién y para cuándo); el PR dice `Cierra #12`. No se usan TODO en el código ni un TAREAS.md.
+- **Ver la historia** → `git log --oneline -20`, `git log --author=...`, o la pestaña *Commits* / *Pull requests* en GitHub. Los tags `produccion-vNN` marcan qué código está en cada versión publicada.
+
+## Mejoras de GitHub que hoy NO están activas
+
+Por decisión del equipo `main` no tiene protección. Si algún día se quiere que GitHub *obligue* lo que hoy es disciplina (Settings → Branches): exigir PR con 1 aprobación, exigir que pase el chequeo «Pruebas», prohibir force push. Y en Settings → General: *Automatically delete head branches*. `.github/CODEOWNERS` ya pide la revisión del líder automáticamente.
 
 ---
-
-## Paso a Paso: Flujo de Trabajo
-
-### 1️⃣ Clonar el Repositorio (Una sola vez)
-
-**Cada persona del equipo hace esto SOLO UNA VEZ:**
-
-```powershell
-git clone https://github.com/[usuario]/[repo].git
-cd "Universdad/Bricks CO"
-```
-
-Luego abre la carpeta en VSCode:
-
-```powershell
-code .
-```
-
-O en VSCode: `Ctrl+K, Ctrl+O` → selecciona la carpeta.
-
----
-
-### 2️⃣ Antes de Empezar: Sincronizar con `main`
-
-**Cada mañana o antes de trabajar:**
-
-```powershell
-git pull origin main
-```
-
-Esto trae los últimos cambios que hizo tu equipo.
-
-> **Atajo con Claude Code**: escribe `/iniciar` al empezar y `/finalizar` al terminar.
-> - `/iniciar` → trae lo último de GitHub y de Apps Script y te **resume qué hizo el compañero** (sale de sus mensajes de commit). Avisa si alguien editó en el editor web de Apps Script sin pasar por GitHub.
-> - `/probar` → para **ver tus cambios en la URL `/dev` antes de cerrar**: trae lo del compañero, corre las pruebas y hace `clasp push` sin tocar GitHub. Úsalo en vez del `clasp push` manual (que pisa lo del otro si no lo has traído). Cierra luego con `/finalizar`.
-> - `/finalizar [nota opcional]` → Claude escribe un **commit pensado para que lo lea el otro**, y el script `.claude/scripts/finalizar.sh` integra lo del compañero, corre las pruebas de `tests/`, comprueba el Apps Script remoto y hace `clasp push` + `git push`.
->   Al final **publica para el equipo**: crea una versión nueva y la pone en la implementación de producción que ya existe, así el link no cambia. Para subir sin publicar: `/finalizar sin publicar`.
->
-> Por eso importa el mensaje de commit: es lo que el otro leerá al empezar su día.
->
-> Viven en `.claude/commands/` (versionados en Git). Requisito una vez por equipo: `npm i -g @google/clasp` y `clasp login` con una cuenta con acceso al proyecto.
-
----
-
-### 3️⃣ Hacer un Cambio: En Palabras Simples
-
-Tienes dos opciones:
-
-#### **Opción A: Tú implementas, Claude revisa**
-1. Haces los cambios en VSCode
-2. Abres terminal: `git diff` → ves qué cambiaste
-3. Usas Claude Code (`Ctrl+I` en VSCode) para que revise tu código
-
-#### **Opción B: Claude implementa (RECOMENDADO para este flujo)**
-1. En Claude Code describe lo que quieres en **lenguaje natural**:
-   > "Añade una función en `asignar_bricks.py` que valide coordenadas antes de procesar"
-2. Claude hace el cambio
-3. Claude propone un PR con la descripción
-
----
-
-### 4️⃣ Crear un Commit
-
-**Cuando hayas terminado un cambio (pequeño, que funcione):**
-
-```powershell
-git add .
-git commit -m "feat: descripción corta del cambio"
-```
-
-**Formato de mensaje (sigue este patrón):**
-
-```
-feat:     nueva funcionalidad
-fix:      corrección de bug
-refactor: cambio en código sin funcionalidad nueva
-docs:     cambios en documentación
-test:     agregar o actualizar tests
-```
-
-**Ejemplos válidos:**
-```
-feat: añadir validación de coordenadas en asignar_bricks.py
-fix: corregir crash al procesar KML vacío
-refactor: simplificar lógica de normalización
-docs: actualizar COLABORACION.md
-```
-
----
-
-### 5️⃣ Subir Cambios a `main`
-
-```powershell
-git push origin main
-```
-
-**Eso es todo.** No hay ramas, no hay complejidad.
-
----
-
-### 6️⃣ Hacer un Pull Request (Para Revisar Cambios)
-
-Si quieres que otro miembro **revise formalmente** antes de pushearlo, **sin salir de la rama `main`**:
-
-```powershell
-# 1. Haz el cambio y crea el commit (no lo pushees aún)
-git add .
-git commit -m "feat: tu cambio"
-
-# 2. Crea un PR en lenguaje natural usando Claude
-# Escribe en Claude:
-# "Tengo un commit listo: [pega el mensaje]. 
-#  Puedes crear un PR describiendo esto en lenguaje de usuario?"
-
-# 3. Claude genera el PR. Otra persona lo revisa.
-# 4. Si tiene feedback, actualizas el commit y lo pusheas.
-```
-
----
-
-## Reglas de Oro
-
-### ✅ SIEMPRE
-
-- **Antes de trabajar**: `git pull origin main`
-- **Commits pequeños**: Un cambio = un commit (no 10 cambios en uno)
-- **Lenguaje natural en los PRs**: Explica QUÉ y POR QUÉ, no solo el código
-- **Prueba antes de pushear**: Si es Python, ejecuta el script; si es Apps Script, revisa el visor
-- **Cuidado con archivos especiales**:
-  - **NUNCA** editar a mano: `brick_ids.csv` (la "memoria de códigos")
-  - `Colombia_Bricks.kml/xlsx/geojson` — estos se generan automáticamente con `unificar_bricks.py`
-
-### ❌ NUNCA
-
-- No crees ramas (excepto si Cristian lo pide)
-- No hagas un commit gigante con 20 cambios distintos
-- No pushees código que no probaste
-- No edites `brick_ids.csv` manualmente
-- No fuerces un push (`git push --force`) — pregunta a Cristian
-
----
-
-## Sistema de Tareas: Usar ChatGPT/Claude como Coordinador
-
-Si tu equipo quiere **coordinar trabajo paralelo**, puedes usar Claude como "gestor de tareas":
-
-### Opción 1: TODO en el código
-
-En cualquier archivo, escribe comentarios TODO:
-
-```python
-# TODO: Optimizar simplificación de geometrias (asignado a Juan)
-# TODO: Agregar tests para asignar_bricks.py (asignado a María)
-```
-
-Claude puede listar TODOs: `grep -r "TODO" .`
-
-### Opción 2: Archivo TAREAS.md
-
-Crea `TAREAS.md` en la raíz:
-
-```markdown
-# Tareas en Progreso
-
-- [ ] Validar coordenadas en `asignar_bricks.py` — **Juan** — 50%
-- [ ] Refactorizar `unificar_bricks.py` — **María** — inicio
-- [ ] Documenter filtros en `Apps Script/` — **Cristian** — revisión
-
-# Tareas Completadas
-
-- [x] Añadir `preview_visor.html` — Juan
-```
-
-Cada que termines algo:
-```powershell
-# Actualiza TAREAS.md
-git add TAREAS.md
-git commit -m "docs: marcar tarea como completada"
-git push
-```
-
----
-
-## Ejemplo de Flujo Completo
-
-**Escenario**: Tu equipo quiere agregar validación de coordenadas.
-
-### Paso 1: Pedir a Claude
-```
-Cristian: "Quiero validar que las coordenadas en asignar_bricks.py 
-sean WGS84 válidas antes de procesarlas. ¿Puedes hacerlo?"
-```
-
-### Paso 2: Claude Trabaja
-Claude edita `asignar_bricks.py`, añade la función, la prueba.
-
-### Paso 3: Claude Propone el PR
-Claude crea un PR con descripción en lenguaje natural:
-```
-## ¿Qué cambio?
-Agregué validación de coordenadas WGS84 antes de procesar puntos.
-
-## Por qué?
-Evita crashes si alguien pasa coords inválidas.
-
-## Cómo probarlo?
-python asignar_bricks.py datos_invalidos.xlsx
-(Debe mostrar error descriptivo, no crash)
-```
-
-### Paso 4: Review & Merge
-Otro miembro revisa el PR, comenta si necesita ajustes.
-
-### Paso 5: Merge & Push
-```powershell
-git pull origin main  # Trae el PR mergeado
-```
-
----
-
-## Preguntas Frecuentes
-
-### P: ¿Qué pasa si dos personas editan lo mismo al mismo tiempo?
-**R**: Git muestra un **conflicto**. Solución: uno de ustedes hace `pull`, resuelve el conflicto (mantiene ambas líneas) y hace `push`. El otro hace `pull` de nuevo.
-
-**Cómo evitarlo**: Coordinense por Slack: "Voy a editar `asignar_bricks.py` los próximos 20 min".
-
-### P: ¿Puedo hacer push sin pasar por PR?
-**R**: Sí, si es un cambio pequeño y obvio (p. ej., actualizar TAREAS.md, fix de typo). Para cambios grandes, siempre pasa por PR.
-
-### P: ¿Qué pasa si alguien hace push de algo roto?
-**R**: Alguien lo arregla rápido con otro commit `fix:`. La historia queda visible.
-
-### P: ¿Cómo veo lo que hizo cada quien?
-**R**: 
-```powershell
-git log --oneline        # Últimos 10 commits
-git log --author="Juan"  # Solo commits de Juan
-git blame asignar_bricks.py  # Quién editó cada línea
-```
-
-### P: ¿Necesito estar online todo el tiempo?
-**R**: No. Puedes trabajar offline, hacer commits locales. Cuando tengas conexión: `git push origin main`.
-
----
-
-## Checklist Antes de Pushear
-
-- [ ] Hice `git pull origin main`
-- [ ] Probé el cambio (ejecuté el script / reviré el visor)
-- [ ] Mi commit es pequeño y descriptivo
-- [ ] El mensaje dice QUÉ y POR QUÉ (no cómo)
-- [ ] No edité archivos "prohibidos" (`brick_ids.csv`)
-- [ ] No tengo líneas de debug/test sin usar
-- [ ] Hice `git add .` (no `.gitignore` accidental)
-
----
-
-## Contacto & Escaladas
-
-- **Dudas técnicas**: Pregunten en Slack o a Claude Code
-- **Conflictos graves**: Avisen a Cristian
-- **Cambios al proceso**: Editen esta guía con `feat: ...` y avisen
-
----
-
-**Última actualización**: 2026-09-30
-**Mantenido por**: El equipo
+**Última actualización**: 2026-10-14 · **Mantenido por**: el equipo (cambios a esta guía = un PR `docs(colaboracion): …`)

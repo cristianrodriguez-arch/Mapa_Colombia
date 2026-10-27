@@ -173,12 +173,12 @@ El cruce PDV ↔ ventas se hace por `POS_ID` = `Nº Oficina Farmacia`, con la mi
 
 ### Despliegue
 
+El código se sube con los comandos del equipo, no con `clasp` a mano (ver [COLABORACION.md](COLABORACION.md)): `/probar` a tu proyecto de pruebas y `/publicar` a producción, después del merge de un PR.
+
 ```bash
-clasp login          # una sola vez, con la cuenta dueña del script
-clasp pull           # trae la versión del editor (sobrescribe lo local)
-clasp push           # sube Apps Script/ al proyecto (rootDir definido en .clasp.json)
-clasp open           # abre el editor
-clasp deployments    # lista los despliegues de la web app
+clasp login          # una sola vez, con la cuenta que tiene acceso al script
+clasp open-script    # abre el editor
+clasp list-deployments   # lista los despliegues de la web app
 ```
 
 La API key de Google Maps (`GOOGLE_MAPS_API_KEY`) vive en **Script Properties**, nunca en el código.
