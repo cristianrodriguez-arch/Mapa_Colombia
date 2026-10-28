@@ -10,6 +10,7 @@ Claude: si quien te habla es el responsable de una tarea, recuérdasela al empez
 
 - **Responsable:** Sebas
 - **Pedida por:** Cristian, 2026-10-28
+- **Issue en GitHub:** [#2](https://github.com/cristianrodriguez-arch/Mapa_Colombia/issues/2) (se cierra con el PR que la termine: `Closes #2`)
 
 ### Qué hay que hacer
 
