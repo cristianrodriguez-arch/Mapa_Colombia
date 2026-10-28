@@ -35,6 +35,8 @@ Comandos del equipo (`.claude/commands/`, scripts en `.claude/scripts/`): `/inic
 - Nunca commitear secretos ni datos de clientes (`sfe-prod-*.json`, `config.py`, `MAESTRO PDV's*.xlsx`, `Apps Script/datos_sheets/`).
 - Si cambia una cifra o su fuente, actualizar README / `Apps Script/CLAUDE.md` / `DOCUMENTACION_KPIS.md` en el mismo PR.
 
+**Tareas pendientes**: las tareas grandes asignadas a cada persona están en [TAREAS.md](TAREAS.md) (hoy: reestructurar la base de sell-in, responsable Sebas). Léelo al empezar y recuérdale al responsable la suya.
+
 ## Visor web (Apps Script) y pruebas
 
 El visor vive en `Apps Script/` (ver [Apps Script/CLAUDE.md](Apps%20Script/CLAUDE.md)). Las **definiciones de KPI, sus fuentes, los hallazgos de la auditoría del 2026-10-03 y el checklist de despliegue** están en [Apps Script/DOCUMENTACION_KPIS.md](Apps%20Script/DOCUMENTACION_KPIS.md). Las pruebas en Node están en `tests/` (fuera de `Apps Script/` para que `clasp push` no las suba): `node tests/test_servidor_mtd.js`, `node tests/test_cliente_mtd.js`, `node tests/test_cliente_sivso.js`, `node tests/test_yoobic.js`, `node tests/test_tabla_pdv.js`, `node tests/test_ventas.js`, `node tests/test_ventas3.js`, `node tests/chequeo_sintaxis_html.js` y, para el ETL de Ventas 3.0, `python tests/test_etl_s3.py` (`/probar`, `/enviar` y `/publicar` corren todo `tests/*.js` y el test de Python; GitHub Actions también, en cada PR). La pestaña **Yoobic · Perfect Store** (hojas `Yoobic` + `Direcciones con sus cuentas CO (Appsheets)` del MAESTRO PDV's) está documentada en [Apps Script/CLAUDE.md](Apps%20Script/CLAUDE.md) § "Yoobic".
