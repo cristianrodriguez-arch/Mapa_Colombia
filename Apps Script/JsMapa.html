@@ -144,7 +144,7 @@ function recolorBricks(){
     // Perfect Store: % del máximo del pilar, promedio de los PDV evaluados del
     // brick, semáforo de umbrales absolutos (no cuartiles). -1 = sin encuesta.
     var ps=ybData?ybPorBrick(visibles()):{};
-    escala=function(v){return v<0?SEM.sin:ybColorPct(v)};
+    escala=function(v){return v<0?YB_SEM.sin:ybColorPct(v)};
     bricksG.forEach(function(b){var v=ps[b.brickId];pinta(b,v==null?-1:Math.max(v,.001),.4)});
   }else if(modoColor==='conectado'){
     escala=crearEscala(Object.keys(agConectado).map(function(k){return agConectado[k]}));

@@ -162,7 +162,7 @@ function contextoCliente() {
     SEM: { alto: '#1e8e3e', medio: '#f2b600', bajo: '#ef7d00', muybajo: '#e41f33', sin: '#9ca3af' },
     FMT: new Intl.NumberFormat('es-CO'),
     esc: s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;'),
-    normTxt: s => String(s == null ? '' : s).toUpperCase(), em: m => m,
+    normTxt: s => String(s == null ? '' : s).toUpperCase().normalize('NFD').replace(/\p{Diacritic}/gu, ''), em: m => m,
     esGas: () => false, me: e => String(e), cargarLib: () => {}, Selector: function () { this.fijar = () => {}; this.refrescar = () => {}; },
     pintarBarras() {}, mtdTabla: cfg => { tablas[cfg.id] = cfg; }, mtdVacio() {}, mtdPintarChips() {},
     mtdDescargarCsv() {}, mtdCsvFecha: () => 'hoy',
@@ -302,6 +302,61 @@ t('los datos de prueba (mock) se expanden sin errores y cuadran Global = suma', 
   C2.ybRecibir(C2.ybDatosDemo());
   assert.ok(C2.ybMis.length > 100);
   C2.ybMis.slice(0, 20).forEach(m => assert.ok(Math.abs(m.s[0] - (m.s[1] + m.s[2] + m.s[3] + m.s[4])) < .2));
+});
+
+t('cobertura: asignados con encuesta (por cliente, delegado y canal) y sobre todos los PDV del maestro', () => {
+  const C3 = contextoCliente();
+  C3.ybRecibir(JSON.parse(JSON.stringify(PAYLOAD)));
+  C3.puntosG = [
+    { id: '001ABCDEFGHIJKLQQQ', posId: 'P1', grupo: 'CRUZ VERDE', channel: 'Cadenas' },   // tienda 0 (por Id 15)
+    { id: '003ZZZZZZZZZZZZQQQ', posId: 'P3', grupo: 'FARMATODO', channel: 'Cadenas' },    // sin tienda Yoobic
+    { id: '004YYYYYYYYYYYYQQQ', posId: 'P4', grupo: 'Sin Grupo', channel: 'Sin Canal' }
+  ];
+  C3.asignacionesG = {
+    P1: [{ delegado: 'ANA', canal: 'Cadenas', cuentaId: '001ABCDEFGHIJKLQQQ' }, { delegado: 'LUIS', canal: 'Cadenas', cuentaId: '001ABCDEFGHIJKLQQQ' }],
+    P3: [{ delegado: 'ANA', canal: 'Cadenas', cuentaId: '003ZZZZZZZZZZZZQQQ' }]
+  };
+  let k = C3.ybCalcularCobertura();
+  eq(k.A, { n: 2, si: 1 });
+  eq(k.T, { n: 3, si: 1 });
+  eq(k.dims.cliente, { 'CRUZ VERDE': { n: 1, si: 1 }, FARMATODO: { n: 1, si: 0 } });
+  eq(k.dims.del, { ANA: { n: 2, si: 1 }, LUIS: { n: 1, si: 1 } });            // 2 delegados: cuenta en ambos
+  eq(k.dims.canal, { Cadenas: { n: 2, si: 1 } });
+  // Rango de fechas sin encuestas de la tienda 0 → nadie cubierto
+  C3.ybFecha = { modo: 'intervalo', d1: '2026-09-01', d2: '2026-09-30' };
+  k = C3.ybCalcularCobertura();
+  eq(k.A, { n: 2, si: 0 });
+  C3.ybRenderCobertura();
+  assert.ok(/PDV asignados/.test(C3.document.getElementById('ybCobertura').innerHTML));
+});
+t('rol del delegado (Team de Asignacion): en las encuestas y filtrando los asignados de la cobertura', () => {
+  const C4 = contextoCliente();
+  C4.ybRecibir(JSON.parse(JSON.stringify(PAYLOAD)));
+  C4.puntosG = [{ id: '001ABCDEFGHIJKLQQQ', posId: 'P1', grupo: 'CRUZ VERDE', name: 'PDV UNO', direccion: 'Cra 1', poblacion: 'Bogota' },
+                { id: '003ZZZZZZZZZZZZQQQ', posId: 'P3', grupo: 'FARMATODO', name: 'PDV TRES' }];
+  C4.asignacionesG = {
+    P1: [{ delegado: 'Sebastián', team: 'VM', cuentaId: '001ABCDEFGHIJKLQQQ' }],
+    P3: [{ delegado: 'ANA MARIA LOPEZ', team: 'LAM', cuentaId: '003ZZZZZZZZZZZZQQQ' }]
+  };
+  assert.strictEqual(C4.ybRolDe('SEBASTIAN'), 'VM');                       // sin tildes ni mayúsculas
+  assert.strictEqual(C4.ybRolDe('ANA'), 'Sin rol');                        // prefijo demasiado corto
+  assert.strictEqual(C4.ybRolDe('Ana Maria Lopez Ruiz'), 'LAM');           // Yoobic trae el nombre completo
+  C4.setYbFiltro('rol', ['VM']);
+  let k = C4.ybCalcularCobertura();
+  eq(k.A, { n: 1, si: 1 });
+  eq(k.listas.A.map(r => [r.nombre, r.ok, r.fecha]), [['PDV UNO', true, '2026-10-01']]);   // última encuesta
+  eq(C4.ybFiltradas(null).map(m => m.del), ['SEBASTIAN', 'SEBASTIAN']);   // solo encuestas de delegados VM (ANA no tiene rol)
+  C4.setYbFiltro('rol', ['LAM']);
+  k = C4.ybCalcularCobertura();
+  eq(k.A, { n: 1, si: 0 });
+  // Panel de detalle: Sin encuesta de los asignados, con búsqueda
+  C4.ybRenderCobertura();
+  C4.ybCobDetalle('A', 0);
+  assert.strictEqual(C4.ybCobFilasPanel().length, 1);
+  C4.ybCobBuscar('zzz');
+  assert.strictEqual(C4.ybCobFilasPanel().length, 0);
+  C4.ybCobDetalle('T', 1);
+  eq(C4.ybCobFilasPanel().map(r => r.nombre), ['PDV UNO']);
 });
 
 console.log('\n' + ok + ' pruebas OK');

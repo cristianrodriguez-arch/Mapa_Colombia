@@ -33,7 +33,12 @@ function ybNivel(pct){
   if(pct==null||!isFinite(pct))return'sin';
   if(pct>=YB_UMBRALES.alto)return'alto';if(pct>=YB_UMBRALES.medio)return'medio';
   if(pct>=YB_UMBRALES.bajo)return'bajo';return'muybajo'}
-function ybColorPct(pct){return SEM[ybNivel(pct)]}
+/* Semáforo con la paleta del manual de marca (verde ok, durazno 70, durazno 90, rojo
+   de error): solo en Perfect Store; el mapa conserva SEM. Para texto, el durazno 70
+   no llega a 4.5:1 sobre blanco y se oscurece (ybColorTxt). */
+var YB_SEM={alto:'#086124',medio:'#d09375',bajo:'#725140',muybajo:'#b71c1c',sin:'#cecece'};
+function ybColorPct(pct){return YB_SEM[ybNivel(pct)]}
+function ybColorTxt(pct){var n=ybNivel(pct);return n==='medio'?'#9c6446':n==='sin'?'var(--muted)':YB_SEM[n]}
 
 /* ── Formatos ── */
 function ybNum(v,dec){if(v==null||!isFinite(v))return'–';
@@ -181,6 +186,7 @@ var YB_DIMS=[
   {dim:'tienda',  etq:'Sitio (PDV)',        fijo:true, tope:300},
   {dim:'del',     etq:'Usuario (Delegado)', fijo:true},
   {dim:'cliente', etq:'Cliente',            fijo:true},
+  {dim:'rol',     etq:'Rol del delegado',   fijo:true},   // Team de la hoja Asignacion (VM / LAM)
   {dim:'camp',    etq:'Campaña'},
   {dim:'depto',   etq:'Departamento'},
   {dim:'ciudad',  etq:'Ciudad'},
@@ -189,7 +195,7 @@ var YB_DIMS=[
   {dim:'grupo',   etq:'Grupo de producto'},
   {dim:'producto',etq:'Producto',           tope:300},
   {dim:'tipoFoto',etq:'Tipo de foto'}];
-var YB_DIMS_MISION=['tienda','del','cliente','camp','depto','ciudad','zona','brick'];
+var YB_DIMS_MISION=['tienda','del','rol','cliente','camp','depto','ciudad','zona','brick'];
 var ybFiltros={},ybFset={},ybVisibles={},YB_SEL={};
 YB_DIMS.forEach(function(c){ybFiltros[c.dim]=[];ybFset[c.dim]=null;if(c.fijo)ybVisibles[c.dim]=true});
 var ybFecha={modo:'todo',d1:'',d2:''};
@@ -207,7 +213,7 @@ function setYbFiltro(dim,arr){
 function ybValor(m,dim){
   var t=m.t;
   switch(dim){
-    case'tienda':return t.id;case'del':return m.del;case'cliente':return t.cliente;
+    case'tienda':return t.id;case'del':return m.del;case'rol':return ybRolDe(m.del);case'cliente':return t.cliente;
     case'camp':return m.camp;case'depto':return t.depto;case'ciudad':return t.ciudad;
     case'zona':return t.zona;case'brick':return t.brick||'Sin brick'}
   return''}
@@ -438,7 +444,7 @@ function ybRenderResumen(lista){
     var v=prom[i],pct=v==null?null:v/p.max;
     h+='<div class="yb-kpi'+(i===0?' yb-kpi-global':'')+'">'+
       '<div class="etq" title="'+esc(p.etiqueta)+'">'+esc(p.etiqueta)+'</div>'+
-      '<div class="num"><span style="color:'+(v==null?'var(--muted)':ybColorPct(pct))+'">'+ybNum(v)+'</span>'+
+      '<div class="num"><span style="color:'+(v==null?'var(--muted)':ybColorTxt(pct))+'">'+ybNum(v)+'</span>'+
       '<span class="de"> / '+p.max+'</span></div>'+
       '<div class="yb-pista"><span style="width:'+(pct==null?0:Math.min(100,Math.round(pct*100)))+'%;background:'+ybColorPct(pct)+'"></span></div>'+
       '<div class="det">'+ybPctTxt(pct)+' del máximo</div></div>'});
@@ -456,6 +462,7 @@ function ybRenderResumen(lista){
   // Global por cliente y por delegado (clic = filtrar)
   ybBarrasDim('ybBarCliente','cliente',base,function(m){return m.t.cliente},12);
   ybBarrasDim('ybBarDelegado','del',base,function(m){return m.del},12);
+  ybRenderCobertura();
 
   // Ranking de PDV
   var filas=ybUltimas(lista).map(function(m){var d=ybDispMision(m,prods);
@@ -512,6 +519,208 @@ function ybRenderEvolucion(lista){
       {k:'n',t:'Encuestas',celda:function(f,th){return'<td data-th="'+esc(th)+'">'+FMT.format(f.n)+'</td>'}}]})}
 
 /* Barras horizontales del promedio Global por una dimensión (clic = filtrar). */
+/* ══════════ Rol del delegado (VM / LAM) ══════════
+   Sale de la columna Team de la hoja Asignacion (asignacionesG, que carga el mapa).
+   En las encuestas, el rol es el de quien la llenó: su nombre de Yoobic se busca
+   en Asignacion (mayúsculas y sin tildes; si no hay igual exacto, uno que empiece
+   por el otro: "MARIA CAMILA PINEDA" ↔ "Maria Camila Pineda Alfonso"). Si la
+   persona tiene filas con varios Team, gana el más frecuente. */
+var ybRolCache=null;
+function ybNomClave(s){return normTxt(s).replace(/\s+/g,' ').trim()}
+function ybRoles(){
+  var asig=typeof asignacionesG!=='undefined'?asignacionesG:{};
+  if(ybRolCache&&ybRolCache.asig===asig)return ybRolCache;
+  var cnt={};
+  Object.keys(asig).forEach(function(pos){(asig[pos]||[]).forEach(function(a){
+    var k=ybNomClave(a.delegado),t=String(a.team||'').trim().toUpperCase();if(!k||!t)return;
+    var c=cnt[k]||(cnt[k]={});c[t]=(c[t]||0)+1})});
+  var rol={};
+  Object.keys(cnt).forEach(function(k){var c=cnt[k];
+    rol[k]=Object.keys(c).sort(function(a,b){return c[b]-c[a]||a.localeCompare(b)})[0]});
+  ybRolCache={asig:asig,rol:rol,nombres:Object.keys(rol),porDel:{}};
+  return ybRolCache}
+function ybRolDe(nombre){
+  var R=ybRoles(),k=ybNomClave(nombre);
+  if(R.porDel[k]!==undefined)return R.porDel[k];
+  var r=R.rol[k];
+  if(!r&&k)for(var i=0;i<R.nombres.length;i++){var n=R.nombres[i];
+    if(Math.min(n.length,k.length)>=8&&(k.indexOf(n+' ')===0||n.indexOf(k+' ')===0)){r=R.rol[n];break}}
+  return(R.porDel[k]=r||'Sin rol')}
+
+/* ══════════ Cobertura Perfect Store ══════════
+   ¿A cuántos PDV llegan las encuestas? Un PDV está "cubierto" si su tienda de
+   Yoobic tiene al menos una encuesta en el rango de FECHAS elegido. De los demás
+   filtros solo aplica "Rol del delegado", a los asignados (filas de Asignacion con
+   ese Team); el resto (cliente/delegado de la encuesta) cambiaría el universo.
+   Dos universos:
+   · A = asignados: PDV únicos de la hoja "Asignacion" (por Nº Oficina Farmacia), con
+     el desglose por cliente (Grupo de compras del maestro), delegado asignado y
+     canal (columna Channel de Asignacion). Un PDV con 2 delegados cuenta en ambos.
+   · T = todos los PDV ISDIN: los PDV del maestro (CO_Puntos_Maestro clientes).
+   El cruce PDV → tienda es el mismo del mapa: Id cuenta (15) o POS_ID.
+   Clic en una porción de la torta = detalle de esos PDV (panel lateral). */
+var ybCobDim='cliente',ybCobUlt=null,ybCobPanel=null;
+var YB_COB_COL={si:'#725140',no:'#ffc7ab'};
+function ybSetCobDim(d){ybCobDim=d;ybRenderCobertura()}
+/* La llama recAsignaciones (JsNucleo) cuando los datos del mapa llegan después que Yoobic. */
+function ybCoberturaRefrescar(){
+  ybRolCache=null;
+  if(YB_SEL.rol)YB_SEL.rol.refrescar(false);
+  if(ybData&&typeof mtdVistaActiva!=='undefined'&&mtdVistaActiva==='yoobic'&&ybSub==='resumen')ybRender()}
+
+/* {id tienda: fecha de su última encuesta en el rango} (ybMis va de la más reciente a la más antigua). */
+function ybTiendasEncuestadas(){
+  var r=ybRangoFecha(),s={};
+  ybMis.forEach(function(m){if((!r||(m.fecha>=r[0]&&m.fecha<=r[1]))&&!s[m.t.id])s[m.t.id]=m.fecha});
+  return s}
+function ybTiendaDePdv(id,pos){
+  return(id&&ybPorId15[String(id).slice(0,15)])||(pos&&ybPorPos[pos])||null}
+
+function ybCalcularCobertura(){
+  var enc=ybTiendasEncuestadas(),roles=ybFset.rol;
+  var pts=typeof puntosG!=='undefined'?puntosG:[],porPos={};
+  pts.forEach(function(p){if(p.posId&&!porPos[p.posId])porPos[p.posId]=p});
+  function sumar(g,k,ok){var o=g[k]||(g[k]={n:0,si:0});o.n++;if(ok)o.si++}
+  function unicos(a){var o={};a.forEach(function(x){if(x)o[x]=1});return Object.keys(o).join(', ')}
+  function fila(p,t,f,nombre){var dir=p?(p.direccion&&p.direccion!=='Sin Dirección'?p.direccion:''):(t?t.dir:'');
+    var ciudad=p?(p.poblacion&&p.poblacion!=='Sin Población'?p.poblacion:''):(t?t.ciudad:'');
+    return{nombre:(p&&p.name&&p.name!=='Sin Nombre'?p.name:'')||(t&&t.nombre)||nombre||'(sin nombre)',
+      dir:dir,ciudad:ciudad,cliente:(p&&p.grupo&&p.grupo!=='Sin Grupo'&&p.grupo)||(t&&t.cliente)||'Sin cliente',
+      fecha:f||'',pos:p?p.posId:''}}
+
+  // Universo A: asignados (hoja Asignacion), un PDV por Nº Oficina Farmacia
+  var asig=typeof asignacionesG!=='undefined'?asignacionesG:{},dims={cliente:{},del:{},canal:{}};
+  var A={n:0,si:0},LA=[];
+  Object.keys(asig).forEach(function(pos){
+    var filas=(asig[pos]||[]).filter(function(a){return!roles||roles[String(a.team||'').trim().toUpperCase()||'Sin rol']});
+    if(!filas.length)return;
+    var cuenta=(filas.filter(function(a){return a.cuentaId})[0]||{}).cuentaId||'';
+    var p=porPos[pos];if(!cuenta&&p)cuenta=p.id||'';
+    var t=ybTiendaDePdv(cuenta,pos),f=t?enc[t.id]:'',ok=!!f;
+    A.n++;if(ok)A.si++;
+    var r=fila(p,t,f,(filas[0]||{}).cuentaNombre);r.pos=pos;r.ok=ok;
+    r.del=unicos(filas.map(function(a){return a.delegado+(a.team?' ('+a.team+')':'')}));
+    r.canal=unicos(filas.map(function(a){return a.canal}))||(p&&p.channel!=='Sin Canal'?p.channel:'')||'';
+    LA.push(r);
+    sumar(dims.cliente,r.cliente,ok);
+    var dv={},cv={};
+    filas.forEach(function(a){if(a.delegado)dv[a.delegado]=1;
+      cv[a.canal||(p&&p.channel&&p.channel!=='Sin Canal'&&p.channel)||'Sin canal']=1});
+    Object.keys(dv).forEach(function(d){sumar(dims.del,d,ok)});
+    Object.keys(cv).forEach(function(c){sumar(dims.canal,c,ok)})});
+
+  // Universo T: todos los PDV del maestro (únicos por Id cuenta)
+  var T={n:0,si:0},LT=[],visto={};
+  pts.forEach(function(p){var k=p.id?String(p.id).slice(0,15):'pos:'+p.posId;if(visto[k])return;visto[k]=1;
+    var t=ybTiendaDePdv(p.id,p.posId),f=t?enc[t.id]:'';
+    T.n++;if(f)T.si++;
+    var r=fila(p,t,f);r.ok=!!f;r.canal=p.channel!=='Sin Canal'?p.channel:'';
+    var as=p.posId&&asig[p.posId]||[];r.del=unicos(as.map(function(a){return a.delegado+(a.team?' ('+a.team+')':'')}));
+    LT.push(r)});
+  return{A:A,T:T,dims:dims,listas:{A:LA,T:LT}}}
+
+/* Torta SVG con la etiqueta "pct (n)" afuera de cada porción y leyenda abajo.
+   Clic en una porción o en la leyenda → ybCobDetalle(universo, conEncuesta). */
+function ybTorta(si,total,etqSi,etqNo,u){
+  if(!total)return'<div class="hint">Sin PDV para medir</div>';
+  var no=total-si,cx=130,cy=100,r=72,h='',a0=-Math.PI/2;
+  var partes=[{v:si,c:YB_COB_COL.si,e:etqSi,ok:1},{v:no,c:YB_COB_COL.no,e:etqNo,ok:0}].filter(function(p){return p.v>0});
+  partes.forEach(function(p){
+    var ang=p.v/total*2*Math.PI,a1=a0+ang,med=a0+ang/2;
+    var clic=' class="yb-porcion" tabindex="0" role="button" onclick="ybCobDetalle(\''+u+'\','+p.ok+')"'+
+      ' onkeydown="if(event.key===\'Enter\')ybCobDetalle(\''+u+'\','+p.ok+')"';
+    var tit='<title>'+esc(p.e)+': '+FMT.format(p.v)+' · '+Math.round(p.v/total*100)+' % (clic para ver los PDV)</title>';
+    if(partes.length===1)h+='<circle cx="'+cx+'" cy="'+cy+'" r="'+r+'" fill="'+p.c+'"'+clic+'>'+tit+'</circle>';
+    else{var x0=cx+r*Math.cos(a0),y0=cy+r*Math.sin(a0),x1=cx+r*Math.cos(a1),y1=cy+r*Math.sin(a1);
+      h+='<path d="M'+cx+','+cy+' L'+x0.toFixed(2)+','+y0.toFixed(2)+' A'+r+','+r+' 0 '+(ang>Math.PI?1:0)+' 1 '+
+        x1.toFixed(2)+','+y1.toFixed(2)+' Z" fill="'+p.c+'" stroke="#fff" stroke-width="1.5"'+clic+'>'+tit+'</path>'}
+    var lx=cx+(r+10)*Math.cos(med),ly=cy+(r+10)*Math.sin(med);
+    h+='<text x="'+lx.toFixed(1)+'" y="'+(ly+4).toFixed(1)+'" text-anchor="'+(Math.cos(med)>=0?'start':'end')+'" class="yb-torta-etq">'+
+      Math.round(p.v/total*100)+'% ('+FMT.format(p.v)+')</text>';
+    a0=a1});
+  function ley(ok,c,e,v){return'<button type="button" class="yb-ley-btn" onclick="ybCobDetalle(\''+u+'\','+ok+')" title="Ver los PDV">'+
+    '<i style="background:'+c+'"></i>'+esc(e)+': <b>'+FMT.format(v)+'</b></button>'}
+  return'<svg viewBox="-20 0 300 200" class="yb-torta" role="img" aria-label="'+esc(etqSi)+': '+si+' de '+total+'">'+h+'</svg>'+
+    '<div class="yb-torta-ley">'+ley(1,YB_COB_COL.si,etqSi,si)+ley(0,YB_COB_COL.no,etqNo,no)+'</div>'}
+
+function ybRenderCobertura(){
+  var c=document.getElementById('ybCobertura');if(!c)return;
+  var hint=document.getElementById('ybHintCob');
+  var rango=ybFecha.modo!=='todo'&&ybRangoFecha()?ybFechaEtq().toLowerCase():'todas las fechas';
+  if(hint)hint.innerText='PDV con al menos una encuesta de Yoobic · '+rango+
+    (ybFset.rol?' · asignados con rol '+ybFiltros.rol.join(', '):'')+
+    ' (de los demás filtros solo aplica Rol del delegado) · clic en la torta para ver los PDV';
+  if(typeof listo!=='undefined'&&(!listo.asignaciones||!listo.puntos)){
+    c.innerHTML='<div class="hint"><span class="mtd-spinner"></span>Cargando la hoja Asignacion y el maestro de PDV…</div>';
+    if(typeof programarMapa==='function')programarMapa();return}
+  var k=ybCalcularCobertura(),A=k.A,T=k.T;ybCobUlt=k;
+  var h='<div class="yb-cob-tortas">'+
+    '<div class="yb-cob-torta"><div class="yb-cob-tit">PDV asignados <small>hoja Asignacion'+(ybFset.rol?' · rol '+esc(ybFiltros.rol.join(', ')):'')+'</small></div>'+
+      '<div class="yb-cob-pct">'+ybPctTxt(A.n?A.si/A.n:null)+' <small>cobertura · '+FMT.format(A.si)+' de '+FMT.format(A.n)+'</small></div>'+
+      (A.n?ybTorta(A.si,A.n,'Con encuesta','Sin encuesta','A'):'<div class="hint">Sin PDV asignados'+(ybFset.rol?' con ese rol':' (revisa Nº Oficina Farmacia y Delegado en la hoja Asignacion)')+'.</div>')+'</div>'+
+    '<div class="yb-cob-torta"><div class="yb-cob-tit">Todos los PDV ISDIN <small>maestro de clientes</small></div>'+
+      '<div class="yb-cob-pct">'+ybPctTxt(T.n?T.si/T.n:null)+' <small>cobertura · '+FMT.format(T.si)+' de '+FMT.format(T.n)+'</small></div>'+
+      ybTorta(T.si,T.n,'Con encuesta','Sin encuesta','T')+'</div></div>';
+  // Desglose de los asignados: % cubierto, barra a escala absoluta (0–100 %)
+  var g=k.dims[ybCobDim]||{},filas=Object.keys(g).map(function(x){return{k:x,n:g[x].n,si:g[x].si,p:g[x].si/g[x].n}})
+    .sort(function(a,b){return b.n-a.n||a.k.localeCompare(b.k)});
+  var TOP=12,mos=filas.slice(0,TOP);
+  h+='<div class="yb-cob-cab"><span class="chips-etq">Cobertura de los asignados por</span><div class="chips-periodo">'+
+    [['cliente','Cliente'],['del','Delegado'],['canal','Canal']].map(function(o){
+      return'<button type="button" class="chip-periodo'+(o[0]===ybCobDim?' activo':'')+'" onclick="ybSetCobDim(\''+o[0]+'\')">'+o[1]+'</button>'}).join('')+
+    '</div></div>';
+  h+=mos.length?'<div class="yb-cob-barras">'+mos.map(function(f){
+    return'<div class="barra-fila yb-cob-fila" title="'+esc(f.k)+': '+f.si+' de '+f.n+' PDV asignados con encuesta">'+
+      '<div class="cat">'+esc(f.k)+' <small>· '+FMT.format(f.si)+' de '+FMT.format(f.n)+' PDV</small></div>'+
+      '<div class="valor" style="color:'+YB_COB_COL.si+'">'+ybPctTxt(f.p)+'</div>'+
+      '<div class="barra-pista yb-cob-pista"><div class="barra-relleno" style="width:'+Math.round(f.p*100)+'%;background:'+YB_COB_COL.si+'"></div></div></div>'}).join('')+
+    (filas.length>TOP?'<div class="mini">+ '+(filas.length-TOP)+' más</div>':'')+'</div>'
+    :'<div class="hint">Sin PDV asignados</div>';
+  c.innerHTML=h;
+  if(ybCobPanel)ybCobPintarPanel()}
+
+/* ── Panel lateral con el detalle de una porción (como el de Yoobic) ── */
+function ybCobDetalle(u,ok){
+  ybCobPanel={u:u,ok:!!ok,q:''};
+  var pn=document.getElementById('ybCobPanel');if(!pn)return;
+  pn.hidden=false;if(document.body)document.body.classList.add('yb-panel-abierto');
+  var b=document.getElementById('ybCobBuscar');if(b){b.value='';if(b.focus)setTimeout(function(){b.focus()},50)}
+  ybCobPintarPanel()}
+function ybCobCerrar(){ybCobPanel=null;var pn=document.getElementById('ybCobPanel');if(pn)pn.hidden=true;
+  if(document.body)document.body.classList.remove('yb-panel-abierto')}
+function ybCobBuscar(v){if(!ybCobPanel)return;ybCobPanel.q=v;ybCobPintarPanel()}
+function ybCobFilasPanel(){
+  if(!ybCobPanel||!ybCobUlt)return[];
+  var q=normTxt(ybCobPanel.q||'').trim();
+  return(ybCobUlt.listas[ybCobPanel.u]||[]).filter(function(r){
+    if(r.ok!==ybCobPanel.ok)return false;
+    return!q||normTxt([r.nombre,r.dir,r.ciudad,r.cliente,r.del,r.canal,r.pos].join(' ')).indexOf(q)!==-1})
+    .sort(function(a,b){return a.nombre.localeCompare(b.nombre,'es',{numeric:true})})}
+function ybCobPintarPanel(){
+  var P=ybCobPanel;if(!P)return;
+  var todas=(ybCobUlt&&ybCobUlt.listas[P.u]||[]).filter(function(r){return r.ok===P.ok}).length;
+  var filas=ybCobFilasPanel();
+  document.getElementById('ybCobPanelTit').innerHTML=(P.ok?'Con encuesta':'Sin encuesta')+' · <b>'+FMT.format(todas)+'</b>'+
+    '<small>'+(P.u==='A'?'PDV asignados (hoja Asignacion)':'Todos los PDV ISDIN')+'</small>';
+  var MAX=600,h=filas.slice(0,MAX).map(function(r){
+    return'<div class="yb-cob-item"><span class="yb-cob-ico" style="background:'+(r.ok?YB_COB_COL.si:YB_COB_COL.no)+'"></span><div>'+
+      '<div class="n">'+esc(r.nombre)+'</div>'+
+      '<div class="d">'+esc([r.dir,r.ciudad].filter(Boolean).join(' · ')||'Sin dirección')+'</div>'+
+      '<div class="m">'+esc(r.cliente)+(r.del?' · '+esc(r.del):'')+(r.canal?' · '+esc(r.canal):'')+
+        (r.fecha?' · <b>última encuesta '+ybFechaTxt(r.fecha)+'</b>':'')+'</div></div></div>'}).join('');
+  if(!filas.length)h='<div class="hint" style="padding:12px">Ningún PDV coincide con la búsqueda</div>';
+  else if(filas.length>MAX)h+='<div class="hint" style="padding:10px 12px">Se muestran '+MAX+' de '+FMT.format(filas.length)+' · usa Buscar o descarga el CSV</div>';
+  document.getElementById('ybCobLista').innerHTML=h;
+  document.getElementById('ybCobConteo').innerText=P.q?FMT.format(filas.length)+' coinciden':''}
+function ybCobCsv(){
+  var P=ybCobPanel;if(!P)return;
+  mtdDescargarCsv(ybCobFilasPanel(),[{clave:'nombre',titulo:'PDV'},{clave:'pos',titulo:'Nº Oficina Farmacia'},
+    {clave:'cliente',titulo:'Cliente'},{clave:'dir',titulo:'Dirección'},{clave:'ciudad',titulo:'Ciudad'},
+    {clave:'del',titulo:'Delegado asignado (rol)'},{clave:'canal',titulo:'Canal'},{clave:'fecha',titulo:'Última encuesta'}],
+    'cobertura_'+(P.u==='A'?'asignados':'todos')+'_'+(P.ok?'con':'sin')+'_encuesta_'+mtdCsvFecha()+'.csv')}
+if(typeof document!=='undefined'&&document.addEventListener)
+  document.addEventListener('keydown',function(e){if(e.key==='Escape'&&ybCobPanel)ybCobCerrar()});
+
 function ybBarrasDim(id,dim,base,clave,top){
   var ag={};
   base.forEach(function(m){var k=clave(m),v=m.s[0];if(v==null)return;
@@ -559,7 +768,7 @@ function ybRenderAgotados(lista){
       '<div class="det">PDV × producto con respuesta "No"</div></div>'+
     '<div class="bloque"><div class="etq">PDV con agotados</div><div class="num">'+FMT.format(pdvCon)+
       '</div><div class="det">de '+FMT.format(base.length)+' '+(ybAlcance==='ultima'?'PDV evaluados':'encuestas')+'</div></div>'+
-    '<div class="bloque"><div class="etq">Disponibilidad</div><div class="num" style="color:'+ybColorPct((si+no)?si/(si+no):null)+'">'+
+    '<div class="bloque"><div class="etq">Disponibilidad</div><div class="num" style="color:'+ybColorTxt((si+no)?si/(si+no):null)+'">'+
       ybPctTxt((si+no)?si/(si+no):null)+'</div><div class="det">'+FMT.format(si)+' de '+FMT.format(si+no)+' respuestas con stock</div></div>';
   document.getElementById('ybHintAgot').innerText=(ybAlcance==='ultima'?
     'Según la ÚLTIMA encuesta de cada PDV':'Según TODAS las encuestas')+
@@ -589,7 +798,7 @@ function ybRenderAgotados(lista){
         {k:'del',t:'Delegado',tipo:'txt',celda:function(f,th){return'<td data-th="'+esc(th)+'" class="txt">'+esc(f.del)+'</td>'}},
         {k:'fecha',t:'Fecha',tipo:'txt',celda:function(f,th){return'<td data-th="'+esc(th)+'">'+ybFechaTxt(f.fecha)+'</td>'}},
         {k:'n',t:'Agotados',celda:function(f,th){return'<td data-th="'+esc(th)+'" class="yb-rojo"><b>'+FMT.format(f.n)+'</b></td>'}},
-        {k:'pct',t:'Disponib.',celda:function(f,th){return'<td data-th="'+esc(th)+'"><span style="color:'+ybColorPct(f.pct)+'">'+ybPctTxt(f.pct)+'</span></td>'}},
+        {k:'pct',t:'Disponib.',celda:function(f,th){return'<td data-th="'+esc(th)+'"><span style="color:'+ybColorTxt(f.pct)+'">'+ybPctTxt(f.pct)+'</span></td>'}},
         {k:'lista',t:'Productos agotados',tipo:'txt',v:function(f){return f.lista.length},celda:function(f){
           var ps=f.lista.slice(0,8).map(function(p){return'<span class="yb-pill" title="'+esc(p.grupo)+'">'+esc(p.nombre)+'</span>'}).join('');
           if(f.lista.length>8)ps+='<span class="yb-pill yb-pill-mas">+'+(f.lista.length-8)+'</span>';
@@ -686,7 +895,7 @@ function ybRenderFotos(lista){
         '<div class="yb-foto-pdv">'+esc(t.nombre)+'</div>'+
         '<div class="yb-foto-dir">'+esc(t.dir||t.ciudad)+'</div>'+
         '<div class="yb-foto-tit">'+esc(ybTituloFoto(f))+'</div>'+
-        '<div class="yb-foto-fecha">'+ybFechaTxt(m.fecha)+(m.s[0]!=null?' · Global <b style="color:'+ybColorPct(m.s[0]/YB_PILARES[0].max)+'">'+ybNum(m.s[0])+'</b>':'')+'</div>'+
+        '<div class="yb-foto-fecha">'+ybFechaTxt(m.fecha)+(m.s[0]!=null?' · Global <b style="color:'+ybColorTxt(m.s[0]/YB_PILARES[0].max)+'">'+ybNum(m.s[0])+'</b>':'')+'</div>'+
       '</div></div>'});
   h+='</div>';
   if(items.length>ybFotosMostrar)h+='<div class="yb-mas"><button class="btn" onclick="ybFotosMostrar+=YB_PAGINA;ybRender()">Ver más ('+
@@ -746,7 +955,7 @@ function ybResumenPilares(m,ref){
   return'<div class="yb-mini-pilares">'+YB_PILARES.map(function(p,i){var v=m.s[i];
     var d=(ref&&ref!==m&&v!=null&&ref.s[i]!=null)?v-ref.s[i]:null;
     return'<span class="yb-mini'+(i===0?' g':'')+'" title="'+esc(p.etiqueta)+' (máx. '+p.max+')">'+esc(YB_CORTO[p.k]||p.etiqueta)+
-      ' <b style="color:'+(v==null?'var(--muted)':ybColorPct(v/p.max))+'">'+ybNum(v)+'</b>'+
+      ' <b style="color:'+(v==null?'var(--muted)':ybColorTxt(v/p.max))+'">'+ybNum(v)+'</b>'+
       (d!=null&&Math.abs(d)>=.05?'<em class="'+(d>0?'sube':'baja')+'">'+(d>0?'▲ +':'▼ ')+ybNum(d)+'</em>':'')+'</span>'}).join('')+'</div>'}
 
 function ybPintarModal(){
@@ -793,7 +1002,7 @@ function ybPintarModal(){
       return'<button type="button" class="yb-hito'+cls+'" onclick="ybModalHito(\'despues\','+ix+')" '+
         'oncontextmenu="event.preventDefault();ybModalHito(\'antes\','+ix+')" '+
         'title="Clic: poner en Después · clic derecho: poner en Antes">'+(f?ybImg(f.url):'')+
-        '<span>'+ybFechaTxt(m.fecha)+'</span>'+(m.s[0]!=null?'<b style="color:'+ybColorPct(m.s[0]/YB_PILARES[0].max)+'">'+ybNum(m.s[0])+'</b>':'')+'</button>'}).join('')+'</div>'+
+        '<span>'+ybFechaTxt(m.fecha)+'</span>'+(m.s[0]!=null?'<b style="color:'+ybColorTxt(m.s[0]/YB_PILARES[0].max)+'">'+ybNum(m.s[0])+'</b>':'')+'</button>'}).join('')+'</div>'+
     '<div class="hint">Línea de tiempo de la más antigua a la más reciente · clic = Después · clic derecho = Antes</div>';
   ybAbrirModal(h2)}
 
@@ -834,8 +1043,8 @@ function ybPorBrick(vis){
   return out}
 
 function ybLeyendaMapa(){
-  if(!ybData)return[[SEM.sin,ybCargando?'Cargando Perfect Store…':'Sin datos de Yoobic']];
-  return[[SEM.alto,'≥ 85 %'],[SEM.medio,'70–85 %'],[SEM.bajo,'50–70 %'],[SEM.muybajo,'< 50 %'],[SEM.sin,'Sin encuesta']]}
+  if(!ybData)return[[YB_SEM.sin,ybCargando?'Cargando Perfect Store…':'Sin datos de Yoobic']];
+  return[[YB_SEM.alto,'≥ 85 %'],[YB_SEM.medio,'70–85 %'],[YB_SEM.bajo,'50–70 %'],[YB_SEM.muybajo,'< 50 %'],[YB_SEM.sin,'Sin encuesta']]}
 
 /* Al elegir una capa Perfect Store sin datos todavía, se cargan y se repinta. */
 function ybAsegurarMapa(){
@@ -858,7 +1067,7 @@ function ybPopupHtml(p){
   var ag=ybDispMision(m,ybProductos);
   var h='<div class="popup-ps"><div class="ps-cab"><b>Perfect Store</b><span class="mini">'+ybFechaTxt(m.fecha)+' · '+esc(m.del)+'</span></div>';
   YB_PILARES.forEach(function(pi,i){var v=m.s[i],pct=v==null?null:v/pi.max;
-    if(i===0){h+='<div class="ps-global"><span class="grande" style="color:'+(v==null?'var(--muted)':ybColorPct(pct))+'">'+ybNum(v)+
+    if(i===0){h+='<div class="ps-global"><span class="grande" style="color:'+(v==null?'var(--muted)':ybColorTxt(pct))+'">'+ybNum(v)+
       '</span> / '+pi.max+' <span class="mini">Global Perfect Store</span></div>';return}
     h+='<div class="ps-fila"><span class="ps-nom" title="'+esc(pi.etiqueta)+'">'+esc(YB_POPUP[pi.k]||pi.etiqueta)+'</span>'+
       '<span class="ps-pista"><span style="width:'+(pct==null?0:Math.min(100,Math.round(pct*100)))+'%;background:'+ybColorPct(pct)+'"></span></span>'+
@@ -900,7 +1109,7 @@ function ybDatosDemo(){
     meta:{actualizadoEn:new Date().toISOString(),misiones:mis.length}}}
 
 function ybFotosDemo(){
-  var fotos={},cols=['#1e8e3e','#f2b600','#ef7d00','#e41f33'];
+  var fotos={},cols=['#086124','#d09375','#725140','#b71c1c'];
   ybMis.forEach(function(m,ix){var lista=[],n=2+(ix%3);
     for(var i=0;i<n;i++){var tipo=i<2?0:1,g=m.s[0]||0,col=cols[g>=85?0:g>=70?1:g>=50?2:3];
       var svg='<svg xmlns="http://www.w3.org/2000/svg" width="420" height="315"><rect width="420" height="315" fill="#eef1f4"/>'+

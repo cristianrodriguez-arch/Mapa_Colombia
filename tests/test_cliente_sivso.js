@@ -242,4 +242,139 @@ t('al recargar datos se descartan filtros que ya no existen', () => {
   assert.deepStrictEqual(Array.from(c.sivsoFiltros.mes), [8, 3]);           // 3 (mar) sí existe
   c.sivsoLimpiarFiltros();
 });
+console.log('SI vs SO · gráfico de 5 vistas e histórico');
+t('las 5 vistas SVG del gráfico se pintan sin NaN; la línea del año actual se corta en su último mes con dato', () => {
+  // Inventario (s3_inv.json, carga en JsSO): se inyecta ya preparado a partir de las filas de prueba.
+  c.invError = ''; c.invCargar = () => {};
+  c.invD = { meses: [], filas: c.sivsoData.filas.filter(f => f.tieneInv).map(f =>
+    ({ sap: f.sapId, cliente: f.cliente, ean: 'E' + f.productId, bu: f.buK, mes: f.mes, u: f.invU, a: f.inv })) };
+  for (let i = 1; i < 6; i++) {           // 0 = Lanzamientos (HTML, tiene su prueba)
+    c.sivsoSetVistaGraf(i);
+    const g = E.sivsoGraficoMensual.innerHTML;
+    assert.ok(/<svg/.test(g), 'vista ' + i);
+    assert.ok(!/NaN|undefined|Infinity/.test(g), 'vista ' + i + ': ' + g.slice(0, 200));
+  }
+  c.sivsoSetVistaGraf(1);
+  const S = c.sivsoSerie;
+  assert.ok(S.ult.so >= 1 && S.ult.so <= 12);
+  for (let m = S.ult.so + 1; m <= 12; m++) assert.strictEqual(S.acc[m].hSo, 0);   // sin dato después del corte
+  assert.strictEqual((E.sivsoGraficoMensual.innerHTML.match(/class="sivso-mescol/g) || []).length, 12);
+});
+t('vista Inventario: foto por mes del año elegido; filtra por cliente y avisa los filtros de producto que no aplica', () => {
+  c.sivsoSetVistaGraf(2);
+  const anio = c.sivsoAnioSel(), I = c.sivsoInvSerie;
+  assert.ok(/Inventario/.test(E.sivsoGraficoMensual.innerHTML));
+  let esperado = 0; const m = I.ult.inv;
+  c.sivsoData.filas.forEach(f => { if (f.tieneInv && f.a === anio && f.m === m) esperado += c.sivsoUnidad === '#' ? f.invU : f.inv; });
+  assert.ok(m >= 1 && Math.abs(I.acc[m].inv - esperado) < 1e-6, 'inventario de ' + m + ': ' + I.acc[m].inv + ' vs ' + esperado);
+  const sap = c.sivsoData.filas.find(f => f.tieneInv).sapId;
+  c.sivsoCambiarFiltro('cliente', [sap]); c.sivsoSetVistaGraf(2);
+  assert.ok(c.sivsoInvSerie.acc[m].inv < esperado, 'el filtro de cliente reduce el inventario');
+  c.sivsoCambiarFiltro('cliente', []);
+  c.sivsoCambiarFiltro('producto', [c.sivsoData.filas[0].productId]); c.sivsoSetVistaGraf(2);
+  assert.strictEqual(JSON.stringify(c.sivsoInvSerie.na), '["Producto"]');
+  c.sivsoCambiarFiltro('producto', []); c.sivsoSetVistaGraf(1);
+});
+t('Zebra y Variación YTD: un grupo por mes con dato y el YTD compara solo hasta ese mes', () => {
+  c.sivsoSetVistaGraf(5);                                                    // Sell Out
+  assert.strictEqual((E.sivsoGraficoMensual.innerHTML.match(/class="sivso-mescol/g) || []).length, c.sivsoSerie.ult.so);
+  c.sivsoSetVistaGraf(3); c.sivsoSetYtdMed('si');
+  assert.strictEqual((E.sivsoGraficoMensual.innerHTML.match(/class="sivso-mescol/g) || []).length, c.sivsoSerie.ult.si);
+  c.sivsoSetYtdMed('so'); c.sivsoSetVistaGraf(1);
+});
+t('histórico: una fila por año con Total; Sell In / Sell Out con los filtros del tablero; el mes elegido se resalta', () => {
+  c.renderSIvsSO();
+  const filas = c.sivsoFilas('mes');
+  const so26 = filas.filter(f => f.a === 2026).reduce((a, f) => a + f.so, 0);
+  let h = E.sivsoTablaHist.innerHTML;
+  assert.ok(/onclick="sivsoSetAnio\(2026\)"/.test(h) && /onclick="sivsoSetAnio\(2025\)"/.test(h));
+  assert.ok(h.indexOf(c.FMT.format(Math.round(so26))) > -1, 'total SO 2026');
+  c.sivsoSetHistMed('si');
+  const si26 = filas.filter(f => f.a === 2026).reduce((a, f) => a + f.si, 0);
+  assert.ok(E.sivsoTablaHist.innerHTML.indexOf(c.FMT.format(Math.round(si26))) > -1, 'total SI 2026');
+  c.sivsoAlternar('mes', 8);
+  assert.ok(/class="mes clicable sel"/.test(E.sivsoTablaHist.innerHTML));
+  c.sivsoLimpiarFiltros(); c.sivsoSetHistMed('so');
+});
+t('Strategic / Tactic market: vienen en el diccionario de productos (opcional) y filtran como cualquier dimensión', () => {
+  const f = c.sivsoExpandir_({ v: 2, clientes: [['1', 'CLI', 'KAM', 'Cadenas']], productos: [['P', 'PROD', 'Foto', 'FP', 'SUN CARE', 'DAILY']],
+    filas: [['2026-01', 0, 0, 1, 1, 2, 2, 0, 0, 0]] })[0];
+  assert.strictEqual(c.sivsoValor(f, 'smk'), 'SUN CARE');
+  assert.strictEqual(c.sivsoValor(f, 'tmk'), 'DAILY');
+  const sinCol = c.sivsoExpandir_({ v: 2, clientes: [['1', 'CLI', 'KAM', 'Cadenas']], productos: [['P', 'PROD', 'Foto', 'FP']],
+    filas: [['2026-01', 0, 0, 1, 1, 2, 2, 0, 0, 0]] })[0];
+  assert.strictEqual(c.sivsoValor(sinCol, 'smk'), '');
+  assert.strictEqual(c.sivsoHayDatosDim('smk'), false);                      // la hoja de prueba no trae la columna: no se ofrece
+  c.setSivsoFiltro('smk', ['NO EXISTE']); c.renderSIvsSO();
+  assert.strictEqual(c.sivsoFilas().length, 0);
+  c.sivsoLimpiarFiltros();
+  assert.ok(c.sivsoFilas().length > 0);
+});
+console.log('SI vs SO · lanzamientos, rango por Sell Out, histórico de inventario y total YTD');
+t('★ Lanzamientos: todo el tablero queda solo con los productos INNOVACIÓN (por Product ID o nombre)', () => {
+  const k = cargar(); k.onSIvsSOCargado({ v: 2, clientes, productos, filas, meta: {} });
+  k.sivsoLanzD = k.sivsoLanzPreparar({ productos: [['P2', '', 'PROD 2', 'Derma'], ['', '', 'prod 3', 'Foto']] });
+  k.sivsoLanz = true; k.sivsoCache = null; k.renderSIvsSO();
+  const ids = new Set(k.sivsoFilas().map(f => f.productId));
+  assert.strictEqual(JSON.stringify([...ids].sort()), '["P2","P3"]');
+  k.sivsoAlternarLanz();                                                     // se apaga: vuelven todos
+  assert.strictEqual(new Set(k.sivsoFilas().map(f => f.productId)).size, 3);
+});
+t('KPIs y SO/SI: el rango llega hasta el último mes con Sell Out (oct solo con Sell In no cuenta)', () => {
+  const k = cargar();
+  k.onSIvsSOCargado({ v: 2, clientes, productos, filas: filas.concat([['2026-10', 0, 0, 999, 9, 0, 0, 0, 0, 0]]), meta: {} });
+  k.document.getElementById('sivsoAnioFil').value = '2026'; k.renderSIvsSO();
+  assert.strictEqual(k.sivsoCortesSO[2026], 9);
+  let si = 0; k.sivsoData.filas.forEach(f => { if (f.a === 2026 && f.m <= 9) si += k.sivsoSi(f); });
+  assert.strictEqual(k.document.els.sivsoKpiSi.innerText, k.sivsoFmt(si));   // sin los 999 de octubre
+  assert.ok(/Sep 2026/.test(k.document.els.sivsoKpiRatioDet.innerText), k.document.els.sivsoKpiRatioDet.innerText);
+});
+t('Año: deja de ser chips sueltos; sin la caja Año = el más reciente, y elegir otro lo muestra como filtro', () => {
+  const k = cargar(); k.onSIvsSOCargado({ v: 2, clientes, productos, filas, meta: {} });
+  assert.strictEqual(k.sivsoAnioElegido(), false);
+  k.sivsoSetAnio(2025);
+  assert.strictEqual(k.sivsoAnioElegido(), true);
+  k.sivsoQuitarDim(null, 'anio');
+  assert.strictEqual(k.sivsoAnioSel(), 2026);
+});
+t('Histórico mensual · Inventario: foto por año × mes, columna "Último" y sin fila Total', () => {
+  const k = cargar(); k.onSIvsSOCargado({ v: 2, clientes, productos, filas, meta: {} });
+  k.invError = ''; k.invCargar = () => {};
+  k.invD = { meses: [], filas: [{ sap: '1', cliente: 'CLI 1', ean: 'E1', bu: 'FOTO', mes: '2026-08', u: 40, a: 400 },
+                                { sap: '2', cliente: 'CLI 2', ean: 'E2', bu: 'DERMA', mes: '2026-08', u: 60, a: 600 },
+                                { sap: '1', cliente: 'CLI 1', ean: 'E1', bu: 'FOTO', mes: '2026-09', u: 30, a: 300 }] };
+  k.sivsoSetHistMed('inv');
+  const h = k.document.els.sivsoTablaHist.innerHTML;
+  assert.ok(/Último/.test(h) && !/tfoot/.test(h), h.slice(0, 200));
+  assert.ok(h.indexOf('>' + k.FMT.format(k.sivsoUnidad === '#' ? 100 : 1000) + '<') > -1, 'agosto = 40 + 60');
+  k.sivsoSetHistMed('so');
+});
+t('Total YTD con tooltip en las vistas Sell In / Sell Out y Variación YTD', () => {
+  const k = cargar(); k.onSIvsSOCargado({ v: 2, clientes, productos, filas, meta: {} });
+  k.document.getElementById('sivsoTip').parentNode = { getBoundingClientRect: () => ({ left: 0, top: 0, width: 900 }) };
+  [4, 5, 3].forEach(i => {
+    k.sivsoSetVistaGraf(i);
+    assert.ok(/sivsoTipTotal\(event\)/.test(k.document.els.sivsoGraficoMensual.innerHTML), 'vista ' + i);
+    k.sivsoTipTotal({ clientX: 10, clientY: 10 });
+    assert.ok(/ΔPY%/.test(k.document.els.sivsoTip.innerHTML) && k.document.els.sivsoTip.hidden === false, 'tooltip ' + i);
+  });
+  k.sivsoSetVistaGraf(1);
+});
+
+t('vista Lanzamientos: solo productos INNOVACIÓN, Sell In vs Sell Out y absorción hasta el último mes con Sell Out', () => {
+  const k = cargar();
+  k.onSIvsSOCargado({ v: 2, clientes, productos, filas: filas.concat([['2026-10', 0, 0, 999, 9, 0, 0, 0, 0, 0]]), meta: {} });
+  k.sivsoLanzD = k.sivsoLanzPreparar({ productos: [['P1', '', 'PROD 1', 'Foto'], ['P2', '', 'PROD 2', 'Derma']] });
+  k.sivsoSetVistaGraf(0);
+  assert.strictEqual(k.SIVSO_VISTAS_GRAF[0].k, 'lanz');
+  const h = k.document.els.sivsoGraficoMensual.innerHTML;
+  assert.ok(/class="sivso-lz"/.test(h) && !/NaN|undefined|Infinity/.test(h), h.slice(0, 200));
+  assert.ok(/PROD 1/.test(h) && /PROD 2/.test(h) && !/PROD 3/.test(h), 'solo lanzamientos');
+  // PROD 1 en ene–sep 2026 (sin oct): SI y SO de las filas de prueba
+  let si = 0, so = 0; k.sivsoData.filas.forEach(f => { if (f.a === 2026 && f.m <= 9 && f.productId === 'P1') { si += k.sivsoSi(f); so += k.sivsoSo(f); } });
+  assert.ok(h.indexOf(k.mtdPctEntero(so / si)) > -1, 'absorción de PROD 1');
+  assert.ok(h.indexOf(k.sivsoFmtCorta(si)) > -1 && h.indexOf(k.sivsoFmtCorta(999 * 0 + si)) > -1);
+  assert.ok(/sivsoAlternar\('producto','P1'\)/.test(h), 'clic filtra el producto');
+});
+
 console.log('\n' + ok + ' pruebas OK' + (process.exitCode ? ' · HAY FALLAS' : ''));

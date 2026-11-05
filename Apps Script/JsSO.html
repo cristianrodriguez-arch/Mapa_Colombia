@@ -1,0 +1,720 @@
+<script>
+/* ══════════ JsSO · subpestaña "Sell Out PDV" (réplica del Power BI de sell-out) ══════════
+   FUENTE: el ETL del paso 3 ("3. Affiliate_Master so" 2025 y 2026, hoja Final,
+   Affiliate = Colombia) → s3_cubo.json y sus fragmentos en Drive. Es el MISMO cubo de
+   la pestaña Ventas (getVentas3Json / vt3Preparar en JsVentas3): se comparte la carga
+   (vt3Cache.so) y el detalle bajo demanda (vt3Det: PDV × producto; vt3Pb: PDV × BU).
+
+   Página como la del BI: arriba, en fila, 3 tarjetas (Resultado con ΔPY, Promedio por PDV,
+   Total PDV); debajo, a todo el ancho, 4 visuales que se cambian con botones
+   (Ventas Mensuales · Crecimiento por EAN · Top Clientes · Puntos de Venta); abajo,
+   siempre a la vista, Participación por canal, Crecimiento por BU y Participación por BU.
+   Barra de filtros compacta: Año y Vista (# / $) a la vista; Mes, Trimestre, Promedio Selec
+   y las dimensiones se agregan con "+ Añadir filtro" (clic en un mes de la gráfica también
+   abre el filtro Mes). "Promedio Selec" elige los meses que entran al promedio (sin elegir =
+   los meses elegidos), muestra el valor y alimenta la columna Promedio Selec de Puntos de Venta.
+   INVENTARIO ("Consolidado inventarios Semestre N" + maestros de EAN y PDV, vía el ETL):
+   s3_inv.json (cliente × EAN × mes) → tarjeta y columna de Crecimiento por EAN y Top Clientes;
+   s3_inv_pdv.json (PDV × mes) → columna de Puntos de Venta y tarjeta con filtros de PDV.
+   Siempre la foto del ÚLTIMO mes con inventario del año elegido (soInvRef).
+   CSV: cada visual se descarga con su botón (soCsv).
+
+   DEFINICIONES (las del Power BI, iguales a la pestaña Ventas):
+     meses elegidos = los del Año, recortados por Mes y Trimestre (sin elegir = todos)
+     AC = suma de los meses elegidos · PY = los mismos meses del año anterior
+     ΔPY = AC − PY · ΔPY% = AC ÷ PY − 1 · Var % vs mes anterior = último mes ÷ el previo − 1
+     Promedio Selec = suma de los meses del promedio ÷ n.º de esos meses (sin elegir =
+       AC ÷ n.º de meses elegidos) · Promedio por PDV = AC ÷ Total PDV
+     Total PDV = puntos de venta con venta en los meses elegidos
+   FUENTE DE CADA CÁLCULO (la más liviana que alcance, como en Ventas):
+     cs (cliente × producto × mes)  sin filtros de punto de venta
+     pm (PDV × mes)                 con filtros de PDV / ciudad / canal / channel 2, o por PDV
+     pb (PDV × BU × mes)            lo anterior + BU
+     ps (PDV × producto × mes)      lo anterior + EAN (bajo demanda, por PDV o por EAN)
+   ═══════════════════════════════════════════════════════════════ */
+
+var soD=null,soCargando=false,soError='';
+var soE={anio:0,meses:[],trim:[],prom:[],unidad:'#',vista:'mensual',orden:{k:'ac',dir:'desc'},tope:60,q:'',abierto:null,
+  f:{cli:[],bu:[],sku:[],pdv:[],ciudad:[],canal:[],sub:[]}};
+var soFs={cli:null,bu:null,sku:null,pdv:null,ciudad:null,canal:null,sub:null};
+var SO_VISTAS=[['mensual','Ventas Mensuales'],['ean','Crecimiento por EAN'],['cli','Top Clientes'],['pdv','Puntos de Venta']];
+var SO_CAMPOS=[
+  {dim:'cli',   etq:'Cliente',        tope:600},
+  {dim:'bu',    etq:'BU'},
+  {dim:'sku',   etq:'EAN description',tope:600},
+  {dim:'pdv',   etq:'Punto de venta', tope:600},
+  {dim:'ciudad',etq:'Ciudad cliente'},
+  {dim:'canal', etq:'Canal'},
+  {dim:'sub',   etq:'Channel 2'},
+  {dim:'mes',   etq:'Mes',            chips:'soMesChips'},
+  {dim:'trim',  etq:'Trimestre',      chips:'soTrimChips'},
+  {dim:'prom',  etq:'Promedio Selec', chips:'soPromChips'}];   // meses que entran al promedio (no filtra los datos)
+/* Cajas de chips (no son selectores): cuántos valores elegidos tiene cada una. */
+function soChipsN(dim){return dim==='mes'?soE.meses.length:(dim==='trim'?soE.trim.length:soE.prom.length)}
+var SO_DIM_ETQ={cli:'Cliente',bu:'BU',sku:'EAN',pdv:'PDV',ciudad:'Ciudad',canal:'Canal',sub:'Channel 2'};
+var SO_MAX_PDV_DET=400;    // con más PDV filtrados, el detalle por EAN pesaría demasiado
+var SO_COLORES=['#414141','#d09375','#725140','#ffc7ab','#8a8a8a','#cecece','#433026','#ead7c9'];
+var SO_SEL={},soVisibles={cli:true,bu:true,sku:true};
+try{var _sv=JSON.parse(localStorage.getItem('visor.soFiltros')||'null');if(_sv){soVisibles={};_sv.forEach(function(d){soVisibles[d]=true})}}catch(e){}
+try{var _sp=JSON.parse(localStorage.getItem('visor.so')||'null');if(_sp){if(_sp.unidad)soE.unidad=_sp.unidad;if(_sp.vista)soE.vista=_sp.vista}}catch(e){}
+function soGuardar(){try{localStorage.setItem('visor.so',JSON.stringify({unidad:soE.unidad,vista:soE.vista}));
+  localStorage.setItem('visor.soFiltros',JSON.stringify(Object.keys(soVisibles)))}catch(e){}}
+
+/* ══════════ Carga (compartida con la pestaña Ventas) ══════════ */
+function soAlEntrar(){
+  // Es la pestaña que abre por defecto: precarga Ventas MTD (liviano; al pintarse arranca el
+  // mapa en segundo plano con programarMapa) como hacía la pestaña Ventas anterior.
+  if(typeof ventasMtdData!=='undefined'&&ventasMtdData===null&&!mtdCargando&&typeof cargarVentasMtd==='function')cargarVentasMtd();
+  if(soD){soRender();return}
+  if(typeof vt3Cache!=='undefined'&&vt3Cache.so){soUsar(vt3Cache.so);return}
+  soCargar(false)}
+function soCargar(forzar){
+  if(soCargando)return;
+  soCargando=true;soError='';
+  if(forzar){soD=null;invD=null;invError='';soInvMapa=null;invPdvD=null;invPdvError='';soInvPdvMapa=null;if(typeof vt3Det!=='undefined'){vt3Det={};vt3Pb={}}}
+  soPintarEstado();
+  if(!esGas()){setTimeout(function(){soRecibir(vt3Demo())},250);return}
+  google.script.run
+    .withSuccessHandler(function(j){var d;try{d=JSON.parse(j)}catch(e){soFallo(me(e));return}soRecibir(d)})
+    .withFailureHandler(function(e){soFallo(me(e))})
+    .getVentas3Json(forzar===true)}
+function soFallo(m){soCargando=false;soError=m;soPintarEstado()}
+function soRecibir(d){
+  soCargando=false;
+  var X=vt3Preparar(d);X.src='so';
+  if(typeof vt3Cache!=='undefined'&&!vt3Cache.so)vt3Cache.so=X;
+  soUsar(X)}
+function soUsar(X){
+  soD=X;
+  var anios=soAnios();
+  if(anios.indexOf(soE.anio)===-1)soE.anio=X.anioMax;
+  soPrepararFiltros();
+  soConstruirCampos();
+  soRender();
+  cargarLib('choices',function(){soCrearSelectores()});
+  // SI vs SO (la subpestaña vecina) se pide cuando el Sell Out ya está en pantalla, para no competir con él.
+  if(typeof sivsoData!=='undefined'&&sivsoData===null&&!sivsoCargando&&typeof cargarSIvsSO==='function')cargarSIvsSO()}
+function soPintarEstado(){
+  var est=document.getElementById('soEstado'),cont=document.getElementById('soContenido');if(!est)return;
+  if(soD&&!soCargando){est.style.display='none';if(cont)cont.style.display='block';return}
+  if(cont)cont.style.display='none';est.style.display='block';
+  est.innerHTML=soError?'<b>No pude cargar el Sell Out.</b><br>'+esc(soError)+
+    '<br><span class="mini">Revisa que el ETL (python etl_sellout.py) haya dejado los s3_*.json en la carpeta _visor_json.</span> '+
+    '<button type="button" class="btn" onclick="soCargar(true)">Reintentar</button>':
+    '<span class="mtd-spinner"></span>Cargando el Sell Out del ETL (paso 3, 2025 y 2026)…'}
+
+/* ══════════ Inventario (s3_inv.json, compartido con SI vs SO) ══════════
+   Sale de los "Consolidado inventarios Semestre N" (producto cruzado con EAN MASTER, PDV con
+   PDV MASTER) vía etl_sellout.py: cliente (SAP ID) × EAN × mes, en unidades y valorizado con el
+   precio de "Transformación final". Es una FOTO al cierre del mes: nunca se suma entre meses.
+   Las claves son SAP ID y EAN (no índices del cubo). */
+var invD=null,invCargando=false,invError='',invErrorT=0,invEsperan=[];
+function invCargar(cb,forzar){
+  if(invD&&!forzar){if(cb)cb();return}
+  if(cb)invEsperan.push(cb);
+  if(invCargando)return;
+  if(invError&&!forzar&&Date.now()-invErrorT<20000){invEsperan=[];return}   // recién falló: no se reintenta en cada repintado
+  invCargando=true;invError='';
+  function fin(){invCargando=false;var l=invEsperan;invEsperan=[];l.forEach(function(f){f()})}
+  if(!esGas()){setTimeout(function(){invD=invPreparar(invDemo());fin()},150);return}
+  google.script.run
+    .withSuccessHandler(function(j){try{invD=invPreparar(JSON.parse(j))}catch(e){invError=me(e);invErrorT=Date.now()}fin()})
+    .withFailureHandler(function(e){invError=me(e);invErrorT=Date.now();fin()})
+    .getInventarioJson(forzar===true)}
+/* Inventario por punto de venta (s3_inv_pdv.json): misma carga, archivo aparte. */
+var invPdvD=null,invPdvCargando=false,invPdvError='',invPdvErrorT=0,invPdvEsperan=[];
+function invPdvCargar(cb,forzar){
+  if(invPdvD&&!forzar){if(cb)cb();return}
+  if(cb)invPdvEsperan.push(cb);
+  if(invPdvCargando)return;
+  if(invPdvError&&!forzar&&Date.now()-invPdvErrorT<20000){invPdvEsperan=[];return}
+  invPdvCargando=true;invPdvError='';
+  function fin(){invPdvCargando=false;var l=invPdvEsperan;invPdvEsperan=[];l.forEach(function(f){f()})}
+  if(!esGas()){setTimeout(function(){invPdvD=invPdvDemo();fin()},150);return}
+  google.script.run
+    .withSuccessHandler(function(j){try{var d=JSON.parse(j);invPdvD={meses:d.meses||[],pdv:d.pdv||[],inv:d.inv||[]}}
+      catch(e){invPdvError=me(e);invPdvErrorT=Date.now()}fin()})
+    .withFailureHandler(function(e){invPdvError=me(e);invPdvErrorT=Date.now();fin()})
+    .getInventarioPdvJson(forzar===true)}
+function invPdvDemo(){
+  var X=soD||vt3Preparar(vt3Demo()),n=X.meses.length,out={meses:[],pdv:X.pdv.map(function(p){return p.clave}),inv:[]},im={};
+  X.meses.forEach(function(m,i){if(i>=n-12){im[i]=out.meses.length;out.meses.push(m)}});
+  X.pm.forEach(function(r){if(im[r[1]]!=null)out.inv.push([r[0],im[r[1]],Math.round(r[2]*1.3),Math.round(r[3]*1.3)])});
+  return out}
+function invPreparar(d){
+  var cli=d.clientes||[],sk=d.skus||[],meses=d.meses||[];
+  return{meses:meses,generado:d.generado||'',
+    filas:(d.inv||[]).map(function(r){var c=cli[r[0]]||[],s=sk[r[1]]||[];
+      return{sap:String(c[0]||''),cliente:c[1]||'',ean:String(s[0]||''),bu:String(s[2]||'SIN BU').replace('SIN_BU','SIN BU').toUpperCase(),
+        mes:meses[r[2]],u:r[3]||0,a:r[4]||0}})}}
+/* Demo (vista previa sin servidor): ~1,4 meses de venta en inventario, hasta 2 meses antes del último. */
+function invDemo(){
+  var X=soD||vt3Preparar(vt3Demo()),n=X.meses.length,out={meses:[],clientes:[],skus:[],inv:[]},im={};
+  X.meses.forEach(function(m,i){if(i>=n-14&&i<n-2){im[i]=out.meses.length;out.meses.push(m)}});
+  X.clientes.forEach(function(c){out.clientes.push([c.id,c.nombre])});
+  X.skus.forEach(function(s){out.skus.push([s.ean,s.nombre,s.bu])});
+  X.cs.forEach(function(r){if(im[r[2]]!=null)out.inv.push([r[0],r[1],im[r[2]],Math.round(r[3]*1.4),Math.round(r[4]*1.4)])});
+  return out}
+
+/* Inventario con los índices del cubo de Sell Out: f = [[iCliente, iSku, iMes, und, imp]]; hay[iMes] = 1
+   si ese mes tiene foto. Los clientes / EAN que el sell-out no conoce no entran en las tablas. */
+var soInvMapa=null;
+function soInvFilas(){
+  if(!invD||!soD)return null;
+  if(soInvMapa&&soInvMapa.D===soD&&soInvMapa.I===invD)return soInvMapa;
+  var D=soD,cli={},sku={},hay={},f=[];
+  D.clientes.forEach(function(c,i){cli[c.id]=i});D.skus.forEach(function(s,i){sku[s.ean]=i});
+  invD.filas.forEach(function(r){var m=D.ip[r.mes];if(m==null)return;hay[m]=1;
+    var c=cli[r.sap],s=sku[r.ean];if(c==null||s==null)return;f.push([c,s,m,r.u,r.a])});
+  return soInvMapa={D:D,I:invD,f:f,hay:hay}}
+/* Inventario por PDV con los índices del cubo: f = [[iPdv, iMes, und, imp]]; hay[iMes] = 1. */
+var soInvPdvMapa=null;
+function soInvPdvFilas(){
+  if(!invPdvD||!soD)return null;
+  if(soInvPdvMapa&&soInvPdvMapa.D===soD&&soInvPdvMapa.I===invPdvD)return soInvPdvMapa;
+  var D=soD,idx={},hay={},f=[],meses=invPdvD.meses;
+  D.pdv.forEach(function(p,i){idx[p.clave]=i});
+  invPdvD.inv.forEach(function(r){var m=D.ip[meses[r[1]]],i=idx[invPdvD.pdv[r[0]]];if(m==null)return;hay[m]=1;
+    if(i==null)return;f.push([i,m,r[2],r[3]])});
+  return soInvPdvMapa={D:D,I:invPdvD,f:f,hay:hay}}
+/* Inventario por PDV del mes `iRef` con los filtros de punto de venta / ciudad / canal / cliente
+   (salvo `ig`, la dimensión de la tabla, como las filas). */
+function soInvPorPdv(iRef,ig){
+  var M=soInvPdvFilas(),g={};if(!M||iRef==null)return g;
+  M.f.forEach(function(r){if(r[1]!==iRef||!soPasaPdv(r[0],ig))return;g[r[0]]=(g[r[0]]||0)+soVal(r[2],r[3])});
+  return g}
+/* Estado del inventario por PDV: con filtros de BU / EAN no aplica (el archivo no trae producto). */
+function soInvPdvEstado(sel){
+  if(!invPdvD){invPdvCargar(function(){if(soD)soPintarTodo()});return{est:invPdvError?'error':'cargando',err:invPdvError}}
+  if(soFs.sku||soFs.bu)return{est:'prod'};
+  var ref=soInvRef(sel,soInvPdvFilas());if(ref==null)return{est:'sin'};
+  var m=soD.meses[ref];return{est:'ok',ref:ref,mes:SIVSO_MESES[Number(m.slice(5,7))-1],etq:SIVSO_MESES[Number(m.slice(5,7))-1]+' '+m.slice(0,4)}}
+
+/* Mes de la foto: SIEMPRE el último mes con inventario del año elegido (no depende de los
+   meses elegidos). null = ese año no tiene inventario. */
+function soInvRef(sel,M){
+  M=M||soInvFilas();if(!M)return null;
+  var anio=String(soE.anio),best=-1;
+  soD.meses.forEach(function(m,i){if(M.hay[i]&&m.slice(0,4)===anio&&i>best)best=i});
+  return best<0?null:best}
+/* Con filtros de punto de venta / ciudad / canal / Channel 2 el inventario no aplica (no trae PDV). */
+function soInvPdvF(){return['pdv','ciudad','canal','sub'].some(function(d){return!!soFs[d]})}
+/* Inventario del mes `iRef` por elemento de `dim` ('cli' | 'sku' | 'tot'), con los filtros de
+   cliente / BU / EAN salvo el de la propia dimensión (como las filas de la tabla). */
+function soInvPor(dim,iRef){
+  var M=soInvFilas(),g={};if(!M||iRef==null)return g;
+  M.f.forEach(function(r){if(r[2]!==iRef||!soPasaCli(r[0],dim)||!soPasaSku(r[1],dim))return;
+    var k=dim==='cli'?r[0]:(dim==='sku'?r[1]:'T');g[k]=(g[k]||0)+soVal(r[3],r[4])});
+  return g}
+/* Estado del inventario para la selección: {ref, etq, mes, est: 'ok'|'cargando'|'error'|'pdv'|'sin'}. */
+function soInvEstado(sel){
+  if(!invD){invCargar(function(){if(soD)soPintarTodo()});return{est:invError?'error':'cargando',err:invError}}
+  if(soInvPdvF())return{est:'pdv'};
+  var ref=soInvRef(sel);if(ref==null)return{est:'sin'};
+  var m=soD.meses[ref];return{est:'ok',ref:ref,mes:SIVSO_MESES[Number(m.slice(5,7))-1],etq:SIVSO_MESES[Number(m.slice(5,7))-1]+' '+m.slice(0,4)}}
+
+/* ══════════ Filtros ══════════ */
+function soAnios(){var o={};(soD?soD.meses:[]).forEach(function(m){o[Number(m.slice(0,4))]=1});
+  return Object.keys(o).map(Number).sort(function(a,b){return b-a})}
+function soSetFiltro(dim,arr){
+  arr=(arr||[]).map(String).filter(function(v){return v!==''&&v!=='__mas__'});
+  soE.f[dim]=arr;
+  if(!arr.length){soFs[dim]=null;return}
+  var m={};arr.forEach(function(v){m[v]=1});soFs[dim]=m}
+function soPrepararFiltros(){
+  var D=soD,ok={cli:{},bu:{},sku:{},pdv:{},ciudad:{},canal:{},sub:{}};
+  D.clientes.forEach(function(c,i){ok.cli[i]=1});
+  D.skus.forEach(function(s,i){ok.sku[i]=1;ok.bu[s.bu]=1});
+  D.pdv.forEach(function(p,i){ok.pdv[i]=1;ok.ciudad[soCiudad(p)]=1;ok.canal[soCanal(p)]=1;ok.sub[soSub(p)]=1});
+  Object.keys(soE.f).forEach(function(d){soSetFiltro(d,soE.f[d].filter(function(v){return ok[d][v]}))})}
+function soCiudad(p){return p.ciudad||'SIN CIUDAD'}
+function soCanal(p){return p.canal||'SIN CANAL'}
+function soSub(p){return p.subcanal||'SIN CHANNEL 2'}
+function soBus(){var D=soD;if(D.bus&&D.bus.length)return D.bus;var o={};D.skus.forEach(function(s){o[s.bu]=1});return Object.keys(o).sort()}
+
+function soOpciones(dim){
+  var D=soD;if(!D)return[];
+  if(dim==='cli')return D.clientes.map(function(c,i){return{valor:String(i),etiqueta:c.nombre}})
+    .sort(function(a,b){return a.etiqueta.localeCompare(b.etiqueta,'es')});
+  if(dim==='bu')return soBus().map(function(b){return{valor:b,etiqueta:b}});
+  if(dim==='sku')return D.skus.map(function(s,i){return{valor:String(i),etiqueta:s.nombre+' · '+s.ean}})
+    .filter(function(o){return!soFs.bu||soFs.bu[D.skus[Number(o.valor)].bu]})
+    .sort(function(a,b){return a.etiqueta.localeCompare(b.etiqueta,'es')});
+  if(dim==='pdv')return D.pdv.map(function(p,i){return{valor:String(i),etiqueta:p.nombre+(p.ciudad?' · '+p.ciudad:'')}})
+    .filter(function(o){var p=D.pdv[Number(o.valor)];return!soFs.cli||soFs.cli[p.cli]})
+    .sort(function(a,b){return a.etiqueta.localeCompare(b.etiqueta,'es')});
+  var f=dim==='ciudad'?soCiudad:(dim==='canal'?soCanal:soSub),o={};
+  D.pdv.forEach(function(p){o[f(p)]=1});
+  return Object.keys(o).sort().map(function(v){return{valor:v,etiqueta:v}})}
+function soConstruirCampos(){
+  var cont=document.getElementById('soCampos');if(!cont||(cont.dataset&&cont.dataset.listo))return;
+  if(cont.dataset)cont.dataset.listo='1';
+  cont.innerHTML=SO_CAMPOS.map(function(c){
+    if(c.chips)return'<div class="campo yb-campo so-chips'+(c.dim==='prom'?' so-prom':'')+'" data-dim="'+c.dim+'"'+(soVisibles[c.dim]||soChipsN(c.dim)?'':' hidden')+'>'+
+      '<label><span>'+esc(c.etq)+'</span>'+
+      '<button type="button" class="chip-x" title="Quitar este filtro" onclick="soQuitarDim(event,\''+c.dim+'\')">✕</button>'+
+      '</label><div class="chips-periodo so-meses" id="'+c.chips+'"></div>'+(c.dim==='prom'?'<div class="so-prom-v" id="soPromValor"></div>':'')+'</div>';
+    return'<div class="campo yb-campo" data-dim="'+c.dim+'"'+(soVisibles[c.dim]||soE.f[c.dim].length?'':' hidden')+'>'+
+      '<label for="soSel_'+c.dim+'"><span>'+esc(c.etq)+'</span>'+
+      '<button type="button" class="chip-x" title="Quitar este filtro" onclick="soQuitarDim(event,\''+c.dim+'\')">✕</button>'+
+      '</label><select id="soSel_'+c.dim+'" multiple></select></div>'}).join('')}
+function soCrearSelectores(){
+  if(Object.keys(SO_SEL).length||!soD)return;
+  soConstruirCampos();
+  SO_CAMPOS.forEach(function(c){var dim=c.dim;if(c.chips)return;
+    SO_SEL[dim]=new Selector({dim:dim,id:'soSel_'+dim,multi:true,tope:c.tope||400,
+      ops:function(){return soOpciones(dim)},sel:function(){return soE.f[dim]},
+      alCambiar:function(v){soSetFiltro(dim,v);soE.abierto=null;soRender();soSincronizar(false)}})});
+  soSincronizar(true)}
+function soSincronizar(forzar){Object.keys(SO_SEL).forEach(function(d){forzar?SO_SEL[d].fijar():SO_SEL[d].refrescar(false)})}
+function soMostrarDim(dim){
+  var caja=document.querySelector&&document.querySelector('#soCampos .yb-campo[data-dim="'+dim+'"]');
+  if(caja&&caja.hidden){caja.hidden=false;if(SO_SEL[dim])SO_SEL[dim].refrescar(true);if(dim==='prom')soPintarProm();
+    if(dim==='mes'||dim==='trim')soPintarControles()}}
+function soAgregarDim(dim){soVisibles[dim]=true;soGuardar();soMostrarDim(dim);soCerrarPop()}
+function soQuitarDim(ev,dim){
+  if(ev){ev.preventDefault();ev.stopPropagation()}
+  delete soVisibles[dim];soGuardar();
+  var caja=document.querySelector('#soCampos .yb-campo[data-dim="'+dim+'"]');if(caja)caja.hidden=true;
+  if(dim==='prom'||dim==='mes'||dim==='trim'){if(soChipsN(dim)){soE[dim==='mes'?'meses':dim]=[];soRender()}return}
+  if(soE.f[dim].length){soSetFiltro(dim,[]);soRender();soSincronizar(true)}}
+function soAlternarPop(ev){
+  if(ev)ev.stopPropagation();
+  var pop=document.getElementById('soPop');if(!pop)return;
+  if(!pop.hidden){pop.hidden=true;return}
+  var libres=SO_CAMPOS.filter(function(c){var caja=document.querySelector('#soCampos .yb-campo[data-dim="'+c.dim+'"]');return!caja||caja.hidden});
+  document.getElementById('soPopLista').innerHTML=libres.length?libres.map(function(c){
+    return'<button type="button" class="pop-op" onclick="soAgregarDim(\''+c.dim+'\')">'+esc(c.etq)+'</button>'}).join(''):
+    '<div class="pop-vacio">Ya están todos los filtros en la barra</div>';
+  pop.hidden=false}
+function soCerrarPop(){var pop=document.getElementById('soPop');if(pop)pop.hidden=true}
+if(typeof document!=='undefined'&&document.addEventListener)document.addEventListener('click',function(e){
+  var pop=document.getElementById('soPop');
+  if(pop&&!pop.hidden&&(!e.target.closest||!e.target.closest('.pop-anclaje')))pop.hidden=true});
+
+/* Clic en una fila / porción / mes: agrega o quita ese valor del filtro. */
+function soAlternar(dim,val){
+  var a=soE.f[dim].slice(),v=String(val),i=a.indexOf(v);
+  if(i===-1)a.push(v);else a.splice(i,1);
+  soSetFiltro(dim,a);if(a.length)soMostrarDim(dim);
+  soE.abierto=null;soRender();soSincronizar(true)}
+function soAlternarMes(m){var a=soE.meses.slice(),i=a.indexOf(m);if(i===-1)a.push(m);else a.splice(i,1);
+  soE.meses=a.sort(function(x,y){return x-y});if(a.length)soMostrarDim('mes');soRender()}
+function soAlternarProm(m){var a=soE.prom.slice(),i=a.indexOf(m);if(i===-1)a.push(m);else a.splice(i,1);
+  soE.prom=a.sort(function(x,y){return x-y});soRender()}
+function soAlternarTrim(t){var a=soE.trim.slice(),i=a.indexOf(t);if(i===-1)a.push(t);else a.splice(i,1);soE.trim=a.sort();soRender()}
+function soSetAnio(a){soE.anio=a;soE.prom=[];soRender()}
+function soSetUnidad(u){soE.unidad=u;soGuardar();soRender()}
+function soSetVista(v){soE.vista=v;soE.tope=60;soE.q='';soE.abierto=null;
+  soE.orden={k:'ac',dir:'desc'};soGuardar();soRender()}
+function soLimpiar(){Object.keys(soE.f).forEach(function(d){soSetFiltro(d,[])});soE.meses=[];soE.trim=[];soE.prom=[];soE.abierto=null;
+  soRender();soSincronizar(true)}
+function soBuscar(q){soE.q=q;soPintarVisual()}
+function soMas(){soE.tope+=80;soPintarVisual()}
+function soOrdenar(k){var o=soE.orden;soE.orden=o.k===k?{k:k,dir:o.dir==='desc'?'asc':'desc'}:{k:k,dir:k==='nombre'?'asc':'desc'};soPintarVisual()}
+function soAbrir(i){soE.abierto=soE.abierto===i?null:i;soPintarVisual()}
+
+/* ══════════ Cálculo ══════════ */
+/* Índices de mes elegidos: los del año, recortados por Mes y Trimestre. */
+function soSel(){
+  var D=soD,out=[];
+  D.meses.forEach(function(m,i){if(Number(m.slice(0,4))!==soE.anio)return;var mm=Number(m.slice(5,7));
+    if(soE.meses.length&&soE.meses.indexOf(mm)===-1)return;
+    if(soE.trim.length&&soE.trim.indexOf(Math.ceil(mm/3))===-1)return;
+    out.push(i)});
+  return out}
+/* Índices de mes del promedio: los elegidos en "Promedio Selec" (del año elegido) o, sin
+   elegir, los mismos meses de arriba. */
+function soSelProm(){
+  if(!soE.prom.length)return soSel();
+  var out=[];soD.meses.forEach(function(m,i){if(Number(m.slice(0,4))===soE.anio&&soE.prom.indexOf(Number(m.slice(5,7)))!==-1)out.push(i)});
+  return out}
+function soPasaCli(i,ig){return ig==='cli'||!soFs.cli||!!soFs.cli[i]}
+function soPasaSku(i,ig){var s=soD.skus[i];
+  if(ig!=='sku'&&soFs.sku&&!soFs.sku[i])return false;
+  if(ig!=='bu'&&soFs.bu&&!(s&&soFs.bu[s.bu]))return false;
+  return true}
+function soPasaPdv(i,ig){var p=soD.pdv[i];if(!p)return false;
+  if(ig!=='pdv'&&soFs.pdv&&!soFs.pdv[i])return false;
+  if(ig!=='ciudad'&&soFs.ciudad&&!soFs.ciudad[soCiudad(p)])return false;
+  if(ig!=='canal'&&soFs.canal&&!soFs.canal[soCanal(p)])return false;
+  if(ig!=='sub'&&soFs.sub&&!soFs.sub[soSub(p)])return false;
+  return soPasaCli(p.cli,ig)}
+function soVal(u,a){return soE.unidad==='#'?u:a}
+
+/* Detalle PDV × producto (filas [iPdv, iSku, iMes, und, imp]); null mientras llega. */
+var soPend={},soDetError='';
+function soDetalle(req){
+  var firma=req.pdv?'pdv:'+req.pdv.slice().sort().join(','):'sku:'+req.sku.slice().sort().join(',');
+  if(vt3Det[firma])return vt3Det[firma];
+  if(soPend[firma])return null;
+  soPend[firma]=1;soDetError='';
+  var D=soD;
+  function listo(f){delete soPend[firma];vt3Det[firma]=f;soPintarTodo()}
+  if(!esGas()){setTimeout(function(){var P={},S={};(req.pdv||[]).forEach(function(i){P[i]=1});(req.sku||[]).forEach(function(i){S[i]=1});
+    listo((D.demoPs||[]).filter(function(r){return req.pdv?P[r[0]]:S[r[1]]}))},120);return null}
+  google.script.run
+    .withSuccessHandler(function(j){var r;try{r=JSON.parse(j)}catch(e){r={error:me(e)}}
+      if(r.error||r.generado!==D.meta.generado){delete soPend[firma];soDetError=r.error||'El ETL se actualizó: pulsa Actualizar.';soPintarTodo();return}
+      listo(r.ps||[])})
+    .withFailureHandler(function(e){delete soPend[firma];soDetError=me(e);soPintarTodo()})
+    .getVentas3DetalleJson(JSON.stringify({pdv:req.pdv||null,sku:req.sku||null,npdv:D.frag.pdv,nsku:D.frag.sku,generado:D.meta.generado}));
+  return null}
+/* PDV × BU × mes de los BU pedidos (filas [iPdv, bu, iMes, und, imp]); null mientras llegan. */
+function soPb(bus){
+  var D=soD,falta=false,filas=[];
+  bus.forEach(function(bu){
+    if(vt3Pb[bu]){Array.prototype.push.apply(filas,vt3Pb[bu]);return}
+    falta=true;var k='pb:'+bu;if(soPend[k])return;soPend[k]=1;
+    function listo(pb){delete soPend[k];vt3Pb[bu]=pb.map(function(r){return[r[0],bu,r[1],r[2],r[3]]});soPintarTodo()}
+    if(!esGas()){setTimeout(function(){var g={};
+      (D.demoPs||[]).forEach(function(r){if(D.skus[r[1]].bu!==bu)return;var kk=r[0]+'|'+r[2];
+        var x=g[kk]||(g[kk]=[r[0],r[2],0,0]);x[2]+=r[3];x[3]+=r[4]});
+      listo(Object.keys(g).map(function(kk){return g[kk]}))},120);return}
+    google.script.run
+      .withSuccessHandler(function(j){var d;try{d=JSON.parse(j)}catch(e){d={error:me(e)}}
+        if(d.error||d.generado!==D.meta.generado){delete soPend[k];soDetError=d.error||'El ETL se actualizó: pulsa Actualizar.';soPintarTodo();return}
+        listo(d.pb||[])})
+      .withFailureHandler(function(e){delete soPend[k];soDetError=me(e);soPintarTodo()})
+      .getVentas3PbJson(D.bus.indexOf(bu),D.meta.generado)});
+  return falta?null:filas}
+
+/* Series por mes de cada elemento de `dim` ('tot' | 'cli' | 'sku' | 'bu' | 'pdv' | 'canal'),
+   con todos los filtros salvo el de la propia dimensión (sus elegidos se resaltan).
+   Devuelve {g} · null mientras llega el detalle · {error} si el detalle no es viable. */
+function soAgregar(dim){
+  var D=soD,f=soFs,n=D.meses.length,g={},ig=dim;
+  var pdvF=['pdv','ciudad','canal','sub'].some(function(d){return d!==ig&&f[d]});
+  var skuF=!!f.sku&&ig!=='sku',buF=!!f.bu&&ig!=='bu';
+  function sum(k,iM,u,a){var s=g[k]||(g[k]=new Float64Array(n));s[iM]+=soVal(u,a)}
+  function deSku(iS){return dim==='bu'?D.skus[iS].bu:iS}
+  function dePdv(iP){var p=D.pdv[iP];return dim==='tot'?'T':(dim==='cli'?p.cli:(dim==='canal'?soCanal(p):iP))}
+  if(!(pdvF||dim==='pdv'||dim==='canal')){
+    D.cs.forEach(function(r){if(!soPasaCli(r[0],ig)||!soPasaSku(r[1],ig))return;
+      sum(dim==='tot'?'T':(dim==='cli'?r[0]:deSku(r[1])),r[2],r[3],r[4])});
+    return{g:g}}
+  if(dim==='sku'||skuF){
+    var req=null;
+    if(pdvF){var P=[];D.pdv.forEach(function(p,i){if(soPasaPdv(i,ig))P.push(i)});
+      if(P.length<=SO_MAX_PDV_DET)req={pdv:P}}
+    if(!req&&skuF)req={sku:Object.keys(f.sku).map(Number)};
+    if(!req)return{error:'Con '+SO_DIM_ETQ.pdv+'/ciudad/canal que abarcan más de '+SO_MAX_PDV_DET+' puntos de venta, el detalle por EAN es demasiado grande: '+
+      'elige menos puntos de venta o un EAN.'};
+    if(req.pdv&&!req.pdv.length)return{g:g};
+    var ps=soDetalle(req);if(!ps)return null;
+    ps.forEach(function(r){if(!soPasaPdv(r[0],ig)||!soPasaSku(r[1],ig))return;
+      sum(dim==='sku'||dim==='bu'?deSku(r[1]):dePdv(r[0]),r[2],r[3],r[4])});
+    return{g:g}}
+  if(dim==='bu'||buF){
+    var pb=soPb(dim==='bu'?soBus():Object.keys(f.bu));if(!pb)return null;
+    pb.forEach(function(r){if(!soPasaPdv(r[0],ig))return;if(buF&&!f.bu[r[1]])return;
+      sum(dim==='bu'?r[1]:dePdv(r[0]),r[2],r[3],r[4])});
+    return{g:g}}
+  D.pm.forEach(function(r){if(!soPasaPdv(r[0],ig))return;sum(dePdv(r[0]),r[1],r[2],r[3])});
+  return{g:g}}
+
+function soMedidas(s,sel,selP){
+  var D=soD,ac=0,py=0,hay=false,sp=0;selP=selP||sel;
+  sel.forEach(function(i){ac+=s[i];var j=D.py[i];if(j>=0){py+=s[j];hay=true}});
+  selP.forEach(function(i){sp+=s[i]});
+  var ult=sel[sel.length-1],pv=ult==null?-1:D.prev[ult];
+  return{ac:ac,py:hay?py:null,dpy:hay?ac-py:null,dpyp:hay&&py>0?ac/py-1:null,
+    vmp:pv>=0&&s[pv]>0?s[ult]/s[pv]-1:null,prom:selP.length?sp/selP.length:null}}
+
+/* Filas de una tabla: medidas por elemento + total de lo elegido (o de todo). */
+function soFilasDim(dim,sel){
+  var A=soAgregar(dim);if(!A||A.error)return A;
+  var D=soD,filas=[],n=D.meses.length,tot=new Float64Array(n),fs=soFs[dim]||null,selP=soSelProm();
+  Object.keys(A.g).forEach(function(k){
+    var s=A.g[k],key=(dim==='bu'||dim==='canal')?k:Number(k),elegido=!!(fs&&fs[key]);
+    if(!fs||elegido)for(var i=0;i<n;i++)tot[i]+=s[i];
+    var m=soMedidas(s,sel,selP);
+    if(!m.ac&&!m.py&&!elegido)return;
+    var nm=soNombre(dim,key);m.key=key;m.nombre=nm.n;m.sub=nm.s;m.sel=elegido;m.atenuada=!!fs&&!elegido;filas.push(m)});
+  return{filas:filas,tot:soMedidas(tot,sel,selP)}}
+function soNombre(dim,k){
+  var D=soD;
+  if(dim==='cli'){var c=D.clientes[k];return{n:c?c.nombre:String(k),s:c&&c.kam?vtCortoNombre(c.kam):''}}
+  if(dim==='sku'){var s=D.skus[k];return{n:s?s.nombre:String(k),s:s?s.bu+' · '+s.ean:''}}
+  if(dim==='pdv'){var p=D.pdv[k],c2=p?D.clientes[p.cli]:null;return{n:p?p.nombre:String(k),s:(c2?c2.nombre:'')+(p&&p.ciudad?' · '+p.ciudad:'')}}
+  return{n:String(k),s:''}}
+
+/* ══════════ Formato ══════════ */
+function soNum(v){if(v==null||!isFinite(v))return'–';
+  return soE.unidad==='#'?FMT.format(Math.round(v)):mtdMonedaCorta(v)}
+function soNumD(v){if(v==null||!isFinite(v))return'–';return(v>0?'+':v<0?'−':'')+soNum(Math.abs(v))}
+function soPct(v){if(v==null||!isFinite(v))return'–';var a=Math.abs(v)*100;
+  return(v>0?'+':v<0?'−':'')+(a<10?a.toFixed(1).replace('.',','):FMT.format(Math.round(a)))+'%'}
+
+/* ══════════ Render ══════════ */
+function soRender(){
+  soPintarEstado();if(!soD||soCargando)return;
+  soPintarControles();
+  soPintarTodo()}
+function soPintarTodo(){
+  if(!soD)return;
+  soPintarChips();soPintarKpis();soPintarProm();soPintarVisual();soPintarAbajo()}
+
+function soPintarControles(){
+  var D=soD,anios=soAnios();
+  function chip(on,fn,t,tit){return'<button type="button" class="chip-periodo'+(on?' activo':'')+'" onclick="'+fn+'"'+(tit?' title="'+tit+'"':'')+'>'+t+'</button>'}
+  var e=document.getElementById('soAnioChips');
+  if(e)e.innerHTML=anios.map(function(a){return chip(a===soE.anio,'soSetAnio('+a+')',a)}).join('');
+  var hay={};D.meses.forEach(function(m){if(Number(m.slice(0,4))===soE.anio)hay[Number(m.slice(5,7))]=1});
+  e=document.getElementById('soMesChips');
+  if(e)e.innerHTML=SIVSO_MESES.map(function(n,i){var m=i+1;if(!hay[m])return'';
+    return chip(soE.meses.indexOf(m)!==-1,'soAlternarMes('+m+')',n,'Clic para elegir o quitar (varios a la vez)')}).join('');
+  e=document.getElementById('soTrimChips');
+  if(e)e.innerHTML=[1,2,3,4].map(function(t){return chip(soE.trim.indexOf(t)!==-1,'soAlternarTrim('+t+')','T'+t)}).join('');
+  e=document.getElementById('soUnidadChips');
+  if(e)e.innerHTML=chip(soE.unidad==='#','soSetUnidad(\'#\')','# Unidades')+chip(soE.unidad==='$','soSetUnidad(\'$\')','$ Pesos');
+  e=document.getElementById('soVistas');
+  if(e)e.innerHTML=SO_VISTAS.map(function(v){return'<button type="button" class="tab'+(soE.vista===v[0]?' activa':'')+'" onclick="soSetVista(\''+v[0]+'\')">→ '+v[1]+'</button>'}).join('');
+  soPintarProm();
+  e=document.getElementById('soUnidadTxt');
+  if(e)e.innerText='Cifras expresadas en '+(soE.unidad==='#'?'unidades':'pesos');
+  var n=soE.meses.length+soE.trim.length+soE.prom.length;Object.keys(soE.f).forEach(function(d){n+=soE.f[d].length});
+  e=document.getElementById('soContador');if(e){e.innerText=n;e.hidden=!n}}
+
+/* Caja "Promedio Selec": chips con los meses del año y el valor del promedio. */
+function soPintarProm(){
+  var e=document.getElementById('soPromChips');if(!e||!soD)return;
+  var hay={};soD.meses.forEach(function(m){if(Number(m.slice(0,4))===soE.anio)hay[Number(m.slice(5,7))]=1});
+  e.innerHTML=SIVSO_MESES.map(function(n,i){var m=i+1;if(!hay[m])return'';
+    return'<button type="button" class="chip-periodo'+(soE.prom.indexOf(m)!==-1?' activo':'')+'" onclick="soAlternarProm('+m+')"'+
+      ' title="Clic para sumar o quitar este mes del promedio">'+n+'</button>'}).join('');
+  var v=document.getElementById('soPromValor');if(!v)return;
+  var T=soAgregar('tot'),selP=soSelProm();
+  if(!T||T.error||!selP.length){v.innerHTML=T&&T.error?'n/d':(selP.length?'…':'Sin meses');return}
+  var t=soMedidas(T.g.T||new Float64Array(soD.meses.length),selP);
+  v.innerHTML='<b>'+soNum(t.prom)+'</b> <span>'+(soE.unidad==='#'?'und':'$')+' / mes · '+
+    (soE.prom.length?selP.length+(selP.length===1?' mes':' meses'):'meses de arriba')+'</span>'}
+function soPintarChips(){
+  var D=soD,items=[];
+  if(soE.meses.length)items.push({etq:'Mes: '+soE.meses.map(function(m){return SIVSO_MESES[m-1]}).join(', '),dim:'mes'});
+  if(soE.trim.length)items.push({etq:'Trimestre: '+soE.trim.map(function(t){return'T'+t}).join(', '),dim:'trim'});
+  if(soE.prom.length)items.push({etq:'Promedio: '+soE.prom.map(function(m){return SIVSO_MESES[m-1]}).join(', '),dim:'prom'});
+  Object.keys(soE.f).forEach(function(d){soE.f[d].forEach(function(v){
+    var t=d==='cli'?(D.clientes[v]||{}).nombre:(d==='sku'?(D.skus[v]||{}).nombre:(d==='pdv'?(D.pdv[v]||{}).nombre:v));
+    items.push({etq:SO_DIM_ETQ[d]+': '+(t||v),dim:d,valor:v})})});
+  mtdPintarChips('soChips',items,function(it){
+    if(it.dim==='mes')soE.meses=[];else if(it.dim==='trim')soE.trim=[];else if(it.dim==='prom')soE.prom=[];
+    else{soSetFiltro(it.dim,soE.f[it.dim].filter(function(x){return x!==it.valor}));soSincronizar(true)}
+    soRender()},soLimpiar)}
+
+function soPintarKpis(){
+  var k=document.getElementById('soKpis');if(!k)return;
+  var sel=soSel(),T=soAgregar('tot'),P=soAgregar('pdv');
+  function card(v,e,extra){return'<div class="card so-kpi"><div class="v">'+v+'</div><div class="e">'+e+'</div>'+(extra||'')+'</div>'}
+  if(!T){k.innerHTML=card('…','Cargando');return}
+  var t=soMedidas(T.g.T||new Float64Array(soD.meses.length),sel);
+  var nPdv=null;
+  if(P&&P.g){nPdv=0;Object.keys(P.g).forEach(function(i){if(soFs.pdv&&!soFs.pdv[i])return;
+    if(sel.some(function(j){return P.g[i][j]}))nPdv++})}
+  var d=t.dpyp!=null?'<div class="d '+(t.dpy>=0?'pos':'neg')+'">ΔPY '+soPct(t.dpyp)+' · '+soNumD(t.dpy)+'</div>':'<div class="d">sin año anterior</div>';
+  var ie=soInvEstado(sel),iv='–',idet='',arch='s3_inv.json';
+  if(ie.est==='pdv'){ie=soInvPdvEstado(sel);arch='s3_inv_pdv.json';     // con filtros de PDV: el inventario por punto de venta
+    if(ie.est==='ok'){var gp=soInvPorPdv(ie.ref,null),sp=0;Object.keys(gp).forEach(function(i){sp+=gp[i]});
+      iv=soNum(sp);idet='<div class="d">Cierre de '+ie.etq+' · PDV filtrados</div>';ie={est:'listo'}}}
+  if(ie.est==='ok'){iv=soNum(soInvPor('tot',ie.ref).T||0);idet='<div class="d">Cierre de '+ie.etq+'</div>'}
+  else if(ie.est==='cargando')iv='…';
+  else if(ie.est!=='listo')idet='<div class="d"'+(ie.err?' title="'+esc(ie.err)+'"':'')+'>'+(ie.est==='prod'?'No aplica con PDV + BU / EAN':
+    (ie.est==='error'?'No pude leer '+arch+' · pulsa Actualizar':'Sin foto de inventario en '+soE.anio))+'</div>';
+  k.innerHTML=card(soNum(t.ac),'Resultado '+(soE.unidad==='#'?'(und)':'($)'),d)+
+    card(nPdv==null?(P&&P.error?'n/d':'…'):soNum(nPdv>0?t.ac/nPdv:null),'Promedio por PDV')+
+    card(nPdv==null?(P&&P.error?'n/d':'…'):FMT.format(nPdv),'Total PDV')+
+    card(iv,'Inventario '+(soE.unidad==='#'?'(und)':'($)'),idet);
+  soKpiCache=t}
+var soKpiCache=null;
+
+/* Visual central según el botón elegido. */
+function soPintarVisual(){
+  var c=document.getElementById('soVisual');if(!c||!soD)return;
+  var tit=document.getElementById('soVisualTit'),v=soE.vista,sel=soSel();
+  var etq=SO_VISTAS.filter(function(x){return x[0]===v})[0][1];
+  if(tit)tit.innerText=v==='mensual'?'Ventas mensuales':(v==='ean'?'Crecimiento por EAN':(v==='cli'?'Top clientes':'Puntos de venta'));
+  var bus=document.getElementById('soBuscarCaja');if(bus)bus.hidden=v==='mensual';
+  var info=document.getElementById('soVisualInfo');
+  if(info)info.innerText=v==='mensual'?'':(SO_INFO[v]+' · Clic en una fila: filtra toda la página (se acumulan; otro clic la quita)'+
+    (v==='pdv'?' · › abre los EAN de ese punto de venta · Promedio Selec: meses del filtro "Promedio Selec"'+
+      ' · Inventario = del punto de venta al cierre del último mes con dato (Consolidado inventarios + PDV MASTER; no aplica con filtros de BU / EAN)':
+      ' · Inventario = al cierre del último mes con dato (Consolidado inventarios + EAN MASTER)')+' · Clic en un encabezado: ordena · ⬇ CSV: descarga la tabla');
+  if(!sel.length){c.innerHTML='<div class="mtd-vacio">Sin meses con datos para '+soE.anio+' con ese mes / trimestre</div>';return}
+  if(v==='mensual'){soPintarMensual(c,sel);return}
+  var dim=v==='ean'?'sku':(v==='cli'?'cli':'pdv');
+  var M=soFilasDim(dim,sel);
+  if(!M){c.innerHTML='<div class="mtd-estado"><span class="mtd-spinner"></span>Cargando el detalle por punto de venta…</div>';return}
+  if(M.error){c.innerHTML='<div class="mtd-vacio">'+esc(M.error)+'</div>';return}
+  // Columna Inventario: por cliente / EAN (s3_inv.json) o por punto de venta (s3_inv_pdv.json).
+  var esPdv=dim==='pdv',fuente='Consolidado inventarios';
+  var ie=esPdv?soInvPdvEstado(sel):soInvEstado(sel),g=ie.est==='ok'?(esPdv?soInvPorPdv(ie.ref,'pdv'):soInvPor(dim,ie.ref)):{},fs=soFs[dim];
+  var inv={est:ie.est,etq:'Inv.'+(ie.mes?' '+ie.mes:''),tit:ie.est==='ok'?'Inventario al cierre de '+ie.etq+' ('+fuente+')':
+    (ie.est==='pdv'?'El inventario por cliente y EAN no aplica con filtros de punto de venta, ciudad o canal':
+     (ie.est==='prod'?'El inventario por punto de venta no aplica con filtros de BU o EAN':
+      (ie.est==='error'?'No pude leer el inventario: '+ie.err:'Inventario ('+fuente+')'))),tot:null};
+  M.filas.forEach(function(x){x.inv=ie.est==='ok'?(g[x.key]==null?null:g[x.key]):null});
+  if(ie.est==='ok'){inv.tot=0;Object.keys(g).forEach(function(k){if(!fs||fs[k])inv.tot+=g[k]})}
+  var q=normTxt(soE.q||''),l=M.filas.filter(function(x){return!q||normTxt(x.nombre+' '+x.sub).indexOf(q)!==-1});
+  var o=soE.orden,dir=o.dir==='asc'?1:-1;
+  l.sort(function(a,b){if(o.k==='nombre')return dir*a.nombre.localeCompare(b.nombre,'es');
+    var x=a[o.k],y=b[o.k],nx=x==null||!isFinite(x),ny=y==null||!isFinite(y);
+    if(nx||ny)return nx&&ny?0:(nx?1:-1);return dir*(x-y)});
+  soFilasVis=l;
+  c.innerHTML=soZebraTabla(l,M.tot,{dim:dim,extra:dim==='pdv'?['prom','Promedio Selec']:(dim==='sku'?['vmp','Var % vs mes ant.']:null),
+    abrir:dim==='pdv',tope:soE.tope,orden:true,inv:inv})+'<div class="vt3-tip" id="soTip" hidden></div>'}
+var soFilasVis=[];
+var SO_INFO={ean:'PY = mismos meses del año anterior · AC = meses elegidos · ΔPY y ΔPY% = variación · Var % = último mes vs el anterior',
+  cli:'Clientes por Sell Out de los meses elegidos · PY = mismos meses del año anterior · ΔPY y ΔPY% = variación',
+  pdv:'Puntos de venta por Sell Out de los meses elegidos · PY = mismos meses del año anterior · ΔPY y ΔPY% = variación'};
+
+function soPintarMensual(c,sel){
+  var A=soAgregar('tot');
+  if(!A){c.innerHTML='<div class="mtd-estado"><span class="mtd-spinner"></span>Cargando…</div>';return}
+  if(A.error){c.innerHTML='<div class="mtd-vacio">'+esc(A.error)+'</div>';return}
+  var D=soD,s=A.g.T||new Float64Array(D.meses.length),acc={},m,ult=0;
+  for(m=1;m<=12;m++)acc[m]={so:0,soPy:0,si:0,siPy:0};
+  D.meses.forEach(function(mm,i){if(Number(mm.slice(0,4))!==soE.anio)return;var x=acc[Number(mm.slice(5,7))];
+    x.so=s[i];var j=D.py[i];x.soPy=j>=0?s[j]:0;if(s[i])ult=Math.max(ult,Number(mm.slice(5,7)))});
+  var mesesSel=sel.map(function(i){return Number(D.meses[i].slice(5,7))});
+  soCsvMensual={anio:soE.anio,acc:acc,ult:ult};
+  // Se ven todos los meses del año (recortados por Trimestre); los elegidos con Mes se resaltan
+  // y son los que suman en Total.
+  var vis=[];for(m=1;m<=ult;m++)if(!soE.trim.length||soE.trim.indexOf(Math.ceil(m/3))!==-1)vis.push(m);
+  var W=c.clientWidth>0?Math.max(360,Math.round(c.clientWidth)):1000;
+  var prev=sivsoUnidad;sivsoUnidad=soE.unidad;
+  try{
+    var r=sivsoVistaZebra({anio:soE.anio,acc:acc,ult:{so:ult,si:0,soPy:0,siPy:0}},W,'so',
+      {meses:vis,mesesTotal:mesesSel,nombre:'Sell Out '+(soE.unidad==='#'?'(und)':'($)'),fn:'soAlternarMes',
+       sel:soE.meses.reduce(function(o,x){o[x]=1;return o},{}),hay:soE.meses.length>0,
+       etqTotal:soE.meses.length||soE.trim.length?'Total selección':'Total YTD'});
+    c.innerHTML=r?r.svg+'<div class="hist-legend sivso-ley">'+r.ley.map(function(l){return'<span class="it"><span class="sw '+l[0]+'"></span>'+esc(l[1])+'</span>'}).join('')+
+      '</div>':'<div class="mtd-vacio">Sin datos</div>';
+    var info=document.getElementById('soVisualInfo');
+    if(info&&r)info.innerText=r.hint+' · Clic en un mes: lo elige y filtra toda la página (varios a la vez)'}
+  finally{sivsoUnidad=prev}}
+
+/* Tabla estilo Zebra (mismo diseño que la pestaña Ventas): PY · AC · ΔPY · ΔPY% · extra. */
+function soZebraTabla(l,T,o){
+  var vis=o.tope?l.slice(0,o.tope):l,maxAc=0,maxD=0,maxP=0;
+  vis.forEach(function(x){maxAc=Math.max(maxAc,x.ac,x.py||0);if(x.dpy!=null)maxD=Math.max(maxD,Math.abs(x.dpy));
+    if(x.dpyp!=null)maxP=Math.max(maxP,Math.abs(x.dpyp))});
+  var cap=Math.min(maxP,1)||1,ex=o.extra,iv=o.inv;
+  function celInv(v){return iv.est==='cargando'?'…':(v==null?'–':soNum(v))}
+  function cab(k,t,cls){var act=o.orden&&soE.orden.k===k;
+    return o.orden?'<button type="button" class="vt3-th '+(cls||'')+(act?' act':'')+'" onclick="soOrdenar(\''+k+'\')">'+t+(act?(soE.orden.dir==='asc'?' ↑':' ↓'):'')+'</button>':
+      '<span class="vt3-th '+(cls||'')+'">'+t+'</span>'}
+  function fila(x,i,hijo){
+    var w=maxAc>0?x.ac/maxAc*82:0,dw=maxD>0&&x.dpy!=null?Math.abs(x.dpy)/maxD*44:0,pos=x.dpy>=0;
+    var pv=x.dpyp,pw=pv==null?0:Math.min(Math.abs(pv),cap)/cap*44,fuera=pv!=null&&Math.abs(pv)>cap;
+    var clic=hijo?'':' tabindex="0" role="button" onclick="soAlternar(\''+o.dim+'\',\''+esc(String(x.key))+'\')"'+
+      ' onkeydown="if(event.key===\'Enter\'){event.preventDefault();soAlternar(\''+o.dim+'\',\''+esc(String(x.key))+'\')}"';
+    var flecha=o.abrir&&!hijo?'<button type="button" class="so-abrir'+(soE.abierto===x.key?' abierto':'')+'" title="Ver sus EAN" '+
+      'onclick="event.stopPropagation();soAbrir('+x.key+')">›</button>':'';
+    return'<div class="vt3-fila'+(hijo?' so-hijo':'')+(x.sel?' sel':'')+(x.atenuada?' atenuada':'')+'"'+clic+'>'+
+      '<span class="nom" title="'+esc(x.nombre)+'">'+flecha+esc(x.nombre)+(x.sub?'<small>'+esc(x.sub)+'</small>':'')+'</span>'+
+      '<span class="num py">'+(x.py==null?'':soNum(x.py))+'</span>'+
+      // La barra deja ~58 px para la cifra: así no se monta sobre ΔPY en columnas angostas (iPad).
+      '<span class="ac"><i style="width:calc((100% - 58px) * '+(w/82).toFixed(3)+')"></i><b>'+soNum(x.ac)+'</b></span>'+
+      '<span class="d">'+(x.dpy==null?'':'<i class="'+(pos?'pos':'neg')+'" style="'+(pos?'left:50%':'right:50%')+';width:'+dw.toFixed(1)+'%"></i>'+
+        '<b class="'+(pos?'pos':'neg')+'" style="'+(pos?'left:calc(50% + '+dw.toFixed(1)+'% + 4px)':'right:calc(50% + '+dw.toFixed(1)+'% + 4px)')+'">'+soNumD(x.dpy)+'</b>')+'</span>'+
+      '<span class="p">'+(pv==null?'':'<i class="'+(pv>=0?'pos':'neg')+'" style="'+(pv>=0?'left:50%':'right:50%')+';width:'+pw.toFixed(1)+'%"></i>'+
+        '<em class="'+(pv>=0?'pos':'neg')+(fuera?' fuera':'')+'" style="'+(pv>=0?'left:calc(50% + '+pw.toFixed(1)+'%)':'right:calc(50% + '+pw.toFixed(1)+'%)')+'"></em>'+
+        (pw>30?'<b class="adentro '+(pv>=0?'pos':'neg')+'" style="'+(pv>=0?'right:calc(50% - '+pw.toFixed(1)+'% + 8px)':'left:calc(50% - '+pw.toFixed(1)+'% + 8px)')+'">'+soPct(pv)+'</b>':
+        '<b class="'+(pv>=0?'pos':'neg')+'" style="'+(pv>=0?'left:calc(50% + '+pw.toFixed(1)+'% + 9px)':'right:calc(50% + '+pw.toFixed(1)+'% + 9px)')+'">'+soPct(pv)+'</b>'))+'</span>'+
+      '<span class="num vmp">'+(ex?(ex[0]==='prom'?soNum(x.prom):soPct(x[ex[0]])):'')+'</span>'+
+      (iv?'<span class="num inv">'+(hijo?'':celInv(x.inv))+'</span>':'')+
+      '<span class="mv">PY '+(x.py==null?'–':soNum(x.py))+' · ΔPY '+soNumD(x.dpy)+' · ΔPY% '+soPct(x.dpyp)+
+        (iv&&x.inv!=null?' · Inv. '+soNum(x.inv):'')+'</span></div>'}
+  var h='<div class="vt3-chart so-zebra'+(o.compacto?' so-compacto':'')+(iv?' con-inv':'')+'"><div class="vt3-fila vt3-encab">'+cab('nombre','','nom')+cab('py','PY','num')+cab('ac','AC','ac')+
+    cab('dpy','ΔPY','d')+cab('dpyp','ΔPY%','p')+(ex?cab(ex[0],ex[1],'num'):'<span class="vt3-th num"></span>')+
+    (iv?'<span class="so-th-inv" title="'+esc(iv.tit)+'">'+(iv.est==='ok'?cab('inv',iv.etq,'num inv'):'<span class="vt3-th num inv">'+iv.etq+'</span>')+'</span>':'')+'</div>';
+  vis.forEach(function(x,i){h+=fila(x,i);
+    if(o.abrir&&soE.abierto===x.key)h+=soHijosPdv(x.key,fila)});
+  h+='<div class="vt3-fila vt3-total"><span class="nom">Total</span><span class="num py">'+(T.py==null?'':soNum(T.py))+'</span>'+
+    '<span class="ac"><b style="position:static">'+soNum(T.ac)+'</b></span><span class="d"><b class="'+(T.dpy>=0?'pos':'neg')+'" style="position:static">'+soNumD(T.dpy)+'</b></span>'+
+    '<span class="p"><b class="'+(T.dpyp>=0?'pos':'neg')+'" style="position:static">'+soPct(T.dpyp)+'</b></span>'+
+    '<span class="num vmp">'+(ex?(ex[0]==='prom'?soNum(T.prom):soPct(T[ex[0]])):'')+'</span>'+
+    (iv?'<span class="num inv">'+celInv(iv.tot)+'</span>':'')+'</div></div>';
+  if(o.tope)h+=l.length>vis.length?'<button class="btn vt-mas" onclick="soMas()">Mostrar más ('+(l.length-vis.length)+' restantes)</button>':
+    '<div class="hint">'+l.length+(l.length===1?' fila':' filas')+'</div>';
+  return h}
+
+/* Filas hijas de un PDV abierto: sus EAN (detalle PDV × producto de ese punto). */
+function soHijosPdv(iPdv,fila){
+  var ps=soDetalle({pdv:[iPdv]});
+  if(!ps)return'<div class="vt3-fila so-hijo"><span class="nom"><span class="mtd-spinner"></span>Cargando sus EAN…</span></div>';
+  var D=soD,n=D.meses.length,g={},sel=soSel(),selP=soSelProm();
+  ps.forEach(function(r){if(r[0]!==iPdv||!soPasaSku(r[1]))return;var s=g[r[1]]||(g[r[1]]=new Float64Array(n));s[r[2]]+=soVal(r[3],r[4])});
+  var l=Object.keys(g).map(function(k){var m=soMedidas(g[k],sel,selP),s=D.skus[k];m.key=Number(k);m.nombre=s?s.nombre:k;m.sub=s?s.bu:'';return m})
+    .filter(function(m){return m.ac||m.py}).sort(function(a,b){return b.ac-a.ac});
+  if(!l.length)return'<div class="vt3-fila so-hijo"><span class="nom">Sin EAN con venta en la selección</span></div>';
+  return l.slice(0,40).map(function(x,i){return fila(x,i,true)}).join('')}
+
+/* Abajo (siempre a la vista): Participación por canal · Crecimiento por BU · Participación por BU. */
+function soPintarAbajo(){
+  var sel=soSel();
+  var Cn=soAgregar('canal'),Bu=soAgregar('bu');
+  var e=document.getElementById('soDonutCanal');
+  if(e)e.innerHTML=!Cn?'<div class="mtd-estado"><span class="mtd-spinner"></span>Cargando…</div>':(Cn.error?'<div class="mtd-vacio">'+esc(Cn.error)+'</div>':
+    soDonut(Cn.g,sel,'canal'));
+  e=document.getElementById('soDonutBu');
+  if(e)e.innerHTML=!Bu?'<div class="mtd-estado"><span class="mtd-spinner"></span>Cargando…</div>':(Bu.error?'<div class="mtd-vacio">'+esc(Bu.error)+'</div>':
+    soDonut(Bu.g,sel,'bu'));
+  e=document.getElementById('soTablaBu');
+  if(e){var M=soFilasDim('bu',sel);
+    e.innerHTML=!M?'<div class="mtd-estado"><span class="mtd-spinner"></span>Cargando…</div>':(M.error?'<div class="mtd-vacio">'+esc(M.error)+'</div>':
+      soZebraTabla(M.filas.sort(function(a,b){return b.ac-a.ac}),M.tot,{dim:'bu',compacto:true}));
+    soCsvBu=M&&!M.error?M.filas:[]}}
+
+/* Torta (anillo) con la paleta de marca; la leyenda filtra con clic. */
+function soDonut(g,sel,dim){
+  var items=Object.keys(g).map(function(k){var v=0;sel.forEach(function(i){v+=g[k][i]});return{k:k,v:v}})
+    .filter(function(x){return x.v>0}).sort(function(a,b){return b.v-a.v});
+  var total=items.reduce(function(a,x){return a+x.v},0);
+  soCsvDonut[dim]=items.map(function(x){return{nombre:x.k,valor:Math.round(x.v),pct:total>0?Math.round(x.v/total*1000)/10:0}});
+  if(total<=0)return'<div class="mtd-vacio">Sin datos</div>';
+  var fs=soFs[dim],ac=0,partes=[];
+  items.forEach(function(x,i){var c=SO_COLORES[i%SO_COLORES.length],gr=360*x.v/total;x.c=c;x.p=x.v/total;x.sel=!!(fs&&fs[x.k]);
+    partes.push((fs&&!x.sel?c+'40':c)+' '+ac.toFixed(2)+'deg '+(ac+gr).toFixed(2)+'deg');ac+=gr});
+  return'<div class="sivso-donut-wrap so-donut-wrap"><div class="sivso-donut" style="background:conic-gradient('+partes.join(',')+')">'+
+    '<div class="sivso-donut-hueco"><span>'+soNum(total)+'</span><span class="et">Sell Out</span></div></div>'+
+    '<div class="sivso-donut-leyenda">'+items.map(function(x){
+      return'<button type="button" class="sivso-donut-it clicable'+(x.sel?' sel':(fs?' atenuada':''))+'" onclick="soAlternar(\''+dim+'\',\''+esc(x.k)+'\')" title="Clic para filtrar">'+
+        '<span class="sw" style="background:'+x.c+'"></span><span class="nom">'+esc(x.k)+'</span><span class="pct">'+mtdPctEntero(x.p)+'</span></button>'}).join('')+
+    '</div></div>'}
+
+/* ══════════ CSV de cada visual (lo que se ve, con los filtros aplicados) ══════════ */
+var soCsvMensual=null,soCsvBu=[],soCsvDonut={};
+function soCsvNum(v){return v==null||!isFinite(v)?'':Math.round(v)}
+function soCsvPct(v){return v==null||!isFinite(v)?'':Math.round(v*1000)/10}
+function soCsv(cual){
+  if(!soD)return;
+  var u=soE.unidad==='#'?'und':'$',sufijo='_'+soE.anio+'_'+mtdCsvFecha()+'.csv',v=soE.vista;
+  if(cual==='visual'&&v==='mensual'){
+    var M=soCsvMensual,filas=[];if(!M)return;
+    for(var m=1;m<=M.ult;m++){var x=M.acc[m];
+      filas.push({mes:SIVSO_MESES[m-1]+' '+M.anio,ac:soCsvNum(x.so),py:soCsvNum(x.soPy),dpy:soCsvNum(x.so-x.soPy),dpyp:x.soPy>0?soCsvPct(x.so/x.soPy-1):''})}
+    mtdDescargarCsv(filas,[{clave:'mes',titulo:'Mes'},{clave:'ac',titulo:'Sell Out '+M.anio+' ('+u+')'},
+      {clave:'py',titulo:'Sell Out '+(M.anio-1)+' ('+u+')'},{clave:'dpy',titulo:'ΔPY ('+u+')'},{clave:'dpyp',titulo:'ΔPY %'}],
+      'sell_out_mensual'+sufijo);return}
+  if(cual==='visual'||cual==='bu'){
+    var esBu=cual==='bu',dim=esBu?'bu':(v==='ean'?'sku':(v==='cli'?'cli':'pdv'));
+    var l=(esBu?soCsvBu:soFilasVis).map(function(x){return{nombre:x.nombre,det:x.sub||'',py:soCsvNum(x.py),ac:soCsvNum(x.ac),
+      dpy:soCsvNum(x.dpy),dpyp:soCsvPct(x.dpyp),vmp:soCsvPct(x.vmp),prom:soCsvNum(x.prom),inv:x.inv==null?'':soCsvNum(x.inv)}});
+    var cols=[{clave:'nombre',titulo:esBu?'BU':(dim==='sku'?'EAN description':(dim==='cli'?'Cliente':'Punto de venta'))}];
+    if(!esBu)cols.push({clave:'det',titulo:dim==='sku'?'BU · EAN':(dim==='cli'?'KAM':'Cliente · ciudad')});
+    cols=cols.concat([{clave:'py',titulo:'PY ('+u+')'},{clave:'ac',titulo:'AC ('+u+')'},{clave:'dpy',titulo:'ΔPY ('+u+')'},{clave:'dpyp',titulo:'ΔPY %'}]);
+    if(dim==='sku')cols.push({clave:'vmp',titulo:'Var % vs mes ant.'});
+    if(dim==='pdv')cols.push({clave:'prom',titulo:'Promedio Selec ('+u+')'});
+    if(!esBu)cols.push({clave:'inv',titulo:'Inventario último mes ('+u+')'});
+    mtdDescargarCsv(l,cols,'sell_out_'+(esBu?'crecimiento_bu':{sku:'crecimiento_ean',cli:'top_clientes',pdv:'puntos_de_venta'}[dim])+sufijo);return}
+  var k=cual==='bu_donut'?'bu':cual,d=soCsvDonut[k]||[];
+  mtdDescargarCsv(d,[{clave:'nombre',titulo:k==='canal'?'Canal':'BU'},{clave:'valor',titulo:'Sell Out ('+u+')'},{clave:'pct',titulo:'Participación %'}],
+    'sell_out_participacion_'+k+sufijo)}
+
+/* Repinta la gráfica mensual al cambiar el ancho de la ventana. */
+var soResizeT=null;
+if(typeof window!=='undefined'&&window.addEventListener)window.addEventListener('resize',function(){
+  clearTimeout(soResizeT);soResizeT=setTimeout(function(){
+    if(soD&&typeof mtdVistaActiva!=='undefined'&&mtdVistaActiva==='so'&&soE.vista==='mensual')soPintarVisual()},150)});
+</script>

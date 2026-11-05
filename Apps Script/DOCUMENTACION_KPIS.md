@@ -61,11 +61,16 @@ Reglas:
 |---|---|
 | **Sell In / Sell Out** | Σ de `Real (LOCAL)` (o `Real #` en modo unidades) por `Type` = SI / SO, año elegido |
 | **ΔSI / ΔSO** | `(actual − A-1)/A-1`; A-1 = año anterior **recortado al mismo corte** (ene–corte vs ene–corte) |
-| **% SO / SI** | SO ÷ SI (si SI > 0) |
+| **% SO / SI** | SO ÷ SI (si SI > 0). Desde el 2026-11-03 los KPIs (SI, SO, ΔSI, ΔSO y SO/SI) usan el rango **ene → último mes con Sell Out** del año elegido, en los dos años |
+| **Lanzamientos** | Botón ★: solo productos con "INNOVACIÓN" en la columna Innovación de la hoja "Products 2026" (MAESTRO PDV's), por Product ID / nombre (y EAN para el inventario) |
+| **Absorción (vista Lanzamientos)** | Por producto de lanzamiento: Sell Out ÷ Sell In de ene → último mes con Sell Out del año elegido. Estado: ≥ 100 % vende lo que entra · 70–99 % en camino · < 70 % se acumula inventario |
 | **Prom SO (Nm)** | Σ SO de los N meses **calendario** que terminan en el corte del año elegido ÷ N (meses sin dato = 0). La ventana puede cruzar el año. |
 | **INV** | Inventario del **último mes con fila `Type=INV`** del año elegido, **sumado** sobre cliente×producto. Productos/clientes sin foto ese mes = 0. |
 | **% Part SI / SO** | cuota sobre el universo de la tabla Clientes (todos los clientes mostrados): no cambia al elegir filas; el TOTAL con selección suma las partes elegidas |
 | **Donut BU** | Participación del SO por BU, **solo BU con SO neto > 0** (las devoluciones netas se avisan aparte); clic en la leyenda filtra por BU |
+| **Inventario (gráfico mensual, vista 1)** | Desde el 2026-10-29: Σ `Units` de los **"Consolidado inventarios Semestre N"** (producto cruzado con EAN MASTER; `s3_inv.json`) por mes, año elegido y anterior, en **barras**; en pesos × precio de "Transformación final". Foto al cierre del mes. Filtran Cliente, Canal, KAM, BU y Buscar cliente; Producto, Marca y Strategic/Tactic market **no**. Reemplaza a la vista "Tendencia" |
+| **Inventario (Sell Out PDV)** | Misma fuente. Tarjeta y columna "Inv. <mes>" (EAN y Clientes) = foto del **último mes con inventario del año elegido** (no depende de los meses elegidos). Con filtros de PDV / ciudad / canal, la tarjeta usa el inventario por PDV |
+| **Inventario por PDV (Sell Out PDV · Puntos de Venta)** | Σ `Units` de los Consolidados del PDV (local cruzado con PDV MASTER → POS_ID / SF_ID; si no, Sold To ID + "_" + código local; `s3_inv_pdv.json`) en el último mes con dato; en pesos × precio de Transformación final. Cruza ~82 % de las unidades. Con filtros de BU / EAN no aplica |
 | **DDI / Diferencia INV** | **No implementados** (la hoja `DIAS DE INV` está rota). Propuesta por confirmar con el equipo: `DDI = INV ÷ (Prom SO ÷ 30)` |
 
 ### 3.3 Resumen del mes (arriba en la pestaña Ventas; motor `JsVentas.html`)
@@ -107,7 +112,7 @@ Réplica del visual de crecimiento del Power BI de sell-out. Fuente única: el E
 | **PY** | Los mismos meses del año anterior (vacío si el ETL no trae ese año) |
 | **ΔPY / ΔPY%** | AC − PY · AC ÷ PY − 1 |
 | **Var % vs mes pasado** | Último mes elegido ÷ el mes anterior − 1 |
-| **Promedio mensual** ("Promedio Selec") | AC ÷ número de meses elegidos |
+| **Promedio mensual** ("Promedio Selec") | AC ÷ número de meses elegidos. En la subpestaña Sell Out, si se eligen meses en el filtro "Promedio Selec": suma de esos meses ÷ cuántos son |
 | **Resultado** | AC total, con ΔPY% y ΔPY |
 | **Total PDV** | Puntos de venta (`POS_ID`) con venta en los meses elegidos, con los filtros activos |
 | **Promedio por PDV** | Resultado ÷ Total PDV |
@@ -153,7 +158,7 @@ Todo ocurre en el navegador (no hay llamadas al servidor).
 | Ventas MTD | barras de trimestre (histórico) | trimestre (`histTrimFil`) | 1–4 |
 | SI vs SO | tabla Productos | `producto` | `productId` (o nombre) |
 | SI vs SO | tabla Clientes | `cliente` | `sapId` (o nombre) |
-| SI vs SO | barras del gráfico mensual | `mes` | 1–12 |
+| SI vs SO | meses del gráfico mensual (5 vistas) y encabezados de mes del Histórico mensual | `mes` | 1–12 |
 | SI vs SO | leyenda del donut de BU | `buK` | BU normalizada (mayúsculas) |
 
 El donut es un `conic-gradient` CSS: los trozos no son clicables, **la leyenda es la zona de clic** y los trozos no elegidos se atenúan.
@@ -227,11 +232,12 @@ Helper único en `JsVentasMtd.html` (lo usan también las tablas de SI vs SO). `
 | MTD: 2 llamadas, 2 `openById`, `getDataRange()` de hojas de 25 columnas, objetos con claves repetidas | 1 ejecución, 1 `openById`, solo las columnas necesarias, payload con diccionarios/arreglos (≈ −60/70 %) |
 | `getPuntosJson`/`getBricksJson`/`getAsignacionesJson` leían la hoja **entera en cada carga** | Caché 6 h (`conCache_`) |
 | Primer usuario con caché fría esperaba la lectura | `calentarCache()` + trigger cada 15 min (ver §8) |
-| N usuarios con caché fría → N lecturas simultáneas | `LockService`: el segundo encuentra la caché ya llena |
+| N usuarios con caché fría → N lecturas simultáneas | Marca `construyendo::<clave>` por dato (2026-10-29; antes un candado global ponía en fila a todos los endpoints): el segundo espera hasta 25 s y encuentra la caché ya llena |
+| Dato > 5,4 MB (60 trozos) no se cacheaba y se releía la hoja en cada apertura | Desde 400 KB se guarda comprimido con gzip + base64 (meta `z:N`) |
 
 ## 8. Operación y despliegue
 
-1. Subir el código (`/probar` a tu proyecto de pruebas; `/publicar` a producción, ver [../COLABORACION.md](../COLABORACION.md)) — suben **juntos** `Code.js` y los 11 `.html` (`Index`, `Estilos`, `JsNucleo`, `JsFiltros`, `JsMapa`, `JsPaneles`, `JsVentasMtd`, `JsSIvsSO`, `JsYoobic`, `JsVentas`, `JsVentas3`). Un push parcial rompe la plantilla (ver CLAUDE.md).
+1. Subir el código (`/probar` a tu proyecto de pruebas; `/publicar` a producción, ver [../COLABORACION.md](../COLABORACION.md)) — suben **juntos** `Code.js` y los 12 `.html` (`Index`, `Estilos`, `JsNucleo`, `JsFiltros`, `JsMapa`, `JsPaneles`, `JsVentasMtd`, `JsSIvsSO`, `JsYoobic`, `JsVentas`, `JsVentas3`, `JsSO`). Un push parcial rompe la plantilla (ver CLAUDE.md).
 2. `/publicar` crea la **nueva versión** y mueve a ella la implementación de producción (o se prueba antes en la URL `/dev` de tu proyecto de pruebas).
 3. **Una sola vez**, desde el editor de Apps Script: ejecutar `instalarTriggerCache()` (pedirá autorizar un permiso nuevo para triggers). Programa `calentarCache` cada 15 min. `quitarTriggerCache()` lo retira.
 4. Verificar con `verVentasMtd()` y `verSIvsSO()` (Registro de ejecución). `verVentasMtd` imprime la **conciliación** de las tres hojas; los tres importes del mes de corte deben coincidir (17.722 M en sep-2026). El Diagnóstico de la web app muestra lo mismo y la app avisa en pantalla si difieren > 0,5 %.

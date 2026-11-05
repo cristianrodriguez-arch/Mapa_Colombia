@@ -237,4 +237,81 @@ t('las capas del mapa se cachean (segunda llamada no vuelve a abrir la hoja)', (
   assert.strictEqual(c5.__lecturas(), antes);
 });
 
+// Caché comprimida: un texto > 400 KB se guarda con gzip + base64 y se lee igual.
+t('caché: un dato grande se guarda comprimido (meta "z:") y se lee idéntico; uno chico queda sin comprimir', () => {
+  const zlib = require('zlib');
+  const c7 = nuevoContexto({}, 'America/Bogota');
+  const blob = b => ({ getBytes: () => b, getDataAsString: () => Buffer.from(b).toString('utf8') });
+  Object.assign(c7.Utilities, {
+    newBlob: (x) => blob(typeof x === 'string' ? Buffer.from(x, 'utf8') : Buffer.from(x)),
+    gzip: b => blob(zlib.gzipSync(Buffer.from(b.getBytes()))),
+    ungzip: b => blob(zlib.gunzipSync(Buffer.from(b.getBytes()))),
+    base64Encode: b => Buffer.from(b).toString('base64'),
+    base64Decode: s => Buffer.from(s, 'base64'),
+    sleep() {}
+  });
+  const grande = JSON.stringify({ filas: Array.from({ length: 60000 }, (_, i) => [i, 'CLIENTE ' + (i % 300), i * 7]) });
+  assert.ok(grande.length > 400000);
+  let n = 0;
+  const leer = () => c7.conCache_('prueba_grande', 600, () => { n++; return { texto: grande, cachear: true }; });
+  assert.strictEqual(leer(), grande);
+  assert.ok(String(c7.__cache.get('meta::prueba_grande')).startsWith('z:'));
+  assert.strictEqual(leer(), grande);                                       // segunda vez sale de la caché
+  assert.strictEqual(n, 1);
+  c7.conCache_('prueba_chica', 600, () => ({ texto: '{"a":1}', cachear: true }));
+  assert.strictEqual(c7.__cache.get('meta::prueba_chica'), '1');
+  assert.ok(!c7.__cache.has('construyendo::prueba_grande'));               // la marca se limpia al terminar
+  // Archivos del ETL (leerArchivoDrive_: mapa, Sell Out, inventario) con la caché comprimida.
+  // Antes leerArchivoDrive_ no entendía el meta "z:N" y desde la 2.ª carga devolvía "" (el mapa
+  // se quedaba en "Cargando Sell Out…" con so_pdv.json de 4,5 MB).
+  let lecturasDrive = 0;
+  c7.leerDeDriveConReintento_ = () => { lecturasDrive++; return grande; };
+  assert.strictEqual(c7.leerArchivoDrive_('so_pdv.json'), grande);
+  assert.ok(String(c7.__cache.get('meta::so_pdv.json')).startsWith('z:'));
+  assert.strictEqual(c7.leerArchivoDrive_('so_pdv.json'), grande);          // 2.ª vez: de la caché, idéntico
+  assert.strictEqual(lecturasDrive, 1);
+});
+
+// Coordenadas sin punto decimal: valores reales de la hoja de oct-2026 (Sheets en
+// español leyó "4.670942" como 4.670.942). Código postal = pista del departamento.
+const sinComa = [
+  ['Id cuenta 18', 'Nombre de la cuenta', 'Ubicación: Código Postal', 'Ubicación: Coordenadas (Latitud)', 'Ubicación: Coordenadas (Longitud)', 'Nº Oficina Farmacia', '#REF!'],
+  ['B1', 'BARRANQUILLA', 80020, 1101388, -7482838, 'P1', '#REF!'],
+  ['B2', 'BOGOTA', 110111, 46997874, -740505315, 'P2', ''],
+  ['B3', 'BOGOTA PRECISION', 110221, 4666598556533950, -7405249259005390, 'P3', ''],
+  ['B4', 'VALLEDUPAR', 200001, 1047521, -7325003, 'P4', ''],
+  ['B5', 'NEIVA', 410010, 29308508, -752894546, 'P5', ''],
+  ['B6', 'BUCARAMANGA', 680006, 710595, -7313945, 'P6', ''],
+  ['B7', 'SIN COORDENADA', 760010, '', '', 'P7', ''],
+  ['B8', 'MEDELLIN', 50034, 61989499, -755884815, 'P8', ''],
+  ['B9', 'BOGOTA YA BIEN', 111211, 4.670942, -74.061899, 'P9', ''],
+  ['B10', 'MEDELLIN TEXTO', 50021, '6.222.569', '-755.748.834', 'P10', ''],
+  ['B11', 'CARTAGENA SIN CP', '', 1042331, -755123456, 'P11', ''],
+  ['B12', 'PASTO', 520001, 12136, -7728111, 'P12', ''],
+  ['B13', 'IPIALES', 524060, 8303, -7764421, 'P13', '']
+];
+const c6 = nuevoContexto({ 'CO_Puntos_Maestro clientes': hoja(sinComa) }, 'America/Bogota');
+const pts6 = JSON.parse(c6.getPuntosJson());
+const porNombre = {}; pts6.puntos.forEach(p => { porNombre[p.name] = [p.lat, p.lng]; });
+t('coordenadas sin coma: se recupera el punto decimal según el departamento del código postal', () => {
+  const cerca = (n, [a, b]) => { const v = porNombre[n]; assert.ok(v, n + ' no salió'); assert.ok(Math.abs(v[0] - a) < 1e-6 && Math.abs(v[1] - b) < 1e-6, n + ': ' + v); };
+  cerca('BARRANQUILLA', [11.01388, -74.82838]);
+  cerca('BOGOTA', [4.6997874, -74.0505315]);
+  cerca('BOGOTA PRECISION', [4.66659855653395, -74.0524925900539]);
+  cerca('VALLEDUPAR', [10.47521, -73.25003]);
+  cerca('NEIVA', [2.9308508, -75.2894546]);
+  cerca('BUCARAMANGA', [7.10595, -73.13945]);
+  cerca('MEDELLIN', [6.1989499, -75.5884815]);
+  cerca('BOGOTA YA BIEN', [4.670942, -74.061899]);
+  cerca('MEDELLIN TEXTO', [6.222569, -75.5748834]);
+  cerca('CARTAGENA SIN CP', [10.42331, -75.5123456]);
+  cerca('PASTO', [1.2136, -77.28111]);
+  cerca('IPIALES', [0.8303, -77.64421]);
+  assert.strictEqual(pts6.puntos.length, 12);
+  assert.strictEqual(pts6.stats.conPosId, 12);
+  assert.strictEqual(pts6.stats.coordenadasSinComaReparadas, 11);
+  assert.strictEqual(pts6.stats.reparadasSinCodigoPostal, 1);
+  assert.strictEqual(pts6.stats.motivosSinCoordenada.vacia, 1);
+});
+
 console.log('\n' + ok + ' pruebas OK' + (process.exitCode ? ' · HAY FALLAS' : ''));
