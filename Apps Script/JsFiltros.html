@@ -187,6 +187,7 @@ function panelFiltrosMovilActual(){
   if(mtdVistaActiva==='ventasmtd')return document.querySelector('#vistaVentasMtd .mtd-filtros');
   if(mtdVistaActiva==='sivso')return document.querySelector('#vistaSIvsSO .mtd-filtros');
   if(mtdVistaActiva==='yoobic')return document.querySelector('#vistaYoobic .mtd-filtros');
+  if(mtdVistaActiva==='so')return document.querySelector('#vistaSO .mtd-filtros');
   return document.getElementById('barraFiltros')}
 function alternarFiltrosMovil(){
   var el=panelFiltrosMovilActual();if(!el)return;
@@ -627,10 +628,11 @@ function iniciarUIBasica(){
   // Choices.js lo necesitan ya los filtros de Ventas MTD: se precarga en
   // paralelo con la llamada al servidor (no bloquea el pintado).
   cargarLib('choices',function(){});
-  // "Ventas" (JsVentas3.html, antes "Ventas 3.0") es la vista por defecto desde el
-  // 2026-10-13: carga sus datos y oculta la barra de filtros del mapa, igual que
-  // si el usuario acabara de hacer clic en esa pestaña.
-  mostrarVistaSuperior('ventas3');
+  if(typeof iniciarRail==='function')iniciarRail();
+  // La pestaña "Ventas" (subpestañas Sell Out / SI vs SO / Ventas MTD) es la vista por
+  // defecto desde el 2026-10-29: abre la última subpestaña usada (Sell Out la primera
+  // vez) y oculta la barra de filtros del mapa, como si el usuario hiciera clic en ella.
+  mostrarVistaSuperior(ventasSubActual());
   iniciarDivisor();
   document.addEventListener('keydown',function(e){
     if(e.key==='Escape'){cerrarDiag();cerrarTabla();cerrarPopFiltros();

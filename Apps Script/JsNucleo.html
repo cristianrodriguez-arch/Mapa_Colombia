@@ -99,6 +99,73 @@ function me(e){return e&&e.message?e.message:String(e)}
 function avisar(m,g){var c=document.getElementById('avisos');c.style.display='flex';
   var d=document.createElement('div');d.className='aviso'+(g?' grave':'');d.innerText=m;c.appendChild(d)}
 
+/* ══════════════ Riel de navegación (Material 3 Expressive) ══════════
+   Colapsado (por defecto) ↔ expandido. En escritorio el expandido empuja el
+   contenido y se recuerda (localStorage 'visor.rail'); en pantallas ≤ 1000 px
+   se abre como cajón modal encima del contenido y no se recuerda. El mapa se
+   reajusta solo: observarTamano() (JsMapa) vigila el ancho de .mapa-wrap. */
+var RAIL_CLAVE='visor.rail';
+function railModal(){return window.matchMedia&&window.matchMedia('(max-width:1000px)').matches}
+function fijarRail(exp,recordar){
+  var sh=document.getElementById('shell'),b=document.getElementById('btnRail');if(!sh)return;
+  sh.classList.toggle('rail-expandido',exp);
+  if(b){b.setAttribute('aria-expanded',exp?'true':'false');b.title=exp?'Contraer menú':'Expandir menú'}
+  if(recordar&&!railModal())try{localStorage.setItem(RAIL_CLAVE,exp?'exp':'col')}catch(e){}}
+function alternarRail(){
+  var sh=document.getElementById('shell');if(!sh)return;
+  fijarRail(!sh.classList.contains('rail-expandido'),true)}
+function cerrarRailModal(){if(railModal())fijarRail(false,false)}
+function iniciarRail(){
+  var exp=false;try{exp=!railModal()&&localStorage.getItem(RAIL_CLAVE)==='exp'}catch(e){}
+  fijarRail(exp,false);
+  var sh=document.getElementById('shell');
+  // Clic en el velo (fuera del cajón) o Escape cierran el riel modal.
+  if(sh)sh.addEventListener('click',function(ev){
+    if(railModal()&&sh.classList.contains('rail-expandido')&&!ev.target.closest('.nav-rail,.nav-barra'))fijarRail(false,false)});
+  document.addEventListener('keydown',function(ev){if(ev.key==='Escape')cerrarRailModal()});
+  iniciarInfo()}
+
+/* ══════════════ Botón ⓘ de las gráficas ═══════════════════════════════
+   La explicación de cada gráfica vive en un <span class="hint info-pop"> dentro del
+   botón .info del título: solo se ve al pasar el cursor (o con foco / toque). El JS de
+   cada pestaña la sigue llenando con innerText como antes; aquí se parte en renglones
+   cortos (uno por cada " · ") para que se lea como una lista resumida. */
+function infoRenglones(t){
+  return String(t||'').split(' · ').map(function(x){x=x.trim();return x.charAt(0).toUpperCase()+x.slice(1)})
+    .filter(Boolean).join('\n')}
+/* Tarjetas colapsables: botón ˄/˅ arriba a la derecha de cada tarjeta de `raiz`; plegada solo
+   deja ver su cabecera (título, o las cifras en la tarjeta de KPIs). Se recuerda en localStorage
+   (visor.colapsadas, por id de vista + título). `alAbrir(card)` repinta lo que se midió oculto. */
+function iniciarColapsables(raiz,alAbrir){
+  if(!raiz||!raiz.querySelectorAll)return;
+  var guard={};try{guard=JSON.parse(localStorage.getItem('visor.colapsadas')||'{}')||{}}catch(e){}
+  Array.prototype.forEach.call(raiz.querySelectorAll('.card'),function(card,i){
+    if(card.dataset.colapsable)return;
+    var cab=null;
+    for(var k=0;k<card.children.length;k++){var c=card.children[k];
+      if(c.matches&&c.matches('.mtd-panel-cab,.sivso-graf-cab,.so-visual-cab,h3,.cifras')){cab=c;break}}
+    if(!cab)return;
+    card.dataset.colapsable='1';cab.classList.add('cab-col');card.classList.add('con-colapsar');
+    var h3=card.querySelector('h3'),clave=(raiz.id||'')+':'+(h3?h3.textContent.replace(/\s+/g,' ').trim().slice(0,40):'kpis'+i);
+    var b=document.createElement('button');b.type='button';b.className='btn-colapsar';
+    function fijar(plegada){card.classList.toggle('colapsada',plegada);b.setAttribute('aria-expanded',plegada?'false':'true');
+      b.title=plegada?'Mostrar la sección':'Contraer la sección';b.setAttribute('aria-label',b.title)}
+    b.innerHTML='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7.4 15.4 12 10.8l4.6 4.6L18 14l-6-6-6 6z"/></svg>';
+    b.onclick=function(){var plegada=!card.classList.contains('colapsada');fijar(plegada);
+      try{var g=JSON.parse(localStorage.getItem('visor.colapsadas')||'{}')||{};if(plegada)g[clave]=1;else delete g[clave];
+        localStorage.setItem('visor.colapsadas',JSON.stringify(g))}catch(e){}
+      if(!plegada&&alAbrir)alAbrir(card)};
+    card.appendChild(b);fijar(!!guard[clave])})}
+
+function iniciarInfo(){
+  if(typeof MutationObserver==='undefined'||!document.querySelectorAll)return;
+  var obs=new MutationObserver(function(ms){ms.forEach(function(m){
+    var el=m.target.nodeType===3?m.target.parentNode:m.target;
+    if(el&&el.textContent.indexOf(' · ')!==-1)el.textContent=infoRenglones(el.textContent)})});
+  document.querySelectorAll('.info-pop').forEach(function(el){
+    if(el.textContent.indexOf(' · ')!==-1)el.textContent=infoRenglones(el.textContent);
+    obs.observe(el,{childList:true,characterData:true,subtree:true})})}
+
 /* ══════════════ Arranque diferido del mapa ═════════════════════════ */
 function programarMapa(){
   if(mapaEstado!=='no')return;
@@ -115,41 +182,84 @@ function iniciarMapa(){
   if(mapaEstado!=='no')return;
   mapaEstado='cargando';
   var t=document.getElementById('overlayTexto');if(t)t.innerText='Preparando el mapa…';
-  cargarLib('leaflet',function(okL){
-    cargarLib('choices',function(){
-      if(!okL){
-        mapaEstado='error';
-        if(t)t.innerText='No se pudo cargar el mapa (Leaflet no llegó desde el CDN). Recarga la página.';
-        avisar('Leaflet no cargó desde el CDN: el mapa no está disponible.',true);return}
-      // Orden importante (ver CLAUDE.md): Choices primero, luego el mapa.
-      iniciarMapaUI();
-      mapaEstado='listo';
-      cargarDatos();
+  // Los datos se piden YA, en paralelo con Leaflet y Choices (antes se esperaba a las dos
+  // librerías para recién pedir los 5 archivos). Las respuestas que lleguen antes de que el
+  // mapa esté armado esperan en mapaPend y se procesan al final (mapaRecibir).
+  cargarDatos();
+  var okL=null,okC=false;
+  function armar(){
+    if(okL===null||!okC)return;
+    if(!okL){
+      mapaEstado='error';
+      if(t)t.innerText='No se pudo cargar el mapa (Leaflet no llegó desde el CDN). Recarga la página.';
+      avisar('Leaflet no cargó desde el CDN: el mapa no está disponible.',true);return}
+    // Orden importante (ver CLAUDE.md): Choices primero, luego el mapa.
+    iniciarMapaUI();
+    mapaEstado='listo';
+    var pend=mapaPend;mapaPend=[];pend.forEach(function(f){f()});
+    actOverlay();
+    despues()}
+  cargarLib('leaflet',function(ok){okL=ok;armar()});
+  cargarLib('choices',function(){okC=true;armar()});
+  function despues(){
       // Con el mapa ya en marcha se precarga SI vs SO (la caché del servidor está tibia).
       setTimeout(function(){if(typeof sivsoPrefetch==='function')sivsoPrefetch()},2000);
       // …y Yoobic: el popup de cada PDV y las capas Perfect Store lo usan.
-      setTimeout(function(){if(typeof ybPrefetch==='function')ybPrefetch()},2600)})})}
+      setTimeout(function(){if(typeof ybPrefetch==='function')ybPrefetch()},2600)}}
 
 /* ══════════════ Carga de datos del mapa ═════════════════════════════ */
+/* Las 5 llamadas salen en paralelo y, con la caché del servidor fría o con
+   varias cuentas de Google abiertas, alguna falla de forma pasajera ("HTTP 0",
+   "Acceso denegado: DriveApp") aunque las demás respondan. Se reintenta hasta
+   2 veces con espera creciente; la primera corrida ya dejó la caché tibia. */
+var REINTENTOS_MAPA=2;
+var mapaPend=[];   // respuestas que llegaron antes de que el mapa (Leaflet + UI) estuviera armado
+function mapaRecibir(f){if(mapaEstado==='listo')f();else mapaPend.push(f)}
+function llamarMapa(fn,ok,etq,grave,flag,n){
+  n=n||0;
+  function falla(m){
+    if(n<REINTENTOS_MAPA){setTimeout(function(){llamarMapa(fn,ok,etq,grave,flag,n+1)},1500*(n+1));return}
+    if(/HTTP 0|DriveApp|denegado|denied/i.test(m))
+      m+=' — Si tienes varias cuentas de Google abiertas, abre el visor en una ventana de incógnito solo con tu cuenta de ISDIN.';
+    mapaRecibir(function(){avisar(etq+': '+m,grave);listo[flag]=true;boot()})}
+  google.script.run
+    .withSuccessHandler(function(j){
+      // Se valida ANTES de procesar: una respuesta vacía o rota (p. ej. "" de una caché mal
+      // leída) antes lanzaba dentro del handler y el overlay quedaba "Cargando…" para siempre.
+      var d;try{d=JSON.parse(j)}catch(e){falla('respuesta ilegible del servidor ('+me(e)+')');return}
+      mapaRecibir(function(){ok(d)})})
+    .withFailureHandler(function(e){falla(me(e))})[fn]();
+}
 function cargarDatos(){
-  if(!esGas()){setTimeout(cargarMock,250);return}
-  google.script.run.withSuccessHandler(function(j){recPuntos(JSON.parse(j))})
-    .withFailureHandler(function(e){avisar('PDV: '+me(e),true);listo.puntos=true;boot()}).getPuntosJson();
-  google.script.run.withSuccessHandler(function(j){recBricks(JSON.parse(j))})
-    .withFailureHandler(function(e){avisar('Bricks: '+me(e),true);listo.bricks=true;boot()}).getBricksJson();
-  google.script.run.withSuccessHandler(function(j){recVentas(JSON.parse(j))})
-    .withFailureHandler(function(e){avisar('Sell Out: '+me(e),true);listo.ventas=true;boot()}).getVentasJson();
-  google.script.run.withSuccessHandler(function(j){recPort(JSON.parse(j))})
-    .withFailureHandler(function(e){avisar('Portafolio: '+me(e));listo.port=true;boot()}).getPortafolioJson();
-  google.script.run.withSuccessHandler(function(j){recAsignaciones(JSON.parse(j))})
-    .withFailureHandler(function(e){avisar('Asignación: '+me(e));listo.asignaciones=true;boot()}).getAsignacionesJson();
+  if(!esGas()){setTimeout(function(){mapaRecibir(cargarMock)},250);return}
+  // Sell Out primero: es el más pesado (so_pdv.json, ~4,5 MB) y el que más tarda.
+  llamarMapa('getVentasJson',recVentas,'Sell Out',true,'ventas');
+  llamarMapa('getPuntosJson',recPuntos,'PDV',true,'puntos');
+  llamarMapa('getBricksJson',recBricks,'Bricks',true,'bricks');
+  llamarMapa('getPortafolioJson',recPort,'Portafolio',false,'port');
+  llamarMapa('getAsignacionesJson',recAsignaciones,'Asignación',false,'asignaciones');
 }
 
 function recPuntos(p){
   puntosG=(p.puntos||[]).filter(function(x){return x.posId&&x.posId!=='0'});
+  // Un mapa sin PDV no es un error del servidor (la hoja respondió), así que antes no
+  // salía ningún aviso: el Sell Out quedaba en $0 sin explicación. Se dice qué pasó.
+  if(!puntosG.length){var st=p.stats||{};
+    avisar('PDV: la hoja "CO_Puntos_Maestro clientes" no dejó ningún PDV para el mapa. '+
+      'Filas leídas: '+(st.filas||0)+' · con coordenada: '+(st.conCoordenada||0)+
+      ' · con Nº Oficina Farmacia (POS_ID): '+(st.conPosId||0)+
+      ' · columna POS_ID detectada: '+(st.columnaPosIdDetectada||'(no encontrada)')+
+      '. Sin POS_ID no se puede cruzar con el Sell Out. Revisa "Diagnóstico".'+
+      (st.motivosSinCoordenada?' Coordenadas descartadas: '+JSON.stringify(st.motivosSinCoordenada)+
+        (st.muestraSinCoordenada&&st.muestraSinCoordenada.length?' · ejemplo: '+JSON.stringify(st.muestraSinCoordenada[0]):''):''),true)}
   puntosG.forEach(function(x){x.poblacion=normGeo(x.poblacion);x.region=normGeo(x.region)});
   listo.puntos=true;boot()}
-function recBricks(p){bricksG=p.bricks||[];listo.bricks=true;boot()}
+function recBricks(p){bricksG=p.bricks||[];
+  var st=p.stats||{};
+  if(!bricksG.length||!st.conGeometria)
+    avisar('Bricks: la hoja "Bricks" devolvió '+bricksG.length+' bricks y '+(st.conGeometria||0)+
+      ' con geometría; el mapa no puede dibujar los polígonos ni asignar zona. Revisa "Diagnóstico".',true);
+  listo.bricks=true;boot()}
 function recVentas(p){
   mesesD=p.meses||[];var pdv=p.pdv||{};ventasG={};var bs={};
   Object.keys(pdv).forEach(function(pos){var bus=pdv[pos].bu||{};ventasG[pos]=bus;
@@ -168,7 +278,8 @@ function recPort(p){
     productosG[k]={d:x.d||x.desc||k,bu:String(x.bu||'').trim().toUpperCase(),
       f:x.f||x.familia||'',s:x.s||x.serie||[]}});
   validarSku();listo.port=true;boot()}
-function recAsignaciones(p){asignacionesG=p.pdv||{};listo.asignaciones=true;boot()}
+function recAsignaciones(p){asignacionesG=p.pdv||{};listo.asignaciones=true;boot();
+  if(typeof ybCoberturaRefrescar==='function')ybCoberturaRefrescar()}
 
 /* boot() lo llama cada una de las 5 respuestas. Antes disparaba actualizar()
    en TODAS (hasta 5 corridas completas que recreaban todos los marcadores);

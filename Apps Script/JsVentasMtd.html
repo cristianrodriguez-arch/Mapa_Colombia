@@ -263,15 +263,32 @@ function mtdCsvProductos(){
 /* ── Vistas de nivel superior: mapa ↔ Ventas MTD ↔ SI vs SO ──
    Convive con verVista() de JsPaneles, que conmuta las pestañas internas del
    rail (Tabla/Análisis/Brick): son niveles distintos y no se pisan. */
-var mtdVistaActiva='ventas3';   // 'ventas3' = pestaña "Ventas" (antes "Ventas 3.0")
-var SIVSO_VISTAS=['ventas3','mapa','ventasmtd','sivso','yoobic'];
-var VISTA_SUFIJO={ventas3:'Ventas3',mapa:'Mapa',ventasmtd:'VentasMtd',sivso:'SIvsSO',yoobic:'Yoobic'};   // #vista<X> / #btnVista<X>
+var mtdVistaActiva='so';   // 'ventas3' = "Ventas Backup" (la pestaña Ventas anterior, antes "Ventas 3.0")
+var SIVSO_VISTAS=['ventas3','so','mapa','ventasmtd','sivso','yoobic'];
+var VISTA_SUFIJO={ventas3:'Ventas3',so:'SO',mapa:'Mapa',ventasmtd:'VentasMtd',sivso:'SIvsSO',yoobic:'Yoobic'};   // #vista<X> / #btnVista<X>
+// Pestaña "Ventas" (2026-10-29): agrupa Sell Out, SI vs SO y Ventas MTD como subpestañas
+// (#ventasSubtabs en la cabecera). El riel la marca activa en cualquiera de las tres y,
+// al volver a ella, abre la última subpestaña usada (localStorage visor.ventasSub).
+var VENTAS_SUB=['so','sivso','ventasmtd'];
+function ventasSubActual(){
+  var v=null;try{v=localStorage.getItem('visor.ventasSub')}catch(e){}
+  return VENTAS_SUB.indexOf(v)!==-1?v:'so'}
 function mostrarVistaSuperior(v){
   mtdVistaActiva=v;
+  var enVentas=VENTAS_SUB.indexOf(v)!==-1;
+  if(enVentas){try{localStorage.setItem('visor.ventasSub',v)}catch(e){}}
   SIVSO_VISTAS.forEach(function(id){
     var vista=document.getElementById('vista'+VISTA_SUFIJO[id]);if(vista)vista.hidden=(id!==v);
     var btn=document.getElementById('btnVista'+VISTA_SUFIJO[id]);
-    if(btn)btn.classList.toggle('activo',id===v)});
+    if(btn){btn.classList.toggle('activo',id===v);btn.setAttribute('aria-selected',id===v?'true':'false')}});
+  var bv=document.getElementById('btnVistaVentas');
+  if(bv){bv.classList.toggle('activo',enVentas);bv.setAttribute('aria-selected',enVentas?'true':'false')}
+  var st=document.getElementById('ventasSubtabs');if(st)st.hidden=!enVentas;
+  // Barra inferior del teléfono: "Más" queda activo cuando se está en un informe clásico.
+  document.querySelectorAll('.nav-barra [data-vista]').forEach(function(b){
+    b.classList.toggle('activo',b.getAttribute('data-vista').split(' ').indexOf(v)!==-1)});
+  // En pantallas chicas el riel expandido es un cajón encima del contenido: se cierra al elegir.
+  if(typeof cerrarRailModal==='function')cerrarRailModal();
   // La barra de filtros de la cabecera es del visor (período, BU, SKU, canal…):
   // no aplica a Ventas MTD, SI vs SO ni Yoobic, que tienen sus propios filtros.
   var bf=document.getElementById('barraFiltros');
@@ -293,7 +310,8 @@ function mostrarVistaSuperior(v){
   if(v==='ventasmtd'&&ventasMtdData===null&&!mtdCargando)cargarVentasMtd();
   if(v==='ventas3'&&typeof vt3AlEntrar==='function')vt3AlEntrar();
   if(v==='sivso'&&typeof sivsoAlEntrar==='function')sivsoAlEntrar();
-  if(v==='yoobic'&&typeof ybAlEntrar==='function')ybAlEntrar()}
+  if(v==='yoobic'&&typeof ybAlEntrar==='function')ybAlEntrar();
+  if(v==='so'&&typeof soAlEntrar==='function')soAlEntrar()}
 
 /* ── Carga: UNA llamada para toda la pestaña ── */
 function cargarVentasMtd(forzar){

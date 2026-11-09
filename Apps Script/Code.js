@@ -88,32 +88,44 @@ function carpetaJson_() {
 }
 
 function leerArchivoDrive_(nombre) {
-  var cache = CacheService.getScriptCache();
-  var meta  = cache.get('meta::' + nombre);
+  // mtdCacheLeer_ entiende los dos formatos de la caché: trozos planos y comprimidos ("z:N").
+  // Antes esta función leía sus propios trozos y no sabía de la compresión (los archivos de
+  // > 400 KB se guardan comprimidos desde el 2026-10-29): Number('z:9') = NaN, devolvía "" y
+  // el navegador se quedaba en "Cargando Sell Out…" desde la segunda carga (so_pdv.json, 4,5 MB).
+  var hit = mtdCacheLeer_(nombre);
+  if (hit) return hit;
 
-  if (meta) {
-    var n = Number(meta), claves = [];
-    for (var i = 0; i < n; i++) claves.push('t::' + nombre + '::' + i);
-    var trozos = cache.getAll(claves), partes = [], ok = true;
-    for (var j = 0; j < n; j++) {
-      var t = trozos['t::' + nombre + '::' + j];
-      if (!t) { ok = false; break; }
-      partes.push(t);
-    }
-    if (ok) return partes.join('');
-  }
-
-  var it = carpetaJson_().getFilesByName(nombre);
-  if (!it.hasNext()) {
-    throw new Error("No encontré '" + nombre + "' en Drive. Corre etl_sellout.py.");
-  }
-  var texto = it.next().getBlob().getDataAsString('UTF-8');
+  var texto = leerDeDriveConReintento_(nombre);
 
   // Se guarda por trozos (por bytes, ver trocear_) y se anota el nombre en un
   // registro para que limpiarCache() pueda borrar TAMBIÉN los fragmentos
   // so_detalle_NN / so_sku_NN (antes quedaban viejos hasta 6 h tras el ETL).
   if (mtdCacheGuardar_(nombre, texto, CACHE_SEGUNDOS)) registrarClaveDrive_(nombre);
   return texto;
+}
+
+/**
+ * Con varias llamadas en paralelo y la caché fría, DriveApp a veces responde
+ * "Acceso denegado: DriveApp" de forma pasajera (la misma carpeta abre bien en
+ * la llamada de al lado). Se reintenta 2 veces antes de darlo por fallido.
+ */
+function leerDeDriveConReintento_(nombre) {
+  var ultimo;
+  for (var intento = 0; intento < 3; intento++) {
+    try {
+      var it = carpetaJson_().getFilesByName(nombre);
+      if (!it.hasNext()) {
+        throw new Error("No encontré '" + nombre + "' en Drive. Corre etl_sellout.py.");
+      }
+      return it.next().getBlob().getDataAsString('UTF-8');
+    } catch (e) {
+      ultimo = e;
+      if (String(e.message).indexOf('No encontré') === 0) throw e;
+      Utilities.sleep(800 * (intento + 1));
+    }
+  }
+  throw new Error('No pude leer ' + nombre + ' de Drive (' + ultimo.message + '). ' +
+                  'Revisa que la cuenta con la que abres el visor tenga acceso a la carpeta del ETL.');
 }
 
 var CLAVE_REGISTRO_DRIVE = 'registro_drive';
@@ -132,12 +144,12 @@ function limpiarCache() {
   var cache = CacheService.getScriptCache(), lista = [];
   try { lista = JSON.parse(cache.get(CLAVE_REGISTRO_DRIVE) || '[]'); } catch (e) { lista = []; }
   ['so_pdv.json', 'so_portafolio.json', 'so_indice.json', 'so_sku_indice.json', 'so_manifiesto.json',
-   's3_cubo.json']
+   's3_cubo.json', 's3_inv.json', 's3_inv_pdv.json']
     .forEach(function(n) { if (lista.indexOf(n) === -1) lista.push(n); });
   lista.forEach(mtdCacheQuitar_);
   cache.remove(CLAVE_REGISTRO_DRIVE);
   // Las capas que salen de la hoja de cálculo (mapa) también dependen del ETL.
-  [CACHE_PUNTOS_CLAVE, CACHE_BRICKS_CLAVE, CACHE_ASIG_CLAVE].forEach(mtdCacheQuitar_);
+  [CACHE_PUNTOS_CLAVE, CACHE_BRICKS_CLAVE, CACHE_ASIG_CLAVE, CACHE_LANZ_CLAVE].forEach(mtdCacheQuitar_);
   Logger.log('Caché limpiada (' + lista.length + ' archivos de Drive + capas del mapa).');
   return 'OK';
 }
@@ -334,6 +346,26 @@ function getVentas3Json(forzar) {
     lista.filter(function(n) { return n.indexOf('s3_') === 0; }).concat(['s3_cubo.json']).forEach(mtdCacheQuitar_);
   }
   return leerArchivoDrive_('s3_cubo.json');
+}
+
+/**
+ * Inventario de los clientes (cliente × EAN × mes, ~0.3 MB) que deja etl_sellout.py desde
+ * "Transformación final.xlsm" (hoja Consolidado). Lo usan Sell Out PDV (columna Inventario)
+ * y SI vs SO (vista Inventario). Claves = SAP ID y EAN, no índices del cubo.
+ */
+function getInventarioJson(forzar) {
+  if (forzar === true) mtdCacheQuitar_('s3_inv.json');
+  return leerArchivoDrive_('s3_inv.json');
+}
+
+/**
+ * Inventario por PUNTO DE VENTA × mes (~0.7 MB) de los "Consolidado inventarios Semestre N"
+ * (etl_sellout.py → s3_inv_pdv.json). Columna Inventario de "Puntos de Venta" en Sell Out PDV.
+ * PDV = clave del cubo (POS_ID).
+ */
+function getInventarioPdvJson(forzar) {
+  if (forzar === true) mtdCacheQuitar_('s3_inv_pdv.json');
+  return leerArchivoDrive_('s3_inv_pdv.json');
 }
 
 /** PDV × mes de UN BU (índice en cubo.bus): dimensión Punto de venta filtrada por BU. */
@@ -688,6 +720,10 @@ function construirPuntos_() {
   }
 
   var puntos = [], filas = 0, sinCoord = 0, conPos = 0, duplicados = 0, visto = {};
+  // Por qué se descarta una coordenada (antes solo se contaba "sin coordenada") y una
+  // muestra de lo que trae la celda: el 2026-10-27 las 4.739 filas salían sin coordenada.
+  var motivos = { vacia: 0, noNumero: 0, cero: 0, fueraDeRango: 0 }, muestra = [];
+  var cpIdx = buscarCol_(headers, ['código postal', 'codigo postal']), reparadas = 0, ambiguas = 0;
   function txt(row, i) { return (i !== -1 && row[i] != null) ? row[i].toString().trim() : ''; }
 
   for (var i = 1; i < data.length; i++) {
@@ -695,9 +731,26 @@ function construirPuntos_() {
     if (!txt(row, idIdx) && !txt(row, nameIdx)) continue;
     filas++;
 
-    var lat = parseNum_(row[latIdx]), lng = parseNum_(row[lngIdx]);
+    var lat = numeroCoord_(row[latIdx]), lng = numeroCoord_(row[lngIdx]);
+    var co = (lat === 0 && lng === 0) ? null : coordenadaColombia_(lat, lng, cpIdx !== -1 ? row[cpIdx] : '');
+    if (co) {
+      lat = co.lat; lng = co.lng;
+      if (co.reparada) reparadas++;
+      if (co.ambigua) ambiguas++;
+    }
     if (isNaN(lat) || isNaN(lng) || (lat === 0 && lng === 0) ||
-        lat < -90 || lat > 90 || lng < -180 || lng > 180) { sinCoord++; continue; }
+        lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+      sinCoord++;
+      var crudoLat = row[latIdx], crudoLng = row[lngIdx];
+      if (crudoLat === '' || crudoLat == null || crudoLng === '' || crudoLng == null) motivos.vacia++;
+      else if (isNaN(lat) || isNaN(lng)) motivos.noNumero++;
+      else if (lat === 0 && lng === 0) motivos.cero++;
+      else motivos.fueraDeRango++;
+      if (muestra.length < 5 && crudoLat !== '' && crudoLat != null)
+        muestra.push({ fila: i + 1, latitud: String(crudoLat), tipoLat: typeof crudoLat,
+                       longitud: String(crudoLng), tipoLng: typeof crudoLng });
+      continue;
+    }
 
     var posId = normalizarPos_(txt(row, posIdIdx));
     if (posId) conPos++;
@@ -731,6 +784,9 @@ function construirPuntos_() {
       puntos: puntos,
       stats: { filas: filas, conCoordenada: puntos.length, sinCoordenada: sinCoord,
                conPosId: conPos, posIdDuplicados: duplicados,
+               coordenadasSinComaReparadas: reparadas, reparadasSinCodigoPostal: ambiguas,
+               motivosSinCoordenada: motivos, muestraSinCoordenada: muestra,
+               columnasCoordenada: [String(data[0][latIdx]), String(data[0][lngIdx])],
                columnaPosIdDetectada: posIdIdx !== -1 ? String(data[0][posIdIdx]) : '(no encontrada)' }
     }),
     cachear: puntos.length > 0
@@ -768,6 +824,7 @@ function construirAsignaciones_() {
   var iCuentaNom= buscarCol_(headers, ['nombre de la cuenta']);
   var iTipo     = buscarCol_(headers, ['tipo de registro']);
   var iTeam     = buscarCol_(headers, ['team']);
+  var iCanal    = buscarCol_(headers, ['channel', 'canal']);   // agregada 2026-10-28
 
   if (iPos === -1) {
     throw new Error("No encontré 'Nº Oficina Farmacia' en la hoja '" + NOMBRE_HOJA_ASIGNACION +
@@ -783,6 +840,7 @@ function construirAsignaciones_() {
     var asignacion = {
       delegado:     delegado,
       team:         iTeam      !== -1 ? String(row[iTeam]       || '').trim() : '',
+      canal:        iCanal     !== -1 ? String(row[iCanal]      || '').trim() : '',
       tipo:         iTipo      !== -1 ? String(row[iTipo]       || '').trim() : '',
       cuentaId:     iCuentaId  !== -1 ? String(row[iCuentaId]   || '').trim() : '',
       cuentaNombre: iCuentaNom !== -1 ? String(row[iCuentaNom]  || '').trim() : ''
@@ -799,7 +857,21 @@ function construirAsignaciones_() {
  * ============================================================ */
 
 function getDiagnosticoJson() {
-  var d = { drive: {}, bricks: {}, puntos: {}, cruce: {} };
+  var d = { hojas: {}, drive: {}, bricks: {}, puntos: {}, cruce: {} };
+
+  // Qué ve la cuenta que abre el visor en la hoja MAESTRO PDV's (las dos capas del
+  // mapa que NO salen del ETL): si existen, cuántas filas y qué encabezados traen.
+  try {
+    var libro = abrirHoja_();
+    d.hojas.libro = libro.getName();
+    [NOMBRE_HOJA_PUNTOS, VISOR_HOJA_BRICKS, NOMBRE_HOJA_ASIGNACION].forEach(function(n) {
+      var h = libro.getSheetByName(n);
+      d.hojas[n] = !h ? 'NO EXISTE. Pestañas: ' + listarPestanas_().join(' | ') : {
+        filas: h.getLastRow(), columnas: h.getLastColumn(),
+        encabezados: h.getLastColumn() ? h.getRange(1, 1, 1, h.getLastColumn()).getDisplayValues()[0] : []
+      };
+    });
+  } catch (e) { d.hojas.error = e.message; }
 
   try {
     var carpeta = carpetaJson_(), archivos = [], it = carpeta.getFiles();
@@ -893,6 +965,73 @@ function parseNum_(v) {
   return isNaN(n) ? NaN : n;
 }
 
+/* Coordenadas sin punto decimal. Desde el 2026-10 la hoja de PDV trae la latitud y
+ * longitud como enteros: Sheets en español leyó "4.670942" como 4.670.942 (miles), y
+ * así 4,67 quedó en 4670942. Las cifras siguen bien; solo se perdió dónde iba la coma.
+ * Se recupera poniéndola de nuevo: la longitud de Colombia siempre tiene 2 enteros
+ * (-66 a -82) y la latitud 1 o 2 (o 0 en Nariño/Amazonas), lo que se decide con el
+ * rango del departamento (2 primeros dígitos del código postal) y, si no hay código,
+ * con el de Colombia. Solo se toca un valor que esté fuera de Colombia. */
+var LIMITES_CO = { latMin: -4.3, latMax: 13.6, lngMin: -82, lngMax: -66.8 };
+var LAT_DEPTO_CO = {
+  '05': [5.3, 9], '08': [10.2, 11.2], '11': [3.7, 4.9], '13': [7, 10.9], '15': [4.5, 7.2],
+  '17': [4.6, 5.9], '18': [-0.8, 2.1], '19': [0.9, 3.4], '20': [7.6, 10.9], '23': [7.3, 9.5],
+  '25': [3.6, 5.9], '27': [3.9, 8.8], '41': [1.5, 4], '44': [10.3, 12.6], '47': [8.9, 11.4],
+  '50': [1.6, 4.9], '52': [0.3, 2.7], '54': [7, 9.4], '63': [4, 4.8], '66': [4.6, 5.5],
+  '68': [5.7, 8.2], '70': [8.2, 10], '73': [2.8, 5.4], '76': [3, 5.1], '81': [6, 7.2],
+  '85': [4.2, 6.4], '86': [-0.5, 1.5], '88': [12, 13.6], '91': [-4.3, 0.1], '94': [1.1, 4.1],
+  '95': [0.6, 2.9], '97': [-0.3, 2], '99': [2.6, 6.4]
+};
+
+function numeroCoord_(v) {
+  // "1.101.388" en texto: parseNum_ lo leería como 1,101 sin avisar.
+  if (typeof v === 'string' && (v.match(/\./g) || []).length > 1 && v.indexOf(',') === -1)
+    return parseFloat(v.replace(/\s+/g, '').replace(/\./g, ''));
+  return parseNum_(v);
+}
+
+function ponerComa_(v, enteros) {
+  var s = String(Math.abs(v));
+  if (s.indexOf('e') !== -1) return NaN;
+  var d = s.replace('.', '').replace(/^0+/, '');
+  if (!d) return NaN;
+  var r = parseFloat(enteros === 0 ? '0.' + d : d.slice(0, enteros) + '.' + d.slice(enteros));
+  return v < 0 ? -r : r;
+}
+
+function rangoDepto_(codigoPostal) {
+  var d = String(codigoPostal == null ? '' : codigoPostal).replace(/\D/g, '');
+  if (d.length < 5 || d.length > 6) return null;
+  return LAT_DEPTO_CO[('0' + d).slice(-6).slice(0, 2)] || null;
+}
+
+/** {lat, lng, reparada, ambigua} o null si no hay forma de ubicarla en Colombia. */
+function coordenadaColombia_(lat, lng, codigoPostal) {
+  if (isNaN(lat) || isNaN(lng)) return null;
+  var L = LIMITES_CO;
+  var reparada = false, ambigua = false;
+  if (lng < L.lngMin || lng > L.lngMax) {
+    var lngR = ponerComa_(lng, 2);
+    if (!(lngR >= L.lngMin && lngR <= L.lngMax)) return null;
+    lng = lngR; reparada = true;
+  }
+  if (lat < L.latMin || lat > L.latMax) {
+    var ok = function(r) { return function(k) { var v = ponerComa_(lat, k); return v >= r[0] && v <= r[1]; }; };
+    var depto = rangoDepto_(codigoPostal), k = -1;
+    if (depto) k = [1, 2, 0].filter(ok(depto))[0];
+    if (k === undefined || k === -1) {
+      var col = [1, 2].filter(ok([L.latMin, L.latMax]));
+      if (!col.length) return null;
+      // "1.047.521" puede ser 1,04 (sur) o 10,47 (Caribe): sin código postal se decide
+      // por la longitud (el Caribe va de -76 a -71).
+      k = col.length > 1 ? ((lng >= -76 && lng <= -71) ? 2 : 1) : col[0];
+      ambigua = col.length > 1;
+    }
+    lat = ponerComa_(lat, k); reparada = true;
+  }
+  return { lat: lat, lng: lng, reparada: reparada, ambigua: ambigua };
+}
+
 function normalizarPos_(v) {
   if (!v) return '';
   return v.toString().trim().toUpperCase().replace(/\s+/g, '').replace(/:/g, '_');
@@ -963,7 +1102,8 @@ function mtdCacheLeer_(clave) {
   var cache = CacheService.getScriptCache();
   var meta  = cache.get('meta::' + clave);
   if (!meta) return null;
-  var n = Number(meta), claves = [];
+  var comprimido = String(meta).indexOf('z:') === 0;
+  var n = Number(comprimido ? String(meta).slice(2) : meta), claves = [];
   for (var i = 0; i < n; i++) claves.push('t::' + clave + '::' + i);
   var trozos = cache.getAll(claves), partes = [];
   for (var j = 0; j < n; j++) {
@@ -971,12 +1111,33 @@ function mtdCacheLeer_(clave) {
     if (!t) return null;   // trozo vencido: se vuelve a leer la hoja
     partes.push(t);
   }
-  return partes.join('');
+  if (!comprimido) return partes.join('');
+  try {
+    return Utilities.ungzip(Utilities.newBlob(Utilities.base64Decode(partes.join('')), 'application/x-gzip'))
+      .getDataAsString('UTF-8');
+  } catch (e) {
+    Logger.log('AVISO caché: no pude descomprimir ' + clave + ': ' + e.message);
+    return null;
+  }
+}
+
+/* Textos grandes (> 400 KB) se guardan comprimidos (gzip + base64, ~10-15 % del
+ * tamaño): SI vs SO superaba el tope de 60 trozos (~5,4 MB) y, sin caché, CADA
+ * apertura volvía a leer la hoja Data completa (2026-10-29: la pestaña se quedaba
+ * "Cargando datos…" mucho tiempo). */
+var CACHE_COMPRIMIR_DESDE = 400000;
+function comprimir_(texto) {
+  if (texto.length < CACHE_COMPRIMIR_DESDE || typeof Utilities === 'undefined' ||
+      typeof Utilities.gzip !== 'function') return null;
+  try {
+    return Utilities.base64Encode(Utilities.gzip(Utilities.newBlob(texto, 'application/json')).getBytes());
+  } catch (e) { return null; }
 }
 
 /** Devuelve true si quedó guardado. Avisa en el log cuando NO se pudo (antes era silencioso). */
 function mtdCacheGuardar_(clave, texto, segundos) {
-  var trozos = trocear_(texto);
+  var z = comprimir_(texto);
+  var trozos = trocear_(z || texto);
   if (trozos.length > CACHE_MAX_TROZOS) {
     Logger.log('AVISO caché: ' + clave + ' pesa ' + Math.round(texto.length / 1024) + ' KB (' +
                trozos.length + ' trozos > tope ' + CACHE_MAX_TROZOS + '); NO se cachea y cada ' +
@@ -985,7 +1146,7 @@ function mtdCacheGuardar_(clave, texto, segundos) {
   }
   var mapa = {};
   for (var i = 0; i < trozos.length; i++) mapa['t::' + clave + '::' + i] = trozos[i];
-  mapa['meta::' + clave] = String(trozos.length);
+  mapa['meta::' + clave] = (z ? 'z:' : '') + trozos.length;
   try {
     CacheService.getScriptCache().putAll(mapa, segundos);
     return true;
@@ -999,7 +1160,7 @@ function mtdCacheGuardar_(clave, texto, segundos) {
 function mtdCacheQuitar_(clave) {
   var cache = CacheService.getScriptCache(), claves = ['meta::' + clave];
   var meta = cache.get('meta::' + clave);
-  if (meta) for (var i = 0; i < Number(meta); i++) claves.push('t::' + clave + '::' + i);
+  if (meta) for (var i = 0; i < Number(String(meta).replace('z:', '')); i++) claves.push('t::' + clave + '::' + i);
   cache.removeAll(claves);
 }
 
@@ -1014,23 +1175,33 @@ function mtdCacheQuitar_(clave) {
  *      30 minutos).
  * `forzar` es lo que hace que el botón "Actualizar" funcione de verdad.
  */
+/* Antes era UN candado de script para TODOS los endpoints: al abrir el visor
+ * (mapa ×5, Yoobic, Ventas, SI vs SO a la vez) cada uno esperaba hasta 20 s a que
+ * el anterior terminara de leer SU hoja, aunque fueran datos distintos. Ahora la
+ * espera es solo entre llamadas del MISMO dato: una marca "construyendo::clave"
+ * en la caché; quien llega segundo espera (hasta 25 s) a que el primero deje el
+ * resultado en caché y, si no llega, lo construye él mismo. */
 function conCache_(clave, segundos, construir, forzar) {
   if (!forzar) {
     var hit = mtdCacheLeer_(clave);
     if (hit) return hit;
   }
-  var lock = LockService.getScriptLock(), tengo = false;
-  try { tengo = lock.tryLock(20000); } catch (e) { /* seguimos sin candado */ }
-  try {
-    if (!forzar && tengo) {
+  var cache = CacheService.getScriptCache(), marca = 'construyendo::' + clave;
+  if (!forzar && cache.get(marca)) {
+    for (var i = 0; i < 25; i++) {
+      Utilities.sleep(1000);
       var hit2 = mtdCacheLeer_(clave);
       if (hit2) return hit2;
+      if (!cache.get(marca)) break;
     }
+  }
+  try { cache.put(marca, '1', 120); } catch (e) { /* sin marca: igual se construye */ }
+  try {
     var r = construir();
     if (r.cachear) mtdCacheGuardar_(clave, r.texto, segundos);
     return r.texto;
   } finally {
-    if (tengo) { try { lock.releaseLock(); } catch (e2) { /* nada */ } }
+    try { cache.remove(marca); } catch (e2) { /* nada */ }
   }
 }
 
@@ -1594,7 +1765,10 @@ function sivsoLeerDatos_() {
       kam:     mtdColEx_(h, ['kam encargado'], [[['kam'], []]]),
       channel: mtdColEx_(h, ['channel'], [[['channel'], []]]),
       bu:      mtdColEx_(h, ['bu'], [[['bu'], []]]),
-      brand:   mtdColEx_(h, ['brand'], [[['brand'], []]])
+      brand:   mtdColEx_(h, ['brand'], [[['brand'], []]]),
+      // Opcionales (2026-10-29): jerarquía de producto del informe SI/SO de Looker.
+      smk:     mtdColEx_(h, ['strategic market'], [[['strategic'], []]]),
+      tmk:     mtdColEx_(h, ['tactic market'], [[['tactic'], []]])
     };
   });
   mtdExigir_(b.col, ['fecha', 'sapId', 'prodId', 'real', 'tipo'], HOJA_LOOKER_DATA, b.headersRaw);
@@ -1619,7 +1793,9 @@ function sivsoLeerDatos_() {
     }
     if (prodIdx[prodId] === undefined) {
       prodIdx[prodId] = productos.length;
-      productos.push([prodId, mtdTexto_(row, col.prodNom), mtdTexto_(row, col.bu).trim(), mtdTexto_(row, col.brand)]);
+      var prod = [prodId, mtdTexto_(row, col.prodNom), mtdTexto_(row, col.bu).trim(), mtdTexto_(row, col.brand)];
+      if (col.smk != null || col.tmk != null) prod.push(mtdTexto_(row, col.smk), mtdTexto_(row, col.tmk));
+      productos.push(prod);
     }
     var key = mes + '|' + cliIdx[sapId] + '|' + prodIdx[prodId];
     var f = acc[key];
@@ -1711,6 +1887,43 @@ function limpiarCacheSIvsSO() {
   [CACHE_SIVSO_CLAVE, 'si_vs_so'].forEach(mtdCacheQuitar_);
   Logger.log('Caché de SI vs SO limpiada.');
   return 'OK';
+}
+
+/**
+ * Productos de LANZAMIENTO para el botón "★ Lanzamientos" de SI vs SO: hoja 'Products 2026'
+ * del MAESTRO PDV's (SPREADSHEET_ID), filas con "INNOVACIÓN" en la columna Innovación.
+ * Devuelve {v, productos: [[productId, ean, nombre, bu]], meta}. SI vs SO cruza por Product ID
+ * (o por nombre); el inventario, por EAN. Caché 6 h (limpiarCache() / forzar la renueva).
+ */
+var HOJA_PRODUCTOS_LANZ = 'Products 2026';
+var CACHE_LANZ_CLAVE    = 'lanzamientos_v1';
+function getLanzamientosJson(forzar) {
+  return conCache_(CACHE_LANZ_CLAVE, CACHE_SEGUNDOS, function() {
+    var hoja = abrirHoja_().getSheetByName(HOJA_PRODUCTOS_LANZ);
+    if (!hoja) {
+      throw new Error("No encontré la hoja '" + HOJA_PRODUCTOS_LANZ + "' en el MAESTRO PDV's. Hojas: " +
+                      listarPestanas_().join(' | '));
+    }
+    var v = hoja.getDataRange().getValues();
+    var h = (v[0] || []).map(mtdNorm_);
+    var col = {
+      bu:     mtdColEx_(h, ['bu'], null),
+      nombre: mtdColEx_(h, ['producto'], [[['producto'], []]]),
+      ean:    mtdColEx_(h, ['ean'], [[['ean'], []]]),
+      pid:    mtdColEx_(h, ['product id'], [[['product', 'id'], []]]),
+      innov:  mtdColEx_(h, ['innovacion'], [[['innov'], []]])
+    };
+    mtdExigir_(col, ['innov'], HOJA_PRODUCTOS_LANZ, v[0] || []);
+    var productos = [];
+    for (var i = 1; i < v.length; i++) {
+      if (mtdNorm_(v[i][col.innov]).indexOf('innovacion') === -1) continue;
+      productos.push([mtdTexto_(v[i], col.pid), mtdTexto_(v[i], col.ean), mtdTexto_(v[i], col.nombre),
+                      mtdTexto_(v[i], col.bu)]);
+    }
+    return { texto: jsonAscii_({ v: 1, productos: productos,
+                                 meta: { hoja: HOJA_PRODUCTOS_LANZ, filas: v.length - 1, actualizadoEn: new Date().toISOString() } }),
+             cachear: true };
+  }, forzar === true);
 }
 
 /** Diagnóstico manual desde el editor. */

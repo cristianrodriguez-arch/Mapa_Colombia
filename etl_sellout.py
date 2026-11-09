@@ -28,6 +28,8 @@ Uso:
   python etl_sellout.py --limite 5000   solo las primeras 5000 filas (pruebas)
   python etl_sellout.py --solo-s3       solo los archivos s3_* de Ventas 3.0 (varios años)
   python etl_sellout.py --sin-s3        solo los archivos so_* del mapa
+  python etl_sellout.py --solo-inv      solo el inventario (Consolidado inventarios Semestre N +
+                                        maestros de EAN y PDV): s3_inv.json y s3_inv_pdv.json
 
 La configuración vive en config.py (copia de config.example.py).
 """
@@ -584,11 +586,26 @@ def escribir_json(ruta, datos, intentos=5, ascii=False):
     return ruta.stat().st_size
 
 
+def fuentes_mapa(cfg):
+    """Libros que alimentan el mapa, del más reciente al más antiguo.
+    FUENTES_MAPA (o, si no está, FUENTES_S3: los mismos libros de Ventas) en config.py;
+    si no hay ninguna de las dos, solo RUTA_EXCEL, como antes. Se leen al revés de la
+    lista (la lista va del año viejo al nuevo) para que, al llegar al libro de 2025, que
+    no trae POS_ID, ya se sepa qué POS_ID tiene cada SF_ID en 2026 (resolver_pos_id)."""
+    lista = getattr(cfg, "FUENTES_MAPA", None) or getattr(cfg, "FUENTES_S3", None)
+    if not lista:
+        return [{"ruta": cfg.RUTA_EXCEL, "hoja": getattr(cfg, "NOMBRE_HOJA", None),
+                 "fila_encabezados": getattr(cfg, "FILA_ENCABEZADOS", 1)}]
+    return list(reversed(lista))
+
+
+# Columnas que, en un libro SIN POS_ID (2025), permiten deducirlo (ver resolver_pos_id).
+COLUMNAS_RESOLVER_POS = {"sf": ["sf id"], "cli": ["sold to id"]}
+
+
 def ejecutar(cfg, limite):
     t0 = time.perf_counter()
-    ruta = Path(cfg.RUTA_EXCEL)
     salida = Path(cfg.CARPETA_SALIDA)
-    fila_enc = int(getattr(cfg, "FILA_ENCABEZADOS", 1))
     n_fragmentos = int(getattr(cfg, "N_FRAGMENTOS", 16))
     n_fragmentos_sku = int(getattr(cfg, "N_FRAGMENTOS_SKU", 8))
     obligatorios = campos_obligatorios(cfg)
@@ -602,97 +619,133 @@ def ejecutar(cfg, limite):
     desc_pdv = {}
     info_sku = defaultdict(dict)
     conteo = defaultdict(int)
+    productos, info_dim = {}, None
+    sf_pos = defaultdict(lambda: defaultdict(int))   # SF_ID -> {POS_ID: filas} de los libros con POS_ID
+    reglas_pos = defaultdict(int)
+    skus_sin_dimension = defaultdict(int)
+    filtros = []
+    origen = []
 
-    with abrir_libro(ruta) as libro:
-        hoja = libro.elegir_hoja(getattr(cfg, "NOMBRE_HOJA", None))
-        motor = libro.motor
-        productos, info_dim = cargar_dimension_productos(cfg, libro)
-        encabezados, filas = leer_encabezados(libro, hoja, fila_enc)
-        mapeo = mapear_columnas(encabezados, cfg.COLUMNAS)
+    for fuente in fuentes_mapa(cfg):
+        ruta = Path(fuente["ruta"])
+        fila_enc = int(fuente.get("fila_encabezados", 1))
+        with abrir_libro(ruta) as libro:
+            hoja = libro.elegir_hoja(fuente.get("hoja") or getattr(cfg, "NOMBRE_HOJA", None))
+            motor = libro.motor
+            dim_cfg = getattr(cfg, "DIMENSION_PRODUCTOS", None)
+            if not dim_cfg or dim_cfg["hoja"] in libro.hojas:
+                dim, info = cargar_dimension_productos(cfg, libro)
+                for sku, campos in dim.items():   # el libro más reciente (el primero) manda
+                    productos.setdefault(sku, campos)
+                info_dim = info_dim or info
+            encabezados, filas = leer_encabezados(libro, hoja, fila_enc)
+            mapeo = mapear_columnas(encabezados, cfg.COLUMNAS)
+            extra = mapear_columnas(encabezados, COLUMNAS_RESOLVER_POS)
+            # Un libro sin POS_ID (2025) vale si trae SF_ID + Sold To ID para deducirlo.
+            exigir = [c for c in obligatorios if not (c == "pos_id" and "sf" in extra and "cli" in extra)]
+            faltan = [c for c in exigir if c not in mapeo]
+            if faltan:
+                sys.exit(f"ERROR: en '{ruta.name}' no se encontraron columnas para: {', '.join(faltan)}.\n"
+                         "  Revisa COLUMNAS en config.py con: python etl_sellout.py --inspect")
+            filtros, faltan_filtros = preparar_filtros(cfg, encabezados)
+            if faltan_filtros:
+                sys.exit(f"ERROR: en '{ruta.name}' no se encontraron las columnas de FILTROS: "
+                         f"{', '.join(faltan_filtros)}.\n"
+                         "  Revisa FILTROS en config.py con: python etl_sellout.py --inspect")
 
-        faltan = [c for c in obligatorios if c not in mapeo]
-        if faltan:
-            sys.exit(f"ERROR: no se encontraron columnas para: {', '.join(faltan)}.\n"
-                     "  Revisa COLUMNAS en config.py con: python etl_sellout.py --inspect")
-        filtros, faltan_filtros = preparar_filtros(cfg, encabezados)
-        if faltan_filtros:
-            sys.exit(f"ERROR: no se encontraron las columnas de FILTROS: {', '.join(faltan_filtros)}.\n"
-                     "  Revisa FILTROS en config.py con: python etl_sellout.py --inspect")
+            print(f"Mapa: leyendo '{hoja}' de {ruta.name} con {motor}"
+                  + (f" (límite: {limite:,} filas)" if limite else "") + " ...")
+            for _, encabezado, _, aceptados in filtros:
+                print(f"  Filtro: '{encabezado}' = {', '.join(map(str, aceptados))}")
+            if "pos_id" not in mapeo:
+                print("  Sin columna POS_ID: se deduce de SF_ID / Sold To ID / descripción (resolver_pos_id).")
 
-        print(f"Leyendo '{hoja}' de {ruta.name} con {motor}"
-              + (f" (límite: {limite:,} filas)" if limite else "") + " ...")
-        for _, encabezado, _, aceptados in filtros:
-            print(f"  Filtro: '{encabezado}' = {', '.join(map(str, aceptados))}")
-        if info_dim:
-            print(f"  Dimensión: {info_dim['productos']:,} productos de '{info_dim['hoja']}'")
+            col = {campo: mapeo.get(campo) for campo in cfg.COLUMNAS}
+            i_sf, i_cli = extra.get("sf"), extra.get("cli")
+            opcionales = ("amount", "units", "bu", "sku", "pdv_desc", "prod_desc", "familia")
+            exigidos = [c for c in opcionales if c in obligatorios]
+            cache_filtros, leidas = {}, 0
 
-        col = {campo: mapeo.get(campo) for campo in cfg.COLUMNAS}
-        opcionales = ("amount", "units", "bu", "sku", "pdv_desc", "prod_desc", "familia")
-        exigidos = [c for c in opcionales if c in obligatorios]
-        cache_filtros = {}
-        skus_sin_dimension = defaultdict(int)
+            for fila in filas:
+                if fila_vacia(fila):
+                    conteo["vacias"] += 1
+                    continue
+                if filtros and not pasa_filtros(fila, filtros, cache_filtros):
+                    conteo["filtradas"] += 1
+                    continue
+                # --limite cuenta solo filas que pasan los filtros (por libro).
+                if limite is not None and leidas >= limite:
+                    break
+                leidas += 1
+                conteo["leidas"] += 1
+                if conteo["leidas"] % CADA_N_FILAS == 0:
+                    print(f"  {conteo['leidas']:,} filas ({time.perf_counter() - t0:.0f} s)")
 
-        for fila in filas:
-            if fila_vacia(fila):
-                conteo["vacias"] += 1
-                continue
-            if filtros and not pasa_filtros(fila, filtros, cache_filtros):
-                conteo["filtradas"] += 1
-                continue
-            # --limite cuenta solo filas que pasan los filtros.
-            if limite is not None and conteo["leidas"] >= limite:
-                break
-            conteo["leidas"] += 1
-            if conteo["leidas"] % CADA_N_FILAS == 0:
-                print(f"  {conteo['leidas']:,} filas ({time.perf_counter() - t0:.0f} s)")
+                anio_mes = normalizar_fecha(celda(fila, col.get("fecha")))
+                if anio_mes is None:
+                    conteo["descartadas_fecha"] += 1
+                    continue
+                pdv_texto = normalizar_texto(celda(fila, col.get("pdv_desc")))
+                pos_id = normalizar_pos(celda(fila, col.get("pos_id")))
+                sf = normalizar_texto(celda(fila, i_sf)) if i_sf is not None else ""
+                if pos_id:
+                    if sf:
+                        sf_pos[sf][pos_id] += 1
+                    reglas_pos["pos_id"] += 1
+                elif sf and "pos_id" not in mapeo:
+                    # Solo en libros sin columna POS_ID (2025): en 2026 una fila sin POS_ID
+                    # se sigue descartando, como siempre.
+                    cli = normalizar_codigo(celda(fila, i_cli))
+                    pos_id, regla = resolver_pos_id(("", sf, cli, codigo_pdv_desc(pdv_texto)), sf_pos)
+                    pos_id = normalizar_pos(pos_id)
+                    reglas_pos[regla] += 1
+                if not pos_id:
+                    conteo["descartadas_pos_id"] += 1
+                    continue
 
-            anio_mes = normalizar_fecha(celda(fila, col.get("fecha")))
-            if anio_mes is None:
-                conteo["descartadas_fecha"] += 1
-                continue
-            pos_id = normalizar_pos(celda(fila, col.get("pos_id")))
-            if not pos_id:
-                conteo["descartadas_pos_id"] += 1
-                continue
+                valores = {
+                    "amount": normalizar_numero(celda(fila, col.get("amount"))),
+                    "units": normalizar_numero(celda(fila, col.get("units"))),
+                    "bu": normalizar_texto(celda(fila, col.get("bu"))).upper(),
+                    "sku": normalizar_codigo(celda(fila, col.get("sku"))),
+                    "pdv_desc": pdv_texto,
+                    "prod_desc": normalizar_texto(celda(fila, col.get("prod_desc"))),
+                    "familia": normalizar_texto(celda(fila, col.get("familia"))),
+                }
+                if productos and valores["sku"] and not completar_con_dimension(valores, productos):
+                    skus_sin_dimension[valores["sku"]] += 1
+                faltante = next((c for c in exigidos if valores[c] in (None, "")), None)
+                if faltante:
+                    conteo[f"descartadas_{faltante}"] += 1
+                    continue
 
-            valores = {
-                "amount": normalizar_numero(celda(fila, col.get("amount"))),
-                "units": normalizar_numero(celda(fila, col.get("units"))),
-                "bu": normalizar_texto(celda(fila, col.get("bu"))).upper(),
-                "sku": normalizar_codigo(celda(fila, col.get("sku"))),
-                "pdv_desc": normalizar_texto(celda(fila, col.get("pdv_desc"))),
-                "prod_desc": normalizar_texto(celda(fila, col.get("prod_desc"))),
-                "familia": normalizar_texto(celda(fila, col.get("familia"))),
-            }
-            if productos and valores["sku"] and not completar_con_dimension(valores, productos):
-                skus_sin_dimension[valores["sku"]] += 1
-            faltante = next((c for c in exigidos if valores[c] in (None, "")), None)
-            if faltante:
-                conteo[f"descartadas_{faltante}"] += 1
-                continue
+                unidades = valores["units"] or 0.0
+                importe = valores["amount"] or 0.0
+                bu = valores["bu"] or SIN_BU
+                sku = valores["sku"] or SIN_SKU
 
-            unidades = valores["units"] or 0.0
-            importe = valores["amount"] or 0.0
-            bu = valores["bu"] or SIN_BU
-            sku = valores["sku"] or SIN_SKU
+                for acumulado in (por_pdv_bu[pos_id][bu][anio_mes],
+                                  por_sku[sku][anio_mes],
+                                  por_pdv_sku[pos_id][sku][anio_mes],
+                                  por_sku_pdv[sku][pos_id][anio_mes]):
+                    acumulado[0] += unidades
+                    acumulado[1] += importe
 
-            for acumulado in (por_pdv_bu[pos_id][bu][anio_mes],
-                              por_sku[sku][anio_mes],
-                              por_pdv_sku[pos_id][sku][anio_mes],
-                              por_sku_pdv[sku][pos_id][anio_mes]):
-                acumulado[0] += unidades
-                acumulado[1] += importe
-
-            if valores["pdv_desc"] and pos_id not in desc_pdv:
-                desc_pdv[pos_id] = valores["pdv_desc"]
-            info = info_sku[sku]
-            if valores["prod_desc"] and "desc" not in info:
-                info["desc"] = valores["prod_desc"]
-            if valores["familia"] and "familia" not in info:
-                info["familia"] = valores["familia"]
-            if bu != SIN_BU and "bu" not in info:
-                info["bu"] = bu
-            conteo["validas"] += 1
+                # Libro más reciente primero: la descripción que queda es la vigente.
+                if valores["pdv_desc"] and pos_id not in desc_pdv:
+                    desc_pdv[pos_id] = valores["pdv_desc"]
+                info = info_sku[sku]
+                if valores["prod_desc"] and "desc" not in info:
+                    info["desc"] = valores["prod_desc"]
+                if valores["familia"] and "familia" not in info:
+                    info["familia"] = valores["familia"]
+                if bu != SIN_BU and "bu" not in info:
+                    info["bu"] = bu
+                conteo["validas"] += 1
+            origen.append({"archivo": ruta.name, "hoja": hoja, "fila_encabezados": fila_enc,
+                           "motor": motor, "filas_leidas": leidas,
+                           "pos_id": "columna" if "pos_id" in mapeo else "deducido"})
+            ultimo_mapeo, ultimos_enc = mapeo, encabezados
 
     t_lectura = time.perf_counter() - t0
     print(f"Lectura terminada: {conteo['leidas']:,} filas, {conteo['validas']:,} válidas"
@@ -738,8 +791,10 @@ def ejecutar(cfg, limite):
     salida.mkdir(parents=True, exist_ok=True)
     archivos = []
 
+    # ASCII: con 2025 + 2026 so_pdv.json pasa de 4 MB y, con tildes, la web app solo lo
+    # cachea en trozos de 30 KB (no cabría en el tope de 60 trozos y se leería de Drive cada vez).
     def guardar(nombre, datos):
-        archivos.append({"nombre": nombre, "bytes": escribir_json(salida / nombre, datos)})
+        archivos.append({"nombre": nombre, "bytes": escribir_json(salida / nombre, datos, ascii=True)})
 
     guardar("so_pdv.json", {"meses": meses, "pdv": so_pdv})
     guardar("so_portafolio.json", {"meses": meses, "sku": so_portafolio})
@@ -765,16 +820,16 @@ def ejecutar(cfg, limite):
     manifiesto = {
         "version": 1,
         "generado": datetime.now().isoformat(timespec="seconds"),
-        "origen": {"archivo": ruta.name, "hoja": hoja,
-                   "fila_encabezados": fila_enc, "motor": motor},
+        "origen": origen[0] if len(origen) == 1 else origen,
+        "pdv_pos_id": dict(sorted(reglas_pos.items())),
         "limite": limite,
         "formato_serie": ["indiceMes", "unidades", "importe"],
         "meses": meses,
         "n_fragmentos": n_fragmentos,
         "n_fragmentos_sku": n_fragmentos_sku,
         "mapeo_columnas": {
-            campo: ({"columna": mapeo[campo] + 1, "encabezado": encabezados[mapeo[campo]]}
-                    if campo in mapeo else None)
+            campo: ({"columna": ultimo_mapeo[campo] + 1, "encabezado": ultimos_enc[ultimo_mapeo[campo]]}
+                    if campo in ultimo_mapeo else None)
             for campo in cfg.COLUMNAS
         },
         "filtros": {encabezado: aceptados for _, encabezado, _, aceptados in filtros},
@@ -1098,6 +1153,242 @@ def ejecutar_s3(cfg, limite=None):
 
 
 # ---------------------------------------------------------------------------
+# Inventario (subpestañas Sell Out PDV y SI vs SO)
+# ---------------------------------------------------------------------------
+# FUENTE: los "Consolidado inventarios Semestre N.xlsx" (FUENTES_INVENTARIO, hoja Hoja1): una
+# fila por cliente (Origin / Sold To ID) × producto del cliente (Código_prod_cliente) × local
+# del cliente (Código_local_cliente) × mes, en unidades (Units). Cruces:
+#   producto  Origin + Código_prod_cliente → "EAN MASTER Master.xlsx" › Master_EAN
+#             (Codigo_prod_cliente → Ean_isdin, Ean_description); si el código no está para
+#             ese Origin pero es único en el maestro, se usa igual.
+#   PDV       Origin + Código_local_cliente → "PDV MASTER Master.xlsx" › Master_Puntos
+#             (→ ISDIN_PDV_DESC, SF_ID, POS_ID) → PDV del cubo por POS_ID o SF_ID; si no está
+#             en el maestro, Sold To ID + "_" + código local (= POS_ID).
+# Solo clientes del cubo de sell-out (Colombia: Panamá fuera). El inventario es una FOTO al
+# cierre del mes: se consolida por mes y nunca se suma entre meses.
+# En pesos: unidades × precio del EAN para ese cliente en "Transformación final" (Amount ÷
+# Inventario, RUTA_INVENTARIO; si no, el precio medio del EAN); sin precio cuenta 0 $.
+# Deja (ASCII, en CARPETA_SALIDA):
+#   s3_inv.json      {"v", "generado", "meses", "clientes": [[sap, nombre]], "skus": [[ean, desc, bu]],
+#                     "inv": [[iCliente, iSku, iMes, und, imp]], "meta"}       cliente × EAN × mes
+#   s3_inv_pdv.json  {"v", "generado", "meses", "pdv": [clave del cubo], "inv": [[iPdv, iMes, und, imp]],
+#                     "meta"}                                                  PDV × mes
+# Las claves son SAP ID, EAN y la clave de PDV del cubo (no índices), para no depender de la corrida.
+
+COLUMNAS_INV_DEF = {
+    "fecha": ["fecha"],
+    "origin": ["origin"],
+    "cliente_id": ["sold to id"],
+    "prod": ["codigo prod cliente"],
+    "units": ["units"],
+    "local": ["codigo local cliente"],
+    "llave": ["llave"],
+}
+
+
+def _clave_txt(valor):
+    """Texto de cruce: sin tildes, mayúsculas, espacios simples (los Origin vienen con tildes
+    o con caracteres dañados según el archivo)."""
+    return re.sub(r"[^A-Z0-9]+", " ", normalizar_encabezado(normalizar_texto(valor)).upper()).strip()
+
+
+def _filas_hoja(ruta, hoja, columnas, obligatorias):
+    with abrir_libro(Path(ruta)) as libro:
+        hoja = libro.elegir_hoja(hoja)
+        encabezados, filas = leer_encabezados(libro, hoja, 1)
+        col = mapear_columnas(encabezados, columnas)
+        faltan = [c for c in obligatorias if c not in col]
+        if faltan:
+            sys.exit(f"ERROR Inventario: en '{Path(ruta).name}' › '{hoja}' no encontré: {', '.join(faltan)}.\n"
+                     f"  Encabezados: {encabezados}")
+        for fila in filas:
+            if not fila_vacia(fila):
+                yield {c: celda(fila, i) for c, i in col.items()}
+
+
+def cargar_maestro_ean(cfg):
+    """(origin, código) -> (ean, descripción) y código -> {(ean, desc)} para el respaldo."""
+    m = getattr(cfg, "MAESTRO_EAN", None)
+    por_origin, por_codigo = {}, defaultdict(set)
+    if not m:
+        return por_origin, por_codigo
+    for f in _filas_hoja(m["ruta"], m.get("hoja", "Master_EAN"),
+                         {"origin": ["origin"], "codigo": ["codigo prod cliente"], "ean": ["ean isdin"],
+                          "desc": ["ean description"]}, ("codigo", "ean")):
+        cod, ean = normalizar_codigo(f.get("codigo")), normalizar_codigo(f.get("ean"))
+        if not cod or not ean:
+            continue
+        v = (ean, normalizar_texto(f.get("desc")))
+        por_origin.setdefault((_clave_txt(f.get("origin")), cod), v)
+        por_codigo[cod].add(v)
+    return por_origin, por_codigo
+
+
+def cargar_maestro_pdv(cfg):
+    """(origin, código local) -> (descripción, SF_ID, POS_ID)."""
+    m = getattr(cfg, "MAESTRO_PDV", None)
+    out = {}
+    if not m:
+        return out
+    for f in _filas_hoja(m["ruta"], m.get("hoja", "Master_Puntos"),
+                         {"origin": ["origin"], "local": ["codigo local cliente"], "desc": ["isdin pdv desc"],
+                          "sf": ["sf id"], "pos": ["pos id"]}, ("local",)):
+        loc = normalizar_codigo(f.get("local"))
+        if loc:
+            out.setdefault((_clave_txt(f.get("origin")), loc),
+                           (normalizar_texto(f.get("desc")), normalizar_texto(f.get("sf")), normalizar_pos(f.get("pos"))))
+    return out
+
+
+def precios_inventario(cfg):
+    """Precio por (sap, ean) y por ean, de "Transformación final" (Amount ÷ Inventario, mes más reciente)."""
+    ruta = getattr(cfg, "RUTA_INVENTARIO", None)
+    por_cli, suma = {}, defaultdict(lambda: [0.0, 0.0])
+    if not ruta or not Path(ruta).is_file():
+        return por_cli, {}
+    for f in _filas_hoja(ruta, getattr(cfg, "HOJA_INVENTARIO", "Consolidado"),
+                         {"fecha": ["fecha"], "sap": ["sold to id"], "ean": ["ean isdin"], "inv": ["inventario"],
+                          "amount": ["amount"], "moneda": ["currency"]}, ("ean", "inv", "amount")):
+        if normalizar_texto(f.get("moneda")).upper() not in ("", "COP"):
+            continue
+        u = normalizar_numero(f.get("inv")) or 0.0
+        a = normalizar_numero(f.get("amount")) or 0.0
+        if u <= 0 or a <= 0:
+            continue
+        ean, sap, am = normalizar_codigo(f.get("ean")), normalizar_codigo(f.get("sap")), normalizar_fecha(f.get("fecha")) or 0
+        if (sap, ean) not in por_cli or am >= por_cli[(sap, ean)][0]:
+            por_cli[(sap, ean)] = (am, a / u)
+        x = suma[ean]
+        x[0] += u
+        x[1] += a
+    return {k: v[1] for k, v in por_cli.items()}, {e: v[1] / v[0] for e, v in suma.items() if v[0]}
+
+
+def ejecutar_inv(cfg):
+    fuentes = getattr(cfg, "FUENTES_INVENTARIO", None) or getattr(cfg, "FUENTES_INVENTARIO_PDV", None)
+    if not fuentes:
+        print("Inventario: FUENTES_INVENTARIO no está en config.py; no se generan s3_inv*.json.")
+        return
+    t0 = time.perf_counter()
+    salida = Path(cfg.CARPETA_SALIDA)
+    try:
+        cubo = json.loads((salida / "s3_cubo.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        print("Inventario: falta s3_cubo.json en la carpeta de salida (corre antes los s3_*).")
+        return
+    clientes_cubo = {c[0]: c[1] for c in cubo.get("clientes", [])}
+    bu_cubo = {s[0]: s[2] for s in cubo.get("skus", [])}
+    clave_de = {}
+    for p in cubo.get("pdv", []):
+        clave_de[normalizar_pos(p[0])] = p[0]
+        if len(p) > 7 and p[7]:
+            clave_de.setdefault(normalizar_pos(p[7]), p[0])
+    ean_origin, ean_codigo = cargar_maestro_ean(cfg)
+    pdv_maestro = cargar_maestro_pdv(cfg)
+    precio_cli, precio_ean = precios_inventario(cfg)
+    print(f"Inventario: maestros con {len(ean_origin):,} productos y {len(pdv_maestro):,} PDV; "
+          f"{len(precio_ean):,} EAN con precio.")
+
+    inv = defaultdict(lambda: [0.0, 0.0])        # (sap, ean, aaaamm)
+    inv_pdv = defaultdict(lambda: [0.0, 0.0])    # (clave, aaaamm)
+    info_sku = {}
+    conteo, unidades = defaultdict(int), defaultdict(float)
+    cache_ean, cache_pdv = {}, {}
+    origen = []
+    for fuente in fuentes:
+        ruta = Path(fuente["ruta"])
+        print(f"Inventario: leyendo '{fuente.get('hoja', 'Hoja1')}' de {ruta.name} ...")
+        leidas = 0
+        for f in _filas_hoja(ruta, fuente.get("hoja", "Hoja1"), COLUMNAS_INV_DEF,
+                             ("fecha", "origin", "cliente_id", "prod", "units", "local")):
+            leidas += 1
+            am = normalizar_fecha(f.get("fecha"))
+            sap = normalizar_codigo(f.get("cliente_id"))
+            if am is None:
+                conteo["descartadas_fecha"] += 1
+                continue
+            if sap not in clientes_cubo:              # Panamá y clientes sin sell-out en el cubo
+                conteo["descartadas_cliente"] += 1
+                continue
+            u = normalizar_numero(f.get("units")) or 0.0
+            org = f.get("origin")
+            cod, loc = normalizar_codigo(f.get("prod")), normalizar_codigo(f.get("local"))
+            k = (org, cod)
+            if k not in cache_ean:
+                o = _clave_txt(org)
+                v = ean_origin.get((o, cod))
+                if v is None and len(ean_codigo.get(cod, ())) == 1:
+                    v = next(iter(ean_codigo[cod]))
+                cache_ean[k] = v
+            ev = cache_ean[k]
+            k2 = (org, loc, sap)
+            if k2 not in cache_pdv:
+                o = _clave_txt(org)
+                mp = pdv_maestro.get((o, loc))
+                clave = None
+                if mp:
+                    clave = clave_de.get(mp[2]) or clave_de.get(normalizar_pos(mp[1]))
+                if clave is None:
+                    clave = clave_de.get(normalizar_pos(f"{sap}_{loc}"))
+                cache_pdv[k2] = clave
+            clave = cache_pdv[k2]
+            precio = 0.0
+            if ev:
+                precio = precio_cli.get((sap, ev[0])) or precio_ean.get(ev[0], 0.0)
+                x = inv[(sap, ev[0], am)]
+                x[0] += u
+                x[1] += u * precio
+                info_sku.setdefault(ev[0], ev[1])
+                unidades["con_ean"] += u
+            else:
+                conteo["sin_ean"] += 1
+            if clave is not None:
+                x = inv_pdv[(clave, am)]
+                x[0] += u
+                x[1] += u * precio
+                unidades["con_pdv"] += u
+            else:
+                conteo["sin_pdv"] += 1
+            unidades["total"] += u
+            conteo["validas"] += 1
+        origen.append({"archivo": ruta.name, "filas": leidas})
+
+    generado = datetime.now().isoformat(timespec="seconds")
+    tot = unidades["total"] or 1.0
+    meta = {"fuentes": origen, "filas": dict(sorted(conteo.items())),
+            "unidades_con_ean": round(unidades["con_ean"] / tot, 4),
+            "unidades_con_pdv": round(unidades["con_pdv"] / tot, 4)}
+    salida.mkdir(parents=True, exist_ok=True)
+
+    meses = sorted({k[2] for k in inv} | {k[1] for k in inv_pdv})
+    i_mes = {am: i for i, am in enumerate(meses)}
+    saps = sorted({k[0] for k in inv})
+    i_cli = {s: i for i, s in enumerate(saps)}
+    eans = sorted({k[1] for k in inv})
+    i_sku = {e: i for i, e in enumerate(eans)}
+    tam1 = escribir_json(salida / "s3_inv.json", {
+        "v": 2, "generado": generado, "meses": [texto_mes(am) for am in meses],
+        "clientes": [[s, clientes_cubo.get(s, s)] for s in saps],
+        "skus": [[e, info_sku.get(e, e), bu_cubo.get(e, SIN_BU)] for e in eans],
+        "inv": [[i_cli[s], i_sku[e], i_mes[am], redondear(v[0]), redondear(v[1])] for (s, e, am), v in sorted(inv.items())],
+        "meta": meta}, ascii=True)
+    claves = sorted({k[0] for k in inv_pdv})
+    i_pdv = {c: i for i, c in enumerate(claves)}
+    tam2 = escribir_json(salida / "s3_inv_pdv.json", {
+        "v": 2, "generado": generado, "meses": [texto_mes(am) for am in meses], "pdv": claves,
+        "inv": [[i_pdv[c], i_mes[am], redondear(v[0]), redondear(v[1])] for (c, am), v in sorted(inv_pdv.items())],
+        "meta": meta}, ascii=True)
+    print(f"Inventario listo en {time.perf_counter() - t0:.1f} s: {len(meses)} meses"
+          + (f" ({texto_mes(meses[0])} a {texto_mes(meses[-1])})" if meses else "")
+          + f", {len(saps)} clientes, {len(eans)} EAN, {len(claves):,} PDV; con EAN el {meta['unidades_con_ean']:.0%}"
+          f" y con PDV el {meta['unidades_con_pdv']:.0%} de las unidades; s3_inv.json {tam1 / 1e6:.2f} MB, "
+          f"s3_inv_pdv.json {tam2 / 1e6:.2f} MB.")
+    descartadas = {k: v for k, v in conteo.items() if k.startswith("descartadas_")}
+    if descartadas:
+        print("  Filas descartadas: " + ", ".join(f"{k[12:]}={v:,}" for k, v in sorted(descartadas.items())))
+
+
+# ---------------------------------------------------------------------------
 
 def main():
     for flujo in (sys.stdout, sys.stderr):
@@ -1113,6 +1404,8 @@ def main():
                         help="genera solo los archivos s3_* de Ventas 3.0 (no toca los del mapa)")
     parser.add_argument("--sin-s3", action="store_true",
                         help="genera solo los archivos so_* del mapa (como antes)")
+    parser.add_argument("--solo-inv", action="store_true",
+                        help="genera solo el inventario (s3_inv.json y s3_inv_pdv.json)")
     args = parser.parse_args()
     if args.limite is not None and args.limite <= 0:
         parser.error("--limite debe ser un entero positivo")
@@ -1121,10 +1414,14 @@ def main():
     if args.inspect:
         inspeccionar(cfg)
         return
+    if args.solo_inv:
+        ejecutar_inv(cfg)
+        return
     if not args.solo_s3:
         ejecutar(cfg, args.limite)
     if not args.sin_s3:
         ejecutar_s3(cfg, args.limite)
+        ejecutar_inv(cfg)
 
 
 if __name__ == "__main__":

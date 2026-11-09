@@ -156,7 +156,7 @@ function vt3Preparar(d){
     // eans: el sell-out identifica el producto por EAN (s[0]); el sell-in por Product ID, con sus EAN en s[4].
     skus:(d.skus||[]).map(function(s){return{ean:s[0],nombre:s[1]||s[0],bu:(s[2]||'SIN BU').toUpperCase(),marca:s[3]||'',
       eans:(s[4]||(s[0]?[s[0]]:[])).map(String)}}),
-    pdv:(d.pdv||[]).map(function(p){return{clave:p[0],nombre:p[1]||p[0],cli:p[2],ciudad:p[3]||'',depto:p[4]||'',canal:p[5]||''}}),
+    pdv:(d.pdv||[]).map(function(p){return{clave:p[0],nombre:p[1]||p[0],cli:p[2],ciudad:p[3]||'',depto:p[4]||'',canal:p[5]||'',subcanal:p[6]||''}}),
     cs:d.cs||[],pm:d.pm||[],errores:(d.meta||{}).errores||{}};
   // Plan (solo sell-in): plan[iCliente] = serie por mes; planMes[i] = 1 si ese mes tiene plan cargado.
   X.plan=null;X.planMes=[];

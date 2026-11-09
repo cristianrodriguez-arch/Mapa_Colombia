@@ -31,34 +31,58 @@ var sivsoData=null,sivsoCargando=false,sivsoErrorCarga='';
 var SIVSO_MESES=['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
 var sivsoUnidad='$';           // '$' o '#' — mismo toggle que el parámetro "Unidad" de Looker
 var sivsoCortes={};            // año → último mes (1-12) con Sell In o Sell Out
+var sivsoCortesSO={};          // año → último mes con Sell Out (rango de los KPIs y de SO/SI)
 
 /* ── Vista de nivel superior (se integra con mostrarVistaSuperior de JsVentasMtd) ── */
 function sivsoAlEntrar(){
-  if(sivsoData===null&&!sivsoCargando)cargarSIvsSO()}
+  if(sivsoData===null&&!sivsoCargando)cargarSIvsSO();
+  else if(sivsoData)setTimeout(function(){var a=sivsoAnioSel();sivsoRenderMensual(a,sivsoCortes[a]||0)},0)}
 
 /* Precarga en segundo plano (la llama iniciarMapa cuando termina): al abrir la
    pestaña ya está lista y la caché del servidor está caliente. */
 function sivsoPrefetch(){
   if(sivsoData===null&&!sivsoCargando)cargarSIvsSO()}
 
-function cargarSIvsSO(forzar){
-  if(sivsoCargando)return;
+/* Mientras espera muestra los segundos que lleva; a los 45 s explica por qué
+   tarda y ofrece "Reintentar". Un corte de red (HTTP 0 / NetworkError, típico con
+   varias cuentas de Google abiertas) se reintenta solo hasta 2 veces. */
+var sivsoReloj=null,sivsoIntento=0,sivsoPeticion=0;
+function sivsoPararReloj(){if(sivsoReloj){clearInterval(sivsoReloj);sivsoReloj=null}}
+function cargarSIvsSO(forzar,reintento){
+  if(sivsoCargando&&!reintento)return;
   if(forzar)sivsoData=null;
+  if(!reintento)sivsoIntento=0;
   sivsoCargando=true;
+  var miPeticion=++sivsoPeticion;           // una respuesta vieja (tras Reintentar) se ignora
   document.getElementById('sivsoContenido').style.display='none';
   var est=document.getElementById('sivsoEstado');
   est.style.display='block';
-  est.innerHTML='<span class="mtd-spinner"></span>'+(forzar?'Releyendo la hoja…':'Cargando datos…');
+  var base=(forzar?'Releyendo la hoja…':'Cargando datos…'),t0=Date.now();
+  est.innerHTML='<span class="mtd-spinner"></span>'+base;
+  sivsoPararReloj();
   if(!esGas()){setTimeout(function(){onSIvsSOCargado(sivsoDatosDemo())},350);return}
+  sivsoReloj=setInterval(function(){
+    var s=Math.round((Date.now()-t0)/1000);if(s<8)return;
+    est.innerHTML='<span class="mtd-spinner"></span>'+base+' '+s+' s'+
+      (s>=45?'<br><span class="mini">La hoja Data de Carga Looker es grande: la primera carga después de 30 min sin uso '+
+        'la lee completa. Si pasa de 2 minutos, recarga o </span><button type="button" class="btn" onclick="cargarSIvsSO(false,true)">Reintentar</button>':'')},1000);
   google.script.run
     .withSuccessHandler(function(j){
+      if(miPeticion!==sivsoPeticion)return;
+      sivsoPararReloj();
       try{onSIvsSOCargado(JSON.parse(j))}
       catch(e){sivsoCargando=false;sivsoErrorCarga='No pude leer la respuesta: '+me(e);est.innerText=sivsoErrorCarga;
         if(typeof vtDatosListos==='function')vtDatosListos()}})
     .withFailureHandler(function(e){
-      sivsoCargando=false;sivsoErrorCarga=me(e);
-      est.innerHTML='<b>No pude cargar SI vs SO.</b><br>'+esc(me(e))+
-        '<br><span class="mini">Revisa la hoja Data del archivo Carga Looker.</span>';
+      if(miPeticion!==sivsoPeticion)return;
+      sivsoPararReloj();
+      var m=me(e);
+      if(/HTTP 0|NetworkError|network error/i.test(m)&&sivsoIntento<2){
+        sivsoIntento++;setTimeout(function(){cargarSIvsSO(forzar,true)},1500*sivsoIntento);return}
+      sivsoCargando=false;sivsoErrorCarga=m;
+      est.innerHTML='<b>No pude cargar SI vs SO.</b><br>'+esc(m)+
+        '<br><span class="mini">Revisa la hoja Data del archivo Carga Looker. Si tienes varias cuentas de Google abiertas, '+
+        'abre el visor en incógnito solo con tu cuenta de ISDIN.</span> <button type="button" class="btn" onclick="cargarSIvsSO(false,true)">Reintentar</button>';
       if(typeof vtDatosListos==='function')vtDatosListos()})
     .getSIvsSOJson(forzar===true)}
 
@@ -72,7 +96,7 @@ function sivsoExpandir_(d){
     (d.filas||[]).forEach(function(r){
       var c=cli[r[1]]||[],p=pro[r[2]]||[];
       filas.push({mes:r[0],sapId:c[0]||'',cliente:c[1]||'',kam:c[2]||'',channel:c[3]||'',
-        productId:p[0]||'',producto:p[1]||'',bu:p[2]||'',brand:p[3]||'',
+        productId:p[0]||'',producto:p[1]||'',bu:p[2]||'',brand:p[3]||'',smk:p[4]||'',tmk:p[5]||'',
         si:r[3],siU:r[4],so:r[5],soU:r[6],inv:r[7],invU:r[8],tieneInv:!!r[9]})})}
   else filas=(d&&d.filas)||[];
   filas.forEach(function(f){
@@ -84,13 +108,15 @@ function onSIvsSOCargado(data){
   sivsoCargando=false;sivsoErrorCarga='';
   // doh = DOH objetivo por SAP ID (hoja 'Info SO-INV'); lo usa la pestaña Ventas.
   sivsoData={filas:sivsoExpandir_(data),meta:(data&&data.meta)||{},doh:(data&&data.doh)||{}};
-  sivsoCortes={};
+  sivsoCortes={};sivsoCortesSO={};
   sivsoData.filas.forEach(function(f){
-    if((f.si||f.so)&&(!sivsoCortes[f.a]||f.m>sivsoCortes[f.a]))sivsoCortes[f.a]=f.m});
+    if((f.si||f.so)&&(!sivsoCortes[f.a]||f.m>sivsoCortes[f.a]))sivsoCortes[f.a]=f.m;
+    if(f.so&&(!sivsoCortesSO[f.a]||f.m>sivsoCortesSO[f.a]))sivsoCortesSO[f.a]=f.m});
   var meta=sivsoData.meta||{};
   document.getElementById('sivsoActualizado').innerText=
     meta.actualizadoEn?('Datos leídos de la hoja: '+new Date(meta.actualizadoEn).toLocaleString('es-CO')):'';
   sivsoPrepararFiltros();
+  sivsoConstruirCampos();
   sivsoInicializarAnio();
   document.getElementById('sivsoEstado').style.display='none';
   document.getElementById('sivsoContenido').style.display='block';
@@ -108,10 +134,11 @@ function onSIvsSOCargado(data){
    fijan desde los selectores (canal, KAM, BU, marca) o con CLIC en tablas y
    gráficos (cliente, producto, mes, BU). El Año va aparte (chips de un valor) y el
    campo "Buscar cliente" (texto) es un filtro adicional independiente.          */
-var SIVSO_DIMS=['channel','kam','buK','brand','cliente','producto','mes'];
-var SIVSO_DIM_ETQ={channel:'Canal',kam:'KAM',buK:'BU',brand:'Marca',cliente:'Cliente',producto:'Producto',mes:'Mes'};
-var sivsoFiltros={channel:[],kam:[],buK:[],brand:[],cliente:[],producto:[],mes:[]};
-var sivsoFset={channel:null,kam:null,buK:null,brand:null,cliente:null,producto:null,mes:null};
+var SIVSO_DIMS=['channel','kam','buK','brand','smk','tmk','cliente','producto','mes'];
+var SIVSO_DIM_ETQ={channel:'Canal',kam:'KAM',buK:'BU',brand:'Marca',smk:'Strategic market',tmk:'Tactic market',
+  cliente:'Cliente',producto:'Producto',mes:'Mes'};
+var sivsoFiltros={channel:[],kam:[],buK:[],brand:[],smk:[],tmk:[],cliente:[],producto:[],mes:[]};
+var sivsoFset={channel:null,kam:null,buK:null,brand:null,smk:null,tmk:null,cliente:null,producto:null,mes:null};
 var SIVSO_SEL={};
 var sivsoCache=null;           // filas por contexto (dimensiones ignoradas); se invalida al cambiar algo
 var sivsoNombres={cliente:{},producto:{}};   // clave → nombre legible, para los chips
@@ -123,6 +150,8 @@ function sivsoValor(f,dim){
     case'kam':return f.kam||'';
     case'buK':return f.buK;
     case'brand':return f.brand||'';
+    case'smk':return f.smk||'';
+    case'tmk':return f.tmk||'';
     case'cliente':return f.sapId||f.cliente;
     case'producto':return f.productId||f.producto;
     case'mes':return f.m}
@@ -163,28 +192,89 @@ function sivsoInicializarAnio(){
 
 /* Opciones en cascada de un selector: lo que dejan los DEMÁS filtros. */
 function sivsoOpciones(dim){
-  var vals={};
+  var vals={},nom=sivsoNombres[dim]||null;
   sivsoFilas([dim]).forEach(function(f){var v=String(sivsoValor(f,dim)||'').trim();if(v)vals[v]=1});
-  return Object.keys(vals).sort(function(a,b){return a.localeCompare(b,'es')})
-    .map(function(v){return{valor:v,etiqueta:v}})}
+  return Object.keys(vals).map(function(v){return{valor:v,etiqueta:nom&&nom[v]?nom[v]:v}})
+    .sort(function(a,b){return a.etiqueta.localeCompare(b.etiqueta,'es')})}
 
-var SIVSO_SELECTORES=[['channel','sivsoChannel'],['kam','sivsoKam'],['buK','sivsoBu'],['brand','sivsoBrand']];
+/* Filtros bajo demanda, como en el mapa y Yoobic: Año, Unidad y "Buscar cliente"
+   siempre a la vista; el resto se agrega con "+ Añadir filtro" (y se quita con ✕).
+   Los elegidos se recuerdan en localStorage (visor.sivsoFiltros). Un filtro hecho
+   con clic en una tabla o gráfico muestra su caja sola. Strategic / Tactic market
+   solo se ofrecen si la hoja Data trae esas columnas con datos. */
+var SIVSO_CAMPOS=[
+  {dim:'cliente', etq:'Cliente',  tope:800, fijo:true},   // siempre a la vista (desplegable; antes era "Buscar cliente" de texto)
+  {dim:'anio',    etq:'Año',      chips:true},             // un solo año; sin la caja = el más reciente
+  {dim:'channel', etq:'Canal'},
+  {dim:'kam',     etq:'KAM encargado'},
+  {dim:'buK',     etq:'Unidad de negocio'},
+  {dim:'brand',   etq:'Marca'},
+  {dim:'smk',     etq:'Strategic market'},
+  {dim:'tmk',     etq:'Tactic market'},
+  {dim:'producto',etq:'Producto', tope:800}];
+var sivsoVisibles={};
+try{(JSON.parse(localStorage.getItem('visor.sivsoFiltros')||'[]')||[]).forEach(function(d){sivsoVisibles[d]=true})}catch(e){}
+function sivsoGuardarVisibles(){try{localStorage.setItem('visor.sivsoFiltros',JSON.stringify(Object.keys(sivsoVisibles)))}catch(e){}}
+function sivsoHayDatosDim(dim){
+  if(dim!=='smk'&&dim!=='tmk')return true;
+  return(sivsoData&&sivsoData.filas||[]).some(function(f){return!!sivsoValor(f,dim)})}
+function sivsoConstruirCampos(){
+  var cont=document.getElementById('sivsoCampos');if(!cont||cont.dataset.listo)return;cont.dataset.listo='1';
+  cont.innerHTML=SIVSO_CAMPOS.map(function(c){
+    var x=c.fijo?'':'<button type="button" class="chip-x" title="Quitar este filtro" onclick="sivsoQuitarDim(event,\''+c.dim+'\')">\u2715</button>';
+    if(c.chips)return'<div class="campo yb-campo so-chips" data-dim="'+c.dim+'"'+(sivsoVisibles[c.dim]||sivsoAnioElegido()?'':' hidden')+'>'+
+      '<label><span>'+esc(c.etq)+'</span>'+x+'</label><div class="chips-periodo" id="sivsoAnioChips"></div></div>';
+    return'<div class="campo yb-campo'+(c.fijo?' campo-fijo':'')+'" data-dim="'+c.dim+'"'+(c.fijo||sivsoVisibles[c.dim]||sivsoFiltros[c.dim].length?'':' hidden')+'>'+
+      '<label for="sivsoSel_'+c.dim+'"><span>'+esc(c.etq)+'</span>'+x+
+      '</label><select id="sivsoSel_'+c.dim+'" multiple></select></div>'}).join('');
+  sivsoPintarChipsAnio()}
+/* true si el año elegido NO es el más reciente (entonces la caja Año se muestra). */
+function sivsoAnioElegido(){var a=sivsoData?sivsoAnios():[],e=document.getElementById('sivsoAnioFil');
+  return!!a.length&&!!(e&&e.value)&&sivsoAnioSel()!==a[0]}
 function sivsoCrearSelectores(){
   if(Object.keys(SIVSO_SEL).length)return;
-  SIVSO_SELECTORES.forEach(function(c){
-    var dim=c[0];
-    SIVSO_SEL[dim]=new Selector({dim:dim,id:c[1],multi:true,tope:400,
+  sivsoConstruirCampos();
+  SIVSO_CAMPOS.forEach(function(c){
+    var dim=c.dim;if(c.chips)return;
+    SIVSO_SEL[dim]=new Selector({dim:dim,id:'sivsoSel_'+dim,multi:true,tope:c.tope||400,
       ops:function(){return sivsoOpciones(dim)},
       sel:function(){return sivsoFiltros[dim]},
       alCambiar:function(v){sivsoCambiarFiltro(dim,v)}})});
   sivsoSincronizarSelectores(true)}
+function sivsoMostrarDim(dim){
+  if(!SIVSO_CAMPOS.some(function(c){return c.dim===dim}))return;
+  var caja=document.querySelector&&document.querySelector('#sivsoCampos .yb-campo[data-dim="'+dim+'"]');
+  if(caja&&caja.hidden){caja.hidden=false;if(SIVSO_SEL[dim])SIVSO_SEL[dim].refrescar(true)}}
+function sivsoAgregarDim(dim){sivsoVisibles[dim]=true;sivsoGuardarVisibles();sivsoMostrarDim(dim);sivsoCerrarPop()}
+function sivsoQuitarDim(ev,dim){
+  if(ev){ev.preventDefault();ev.stopPropagation()}
+  delete sivsoVisibles[dim];sivsoGuardarVisibles();
+  var caja=document.querySelector&&document.querySelector('#sivsoCampos .yb-campo[data-dim="'+dim+'"]');if(caja)caja.hidden=true;
+  if(dim==='anio'){var an=sivsoAnios();if(an.length&&sivsoAnioSel()!==an[0])sivsoSetAnio(an[0]);return}
+  if(sivsoFiltros[dim].length){setSivsoFiltro(dim,[]);renderSIvsSO();sivsoSincronizarSelectores(true)}}
+function sivsoAlternarPop(ev){
+  if(ev)ev.stopPropagation();
+  var pop=document.getElementById('sivsoPop');if(!pop)return;
+  if(!pop.hidden){pop.hidden=true;return}
+  sivsoConstruirCampos();
+  var libres=SIVSO_CAMPOS.filter(function(c){
+    var caja=document.querySelector('#sivsoCampos .yb-campo[data-dim="'+c.dim+'"]');
+    return(!caja||caja.hidden)&&sivsoHayDatosDim(c.dim)});
+  document.getElementById('sivsoPopLista').innerHTML=libres.length?libres.map(function(c){
+    return'<button type="button" class="pop-op" onclick="sivsoAgregarDim(\''+c.dim+'\')">'+esc(c.etq)+'</button>'}).join(''):
+    '<div class="pop-vacio">Ya están todos los filtros en la barra</div>';
+  pop.hidden=false}
+function sivsoCerrarPop(){var pop=document.getElementById('sivsoPop');if(pop)pop.hidden=true}
+if(typeof document!=='undefined'&&document.addEventListener)document.addEventListener('click',function(e){
+  var pop=document.getElementById('sivsoPop');
+  if(pop&&!pop.hidden&&(!e.target.closest||!e.target.closest('.pop-anclaje')))pop.hidden=true});
 
 function sivsoSincronizarSelectores(forzar){
   Object.keys(SIVSO_SEL).forEach(function(d){forzar?SIVSO_SEL[d].fijar():SIVSO_SEL[d].refrescar(false)})}
 
 function sivsoActualizarContador(){
   var n=0;SIVSO_DIMS.forEach(function(d){n+=sivsoFiltros[d].length});
-  if(sivsoTextoCliente())n++;
+  if(sivsoTextoCliente())n++;if(sivsoAnioElegido())n++;if(sivsoLanz)n++;
   var b=document.getElementById('sivsoContador');
   if(b){b.innerText=n;b.hidden=!n}}
 
@@ -200,10 +290,13 @@ function sivsoAlternar(dim,val){
   var a=sivsoFiltros[dim].slice(),i=a.indexOf(val);
   if(i===-1)a.push(val);else a.splice(i,1);
   setSivsoFiltro(dim,a);
+  if(a.length)sivsoMostrarDim(dim);
   renderSIvsSO();
   sivsoSincronizarSelectores(true)}
 
-function sivsoTextoCliente(){return normTxt(document.getElementById('sivsoCliente').value||'')}
+/* Texto libre de cliente: la caja se reemplazó por el desplegable Cliente (2026-11-03); se
+   conserva por compatibilidad (si no existe en la página, no filtra). */
+function sivsoTextoCliente(){var e=document.getElementById('sivsoCliente');return e?normTxt(e.value||''):''}
 
 function sivsoRenderChips(){
   var items=[];
@@ -213,10 +306,14 @@ function sivsoRenderChips(){
     else v.forEach(function(x){
       var txt=d==='mes'?SIVSO_MESES[x-1]:((d==='cliente'||d==='producto')&&sivsoNombres[d][x])||x;
       items.push({dim:d,valor:x,etq:SIVSO_DIM_ETQ[d]+': '+txt})})});
-  var q=document.getElementById('sivsoCliente').value||'';
+  var eq=document.getElementById('sivsoCliente'),q=eq?eq.value||'':'';
   if(q.trim())items.push({dim:'q',valor:null,etq:'Cliente contiene: '+q.trim()});
+  if(sivsoAnioElegido())items.push({dim:'anio',valor:null,etq:'Año: '+sivsoAnioSel()});
+  if(sivsoLanz)items.push({dim:'lanz',valor:null,etq:'Solo lanzamientos'});
   mtdPintarChips('sivsoChips',items,function(it){
-    if(it.dim==='q'){document.getElementById('sivsoCliente').value='';renderSIvsSO();sivsoSincronizarSelectores(false)}
+    if(it.dim==='q'){eq.value='';renderSIvsSO();sivsoSincronizarSelectores(false)}
+    else if(it.dim==='anio')sivsoQuitarDim(null,'anio');
+    else if(it.dim==='lanz')sivsoAlternarLanz();
     else if(it.valor===null){setSivsoFiltro(it.dim,[]);renderSIvsSO();sivsoSincronizarSelectores(true)}
     else sivsoAlternar(it.dim,it.valor)},sivsoLimpiarFiltros)}
 
@@ -229,6 +326,7 @@ function sivsoPintarChipsAnio(){
 
 function sivsoSetAnio(a){
   document.getElementById('sivsoAnioFil').value=String(a);
+  if(sivsoAnioElegido())sivsoMostrarDim('anio');
   sivsoPintarChipsAnio();
   renderSIvsSO()}
 
@@ -244,7 +342,8 @@ function sivsoPromN(){
 
 function sivsoLimpiarFiltros(){
   SIVSO_DIMS.forEach(function(d){setSivsoFiltro(d,[])});
-  document.getElementById('sivsoCliente').value='';
+  var eq=document.getElementById('sivsoCliente');if(eq)eq.value='';
+  sivsoLanz=false;sivsoPintarLanz();
   renderSIvsSO();
   sivsoSincronizarSelectores(true)}
 
@@ -263,10 +362,52 @@ function sivsoFilas(ig){
   if(sivsoCache[clave])return sivsoCache[clave];
   var act=SIVSO_DIMS.filter(function(d){return sivsoFset[d]&&ig.indexOf(d)===-1});
   var q=sivsoTextoCliente();
+  var lz=sivsoLanz&&sivsoLanzD;
   return(sivsoCache[clave]=(sivsoData.filas||[]).filter(function(f){
+    if(lz&&!sivsoEsLanz(f))return false;
     for(var i=0;i<act.length;i++)if(!sivsoFset[act[i]][sivsoValor(f,act[i])])return false;
     if(q&&f.cn.indexOf(q)===-1)return false;
     return true}))}
+
+/* ══════════ Lanzamientos ══════════
+   Botón "★ Lanzamientos": todo el tablero (KPIs, gráficos, histórico, tablas e inventario)
+   pasa a mostrar SOLO los productos marcados "INNOVACIÓN" en la columna Innovación de la hoja
+   "Products 2026" del MAESTRO PDV's (getLanzamientosJson). Cruce con SI vs SO por Product ID
+   (y por nombre si la fila no lo trae); con el inventario, por EAN. */
+var sivsoLanz=false,sivsoLanzD=null,sivsoLanzCargando=false;
+function sivsoLanzPreparar(d){
+  var L={pid:{},ean:{},nom:{},n:0};
+  (d.productos||[]).forEach(function(p){if(p[0])L.pid[String(p[0])]=1;if(p[1])L.ean[String(p[1])]=1;if(p[2])L.nom[normTxt(p[2])]=1;L.n++});
+  return L}
+function sivsoEsLanz(f){var L=sivsoLanzD;return!!L&&(!!L.pid[f.productId]||!!L.nom[normTxt(f.producto)])}
+function sivsoPintarLanz(){var b=document.getElementById('sivsoLanzBtn');if(!b)return;
+  if(b.classList)b.classList.toggle('activo',sivsoLanz);if(b.setAttribute)b.setAttribute('aria-pressed',sivsoLanz?'true':'false');
+  b.innerHTML=sivsoLanzCargando?'<span class="mtd-spinner"></span>Lanzamientos':'★ Lanzamientos'+(sivsoLanz&&sivsoLanzD?' ('+sivsoLanzD.n+')':'')}
+/* Pide la lista de lanzamientos una sola vez (botón ★ y vista "Lanzamientos" del gráfico). */
+var sivsoLanzEsperan=[],sivsoLanzError='';
+function sivsoLanzCargar(cb){
+  if(sivsoLanzD){if(cb)cb();return}
+  if(cb)sivsoLanzEsperan.push(cb);
+  if(sivsoLanzCargando)return;
+  sivsoLanzCargando=true;sivsoLanzError='';sivsoPintarLanz();
+  function fin(){sivsoLanzCargando=false;sivsoPintarLanz();var l=sivsoLanzEsperan;sivsoLanzEsperan=[];l.forEach(function(f){f()})}
+  function listo(d){sivsoLanzD=sivsoLanzPreparar(d);fin()}
+  function falla(m){sivsoLanzError=m;avisar('Lanzamientos: '+m,true);fin()}
+  if(!esGas()){setTimeout(function(){listo(sivsoLanzDemo())},150);return}
+  google.script.run.withSuccessHandler(function(j){var d;try{d=JSON.parse(j)}catch(e){falla(me(e));return}listo(d)})
+    .withFailureHandler(function(e){falla(me(e))}).getLanzamientosJson(false)}
+function sivsoAlternarLanz(){
+  if(sivsoLanz){sivsoLanz=false;sivsoCache=null;sivsoPintarLanz();renderSIvsSO();sivsoSincronizarSelectores(false);return}
+  if(!sivsoLanzD){sivsoLanzCargar(function(){
+    if(!sivsoLanzD)return;
+    if(!sivsoLanzD.n){avisar('Lanzamientos: la hoja "Products 2026" no tiene productos con Innovación = INNOVACIÓN.',false);return}
+    sivsoAlternarLanz()});return}
+  sivsoLanz=true;sivsoCache=null;sivsoPintarLanz();renderSIvsSO();sivsoSincronizarSelectores(false)}
+/* Demo: 1 de cada 3 productos de los datos de ejemplo. */
+function sivsoLanzDemo(){var vistos={},out=[];
+  (sivsoData&&sivsoData.filas||[]).forEach(function(f){if(vistos[f.productId])return;vistos[f.productId]=1;
+    if(Object.keys(vistos).length%3===1)out.push([f.productId,'',f.producto,f.bu])});
+  return{productos:out}}
 
 /* Compatibilidad: filas con todos los filtros, sin Año. */
 function sivsoFilasFiltradasSinAnio(){return sivsoFilas()}
@@ -315,8 +456,17 @@ function renderSIvsSO(){
 
   sivsoRenderChips();
   sivsoActualizarContador();
-  sivsoRenderKpi(per.filas,per.ant,anio,corte);
+  sivsoPintarLanz();
+  // KPIs y absorción (SO/SI): mismo rango para Sell In y Sell Out, hasta el último mes con Sell Out
+  // del año (si el mes en curso ya tiene Sell In pero no Sell Out, se compara hasta el anterior).
+  var cSO=sivsoCortesSO[anio]||corte;
+  sivsoRenderKpi(per.filas.filter(function(f){return f.m<=cSO}),
+    sivsoPeriodo(null,anio,cSO).ant,anio,cSO);
   sivsoRenderMensual(anio,corte);
+  sivsoIniciarSwipe();
+  if(typeof iniciarColapsables==='function')iniciarColapsables(document.getElementById('sivsoContenido'),function(card){
+    if(card.querySelector('#sivsoGraficoMensual'))sivsoRenderMensual(anio,corte)});
+  sivsoRenderHistorico();
   sivsoRenderDonutBu(anio,corte);
   sivsoRenderProductos(anio,corte);
   sivsoRenderClientes(anio,corte)}
@@ -336,40 +486,515 @@ function sivsoRenderKpi(filas,anioAnt,anio,corte){
   document.getElementById('sivsoKpiSo').innerText=sivsoFmt(so);
   document.getElementById('sivsoKpiSoDet').innerHTML=det(dSo);
   document.getElementById('sivsoKpiRatio').innerText=ratio==null?'–':mtdPctEntero(ratio);
-  document.getElementById('sivsoKpiRatioDet').innerText='Sell Out ÷ Sell In · '+sivsoEtqCorte(anio,corte)}
+  document.getElementById('sivsoKpiRatioDet').innerText='Sell Out ÷ Sell In · '+sivsoEtqCorte(anio,corte);
+  // Debajo: Sell In contra Sell Out de este año y del anterior (mismos meses), en barras
+  // con una sola escala, y la relación SO/SI de cada año al final de la fila.
+  var comp=document.getElementById('sivsoKpiComp');if(!comp)return;
+  var mx=Math.max(si,so,siAnt,soAnt)||1;
+  function barra(v,cls,etq){var w=Math.max(0,v)/mx*100;
+    return'<div class="kc-b"><i class="'+cls+'" style="width:'+w.toFixed(1)+'%"></i><span>'+etq+' <b>'+sivsoFmtCorta(v)+'</b></span></div>'}
+  function fila(a,vSi,vSo,ant){var r=vSi>0?vSo/vSi:null;
+    return'<div class="kc-fila'+(ant?' ant':'')+'"><span class="kc-anio">'+sivsoEtqCorte(a,corte)+'</span>'+
+      '<div class="kc-barras">'+barra(vSi,ant?'si-py':'si','Sell In')+barra(vSo,ant?'so-py':'so','Sell Out')+'</div>'+
+      '<span class="kc-ratio" title="Sell Out ÷ Sell In">'+(r==null?'–':mtdPctEntero(r))+'<small>SO / SI</small></span></div>'}
+  comp.innerHTML=fila(anio,si,so,false)+(siAnt||soAnt?fila(anio-1,siAnt,soAnt,true):'')}
 
-/* Gráfico mensual: barras agrupadas SI (oscuro) / SO (rojo de marca) de los
-   12 meses del año seleccionado. */
+/* ══════════ Gráfico mensual · carrusel de 5 vistas (SVG a mano) ══════════
+   Todas leen el MISMO contexto: sivsoFilas('mes') (todos los filtros menos el
+   mes, para que el gráfico no se encoja al hacer clic en un mes: los meses
+   elegidos se resaltan y los demás se atenúan) + el año elegido y el anterior.
+     L lanz   · Lanzamientos producto a producto (Sell In vs Sell Out y absorción), ver
+                sivsoVistaLanzCtx. Va primero en la navegación.
+     0 combo  · barras Sell In (claro = año anterior, oscuro = actual) y líneas
+                Sell Out (continua = actual, punteada = anterior). Sin variaciones.
+     1 inv    · Inventario al cierre de cada mes, año actual y anterior (líneas). Fuente:
+                s3_inv.json ("Consolidado inventarios" + EAN MASTER, cliente × EAN × mes; carga compartida
+                con Sell Out PDV: invCargar en JsSO). Desde 2026-10-29 reemplaza "Tendencia".
+     2 ytd    · variación mensual contra el año anterior (ΔPY%) y cascada del YTD
+                anterior al YTD actual (estilo Zebra BI). Medida: Sell Out o Sell In.
+     3 zsi    · Zebra de Sell In: ΔPY%, ΔPY y columnas actual vs anterior + Total.
+     4 zso    · Igual, de Sell Out.
+   Los meses sin dato del año actual NO se pintan como cero (la línea se corta en
+   el último mes con dato de esa serie); las variaciones y el YTD comparan solo
+   hasta ese mes. Clic en un mes = filtro de mes en todo el tablero.
+   Paleta de marca ISDIN: carbón #2b2830 / gris claro, rojo #e41f33 para
+   Sell Out, verde ok #086124 y rojo #b71c1c solo para variaciones. */
+var SIVSO_VISTAS_GRAF=[
+  {k:'lanz',  t:'Lanzamientos'},
+  {k:'combo', t:'Sell In y Sell Out'},
+  {k:'inv',   t:'Inventario'},
+  {k:'ytd',   t:'Variación YTD'},
+  {k:'zsi',   t:'Sell In'},
+  {k:'zso',   t:'Sell Out'}];
+var SIVSO_COL={ac:'#2b2830',py:'#cfcdd2',pyTxt:'#8a8a8a',so:'#e41f33',soPy:'#f07a87',pos:'#086124',neg:'#b71c1c',eje:'#9a9a9a',rej:'#ece9e3'};
+var sivsoVistaGraf=1,   // por defecto "Sell In y Sell Out" (la 0 es Lanzamientos)
+    sivsoYtdMed='so',sivsoSerie=null;
+// Se recuerda la CLAVE de la vista (visor.sivsoGrafK): con la vista "Lanzamientos" al inicio los
+// índices viejos (visor.sivsoGraf) se corrieron uno.
+try{var _gk=localStorage.getItem('visor.sivsoGrafK');
+  if(_gk)SIVSO_VISTAS_GRAF.forEach(function(v,i){if(v.k===_gk)sivsoVistaGraf=i});
+  else{var _gi=localStorage.getItem('visor.sivsoGraf');if(_gi!=null)sivsoVistaGraf=Math.max(0,Math.min(5,Number(_gi)+1))}}catch(e){}
+
+function sivsoSetVistaGraf(i){
+  sivsoVistaGraf=(i+SIVSO_VISTAS_GRAF.length)%SIVSO_VISTAS_GRAF.length;
+  try{localStorage.setItem('visor.sivsoGrafK',SIVSO_VISTAS_GRAF[sivsoVistaGraf].k)}catch(e){}
+  var anio=sivsoAnioSel();sivsoRenderMensual(anio,sivsoCortes[anio]||0)}
+function sivsoMoverGraf(d){sivsoSetVistaGraf(sivsoVistaGraf+d)}
+function sivsoSetYtdMed(m){sivsoYtdMed=m;sivsoSetVistaGraf(sivsoVistaGraf)}
+
+/* Serie mensual del año elegido y del anterior dentro del contexto sin mes. */
+function sivsoSerieMensual(anio){
+  var acc={},m;for(m=1;m<=12;m++)acc[m]={si:0,so:0,siPy:0,soPy:0,hSi:0,hSo:0,hSiPy:0,hSoPy:0};
+  sivsoFilas('mes').forEach(function(f){var x=acc[f.m];if(!x)return;
+    if(f.a===anio){var a=sivsoSi(f),b=sivsoSo(f);x.si+=a;x.so+=b;if(a)x.hSi=1;if(b)x.hSo=1}
+    else if(f.a===anio-1){var c=sivsoSi(f),d=sivsoSo(f);x.siPy+=c;x.soPy+=d;if(c)x.hSiPy=1;if(d)x.hSoPy=1}});
+  var ult={si:0,so:0,siPy:0,soPy:0};
+  for(m=1;m<=12;m++){if(acc[m].hSi)ult.si=m;if(acc[m].hSo)ult.so=m;if(acc[m].hSiPy)ult.siPy=m;if(acc[m].hSoPy)ult.soPy=m}
+  return{anio:anio,acc:acc,ult:ult}}
+
+/* ── utilidades SVG ── */
+function sivsoNum(n){return Math.round(n*10)/10}
+function sivsoTxt(x,y,s,cls,anc,extra){return'<text x="'+sivsoNum(x)+'" y="'+sivsoNum(y)+'" class="'+(cls||'sv-t')+'"'+
+  (anc?' text-anchor="'+anc+'"':'')+(extra||'')+'>'+esc(s)+'</text>'}
+function sivsoRect(x,y,w,h,fill,extra){if(h<0){y+=h;h=-h}
+  return'<rect x="'+sivsoNum(x)+'" y="'+sivsoNum(y)+'" width="'+sivsoNum(Math.max(0,w))+'" height="'+sivsoNum(Math.max(0,h))+'" fill="'+fill+'"'+(extra||'')+'/>'}
+function sivsoLinea(pts,col,ancho,dash){if(pts.length<1)return'';
+  var d=pts.map(function(p,i){return(i?'L':'M')+sivsoNum(p[0])+','+sivsoNum(p[1])}).join(' ');
+  return'<path d="'+d+'" fill="none" stroke="'+col+'" stroke-width="'+(ancho||2)+'" stroke-linejoin="round" stroke-linecap="round"'+
+    (dash?' stroke-dasharray="'+dash+'"':'')+'/>'+
+    pts.map(function(p){return'<circle cx="'+sivsoNum(p[0])+'" cy="'+sivsoNum(p[1])+'" r="3" fill="'+col+'"/>'}).join('')}
+function sivsoSigno(v){return(v>=0?'+':'−')+sivsoFmtCorta(Math.abs(v)).replace('-','')}
+/* Bajo 10 % con un decimal ("+0,4%"), para no mostrar "−0%" en meses casi planos. */
+function sivsoPctSigno(p){if(p==null)return'';var a=Math.abs(p)*100;
+  return(p>=0?'+':'−')+(a<10?a.toFixed(1).replace('.',','):Math.round(a))+'%'}
+function sivsoMax(a){var m=0;a.forEach(function(v){if(v>m)m=v});return m}
+/* Escala "redonda" para el eje: 4 divisiones con paso 1/2/2.5/5 × 10^n. */
+function sivsoEje(max){if(max<=0)return{max:1,paso:.25};
+  var bruto=max/4,p=Math.pow(10,Math.floor(Math.log(bruto)/Math.LN10)),f=bruto/p;
+  var paso=(f<=1?1:f<=2?2:f<=2.5?2.5:f<=5?5:10)*p;return{max:paso*4,paso:paso}}
+
+/* Grupo clicable de un mes (resaltado / atenuado según el filtro de mes). */
+function sivsoGrupoMes(m,x,y,w,h,interior,o){
+  // `o` (opcional, otras pestañas): {fn:'nombreFuncion', sel:{mes:1}, hay:bool}; sin `o`, el filtro de mes de SI vs SO.
+  var hay=o?!!o.hay:!!sivsoFset.mes,sel=hay&&!!(o?o.sel&&o.sel[m]:sivsoFset.mes[m]),fn=o?o.fn:'sivsoAlternar(\'mes\','+m+')';
+  if(o)fn=o.fn+'('+m+')';
+  return'<g class="sivso-mescol clicable'+(sel?' sel':(hay?' atenuada':''))+'" tabindex="0" role="button" aria-pressed="'+(sel?'true':'false')+'"'+
+    ' aria-label="'+esc(SIVSO_MESES[m-1])+'" onclick="'+fn+'"'+
+    ' onkeydown="if(event.key===\'Enter\'||event.key===\' \'){event.preventDefault();'+fn+'}"'+
+    (o?'':' onmousemove="sivsoTip(event,'+m+')" onmouseleave="sivsoTipOcultar()"')+'>'+
+    '<rect class="sv-hit" x="'+sivsoNum(x)+'" y="'+sivsoNum(y)+'" width="'+sivsoNum(w)+'" height="'+sivsoNum(h)+'"/>'+interior+'</g>'}
+
+/* Tooltip con las 4 cifras del mes (como el de Looker). */
+function sivsoTip(ev,m){
+  var tip=document.getElementById('sivsoTip'),S=sivsoSerie;if(!tip||!S||!ev)return;
+  var x=S.acc[m],a=S.anio;
+  function fila(sw,n,v,ok){return'<tr><td><span class="sw '+sw+'"></span>'+n+'</td><td>'+(ok?esc(sivsoFmt(v)):'–')+'</td></tr>'}
+  var I=sivsoInvSerie;
+  if(SIVSO_VISTAS_GRAF[sivsoVistaGraf].k==='inv'&&I&&I.anio===a){var y=I.acc[m];
+    tip.innerHTML='<div class="t">'+SIVSO_MESES[m-1]+'</div><table>'+
+      fila('sw-inv','Inventario '+a,y.inv,y.hInv)+fila('sw-invpy','Inventario '+(a-1),y.invPy,y.hInvPy)+
+      fila('sw-so','Sell Out '+a,x.so,x.hSo)+'</table><div class="pie">Clic para filtrar por este mes</div>'}
+  else tip.innerHTML='<div class="t">'+SIVSO_MESES[m-1]+'</div><table>'+
+    fila('sw-py','Sell In '+(a-1),x.siPy,x.hSiPy)+fila('sw-ac','Sell In '+a,x.si,x.hSi)+
+    fila('sw-so','Sell Out '+a,x.so,x.hSo)+fila('sw-sopy','Sell Out '+(a-1),x.soPy,x.hSoPy)+'</table>'+
+    '<div class="pie">Clic para filtrar por este mes</div>';
+  tip.hidden=false;
+  var caja=tip.parentNode.getBoundingClientRect(),px=ev.clientX-caja.left+14,py=ev.clientY-caja.top+14;
+  if(px+tip.offsetWidth>caja.width)px=ev.clientX-caja.left-tip.offsetWidth-14;
+  tip.style.left=Math.max(0,px)+'px';tip.style.top=Math.max(0,py)+'px'}
+function sivsoTipOcultar(){var tip=document.getElementById('sivsoTip');if(tip)tip.hidden=true}
+/* Total YTD: actual, año anterior, ΔPY y ΔPY% del rango que suma la columna. */
+var sivsoTotTip=null;
+function sivsoTipTotal(ev){
+  var tip=document.getElementById('sivsoTip'),T=sivsoTotTip;if(!tip||!T||!ev)return;
+  var d=T.ytd-T.ytdPy,p=T.ytdPy>0?d/T.ytdPy:null;
+  tip.innerHTML='<div class="t">'+esc(T.etq)+'</div><table>'+
+    '<tr><td><span class="sw sw-ac"></span>'+esc(T.nom)+' '+T.a+'</td><td>'+esc(sivsoFmt(T.ytd))+'</td></tr>'+
+    '<tr><td><span class="sw sw-py"></span>'+esc(T.nom)+' '+(T.a-1)+'</td><td>'+esc(sivsoFmt(T.ytdPy))+'</td></tr>'+
+    '<tr><td>ΔPY</td><td class="'+(d>=0?'sivso-pos':'sivso-neg')+'">'+(d>=0?'+':'−')+esc(sivsoFmt(Math.abs(d)))+'</td></tr>'+
+    '<tr><td>ΔPY%</td><td class="'+(d>=0?'sivso-pos':'sivso-neg')+'">'+(p==null?'–':sivsoPctSigno(p))+'</td></tr></table>'+
+    '<div class="pie">'+esc(T.rango)+'</div>';
+  tip.hidden=false;
+  var caja=tip.parentNode.getBoundingClientRect(),px=ev.clientX-caja.left+14,py=ev.clientY-caja.top+14;
+  if(px+tip.offsetWidth>caja.width)px=ev.clientX-caja.left-tip.offsetWidth-14;
+  tip.style.left=Math.max(0,px)+'px';tip.style.top=Math.max(0,py)+'px'}
+/* Zona sensible al cursor sobre la columna del total. */
+function sivsoHitTotal(x,y,w,h){return'<rect class="sv-hit sv-hit-tot" x="'+sivsoNum(x)+'" y="'+sivsoNum(y)+'" width="'+sivsoNum(w)+'" height="'+sivsoNum(h)+'"'+
+  ' onmousemove="sivsoTipTotal(event)" onmouseleave="sivsoTipOcultar()"/>'}
+
+/* ── Vista 0 y 1: ejes compartidos ── */
+function sivsoEjeY(W,H,T,B,L,R,max,fmt){
+  var e=sivsoEje(max),h='',alto=H-T-B;
+  for(var i=0;i<=4;i++){var v=e.paso*i,y=H-B-alto*v/e.max;
+    h+='<line x1="'+L+'" x2="'+(W-R)+'" y1="'+sivsoNum(y)+'" y2="'+sivsoNum(y)+'" stroke="'+(i?SIVSO_COL.rej:SIVSO_COL.eje)+'"/>'+
+      sivsoTxt(L-8,y+4,fmt(v),'sv-eje','end')}
+  return{h:h,y:function(v){return H-B-alto*Math.max(0,v)/e.max}}}
+
+function sivsoVistaCombo(S,W){
+  var H=330,T=14,B=30,L=70,R=16,gw=(W-L-R)/12,A=S.acc,h='',m;
+  var max=0;for(m=1;m<=12;m++)max=Math.max(max,A[m].si,A[m].siPy,A[m].so,A[m].soPy);
+  if(max<=0)return null;
+  var ej=sivsoEjeY(W,H,T,B,L,R,max*1.05,sivsoFmtCorta);h+=ej.h;
+  // Barras anchas, como en la vista Zebra: el par ocupa ~80 % del ancho del mes.
+  var bw=Math.min(80,gw*.4),soAc=[],soPy=[];
+  for(m=1;m<=12;m++){var x=A[m],cx=L+gw*(m-.5);
+    var barras=sivsoRect(cx-bw,ej.y(x.siPy),bw,H-B-ej.y(x.siPy),SIVSO_COL.py,' rx="2"')+
+      (x.hSi?sivsoRect(cx,ej.y(x.si),bw,H-B-ej.y(x.si),SIVSO_COL.ac,' rx="2"'):'')+
+      sivsoTxt(cx,H-B+18,SIVSO_MESES[m-1],'sv-cat','middle');
+    h+=sivsoGrupoMes(m,L+gw*(m-1),T,gw,H-T-B+22,barras);
+    if(m<=S.ult.so)soAc.push([cx,ej.y(x.so)]);
+    if(m<=S.ult.soPy)soPy.push([cx,ej.y(x.soPy)])}
+  h+='<g class="sv-lineas">'+sivsoLinea(soPy,SIVSO_COL.so,2,'9 4 2 4')+sivsoLinea(soAc,SIVSO_COL.so,2.6)+'</g>';
+  var a=S.anio;
+  return{svg:'<svg viewBox="0 0 '+W+' '+H+'" class="sivso-svg" role="img" aria-label="Sell In y Sell Out por mes">'+h+'</svg>',
+    ley:[['sw-py','Sell In '+(a-1)],['sw-ac','Sell In '+a],['sw-so','Sell Out '+a],['sw-sopy','Sell Out '+(a-1)]],
+    hint:'Barras: Sell In ('+(a-1)+' claro, '+a+' oscuro) · Líneas: Sell Out ('+a+' continua, '+(a-1)+' punteada)'}}
+
+/* ── Vista 1: Inventario en barras (s3_inv.json: cliente × EAN × mes de los Consolidado inventarios) ──
+   Foto al cierre de cada mes (no se suma entre meses) del año elegido y del anterior. La
+   filtran Cliente, Canal y KAM (atributos del cliente en SI vs SO, por SAP ID), BU y "Buscar
+   cliente". Producto, Marca y Strategic / Tactic market NO: Looker identifica el producto por
+   Product ID y el inventario por EAN; el aviso lo dice en el botón ⓘ. Ignora el filtro de mes
+   (como las demás vistas: los meses elegidos se resaltan). */
+var SIVSO_INV_NA=['producto','brand','smk','tmk'];
+var sivsoCliAttr=null,sivsoInvSerie=null;
+function sivsoAtributosCli(){
+  if(sivsoCliAttr&&sivsoCliAttr.d===sivsoData)return sivsoCliAttr.m;
+  var m={};(sivsoData.filas||[]).forEach(function(f){if(f.sapId&&!m[f.sapId])m[f.sapId]={channel:f.channel||'',kam:f.kam||'',cn:f.cn||''}});
+  sivsoCliAttr={d:sivsoData,m:m};return m}
+/* ¿La fila de inventario pasa los filtros del tablero que aplican (cliente, canal, KAM, BU,
+   lanzamientos por EAN y el texto de cliente)? */
+function sivsoInvPasa(){
+  var at=sivsoAtributosCli(),q=sivsoTextoCliente(),F=sivsoFset,L=sivsoLanz&&sivsoLanzD;
+  return function(r){
+    var c=at[r.sap]||{channel:'',kam:'',cn:normTxt(r.cliente)};
+    if(L&&!L.ean[r.ean])return false;
+    if(F.cliente&&!F.cliente[r.sap])return false;
+    if(F.channel&&!F.channel[c.channel])return false;
+    if(F.kam&&!F.kam[c.kam])return false;
+    if(F.buK&&!F.buK[r.bu])return false;
+    if(q&&c.cn.indexOf(q)===-1)return false;
+    return true}}
+function sivsoSerieInv(anio){
+  var acc={},m;for(m=1;m<=12;m++)acc[m]={inv:0,invPy:0,hInv:0,hInvPy:0};
+  var F=sivsoFset,pasa=sivsoInvPasa();
+  invD.filas.forEach(function(r){
+    var a=Number(r.mes.slice(0,4));if(a!==anio&&a!==anio-1)return;
+    if(!pasa(r))return;
+    var v=sivsoUnidad==='#'?r.u:r.a,x=acc[Number(r.mes.slice(5,7))];
+    if(a===anio){x.inv+=v;x.hInv=1}else{x.invPy+=v;x.hInvPy=1}});
+  var ult={inv:0,invPy:0};for(m=1;m<=12;m++){if(acc[m].hInv)ult.inv=m;if(acc[m].hInvPy)ult.invPy=m}
+  return{anio:anio,acc:acc,ult:ult,na:SIVSO_INV_NA.filter(function(d){return!!F[d]}).map(function(d){return SIVSO_DIM_ETQ[d]})}}
+var SIVSO_COL_INV='#6b6670';
+/* Barras por mes: año elegido (café) delante y año anterior (gris claro) a su izquierda, con la
+   cifra de cada mes del año elegido. Si el mes es angosto (celular / iPad) la cifra va vertical,
+   dentro de la barra cuando cabe; así nunca se enciman. */
+function sivsoVistaInv(I,W){
+  var A=I.acc,m,hayPy=false,max=0;
+  for(m=1;m<=12;m++){max=Math.max(max,A[m].inv,A[m].invPy);if(A[m].hInvPy)hayPy=true}
+  if(max<=0)return null;
+  var L=W<520?52:70,R=12,gw=(W-L-R)/12,a=I.anio,h='';
+  var etqs=[];for(m=1;m<=12;m++)etqs.push(A[m].hInv?sivsoFmtCorta(A[m].inv):'');
+  var largo=0;etqs.forEach(function(t){largo=Math.max(largo,t.length)});
+  var anchoTxt=largo*6.4,vertical=anchoTxt>gw-6;
+  var H=W<520?300:340,T=vertical?16+anchoTxt*.5:24,B=30;
+  var ej=sivsoEjeY(W,H,T,B,L,R,max*(vertical?1.05:1.1),sivsoFmtCorta);h+=ej.h;
+  var bw=hayPy?Math.min(46,gw*.36):Math.min(64,gw*.62);
+  for(m=1;m<=12;m++){var x=A[m],cx=L+gw*(m-.5),y=ej.y(x.inv),barras='';
+    if(x.hInvPy)barras+=sivsoRect(hayPy?cx-bw-1:cx-bw/2,ej.y(x.invPy),bw,H-B-ej.y(x.invPy),SIVSO_COL.py,' rx="2"');
+    if(x.hInv){var x0=hayPy?cx+1:cx-bw/2;
+      barras+=sivsoRect(x0,y,bw,H-B-y,SIVSO_COL_INV,' rx="2"');
+      var xc=x0+bw/2,t=etqs[m-1];
+      if(!vertical)barras+=sivsoTxt(xc,y-6,t,'sv-val sv-inv-v','middle');
+      else if(H-B-y>anchoTxt+10)barras+=sivsoTxt(xc+3.5,y+6,t,'sv-val sv-inv-dentro','end',' transform="rotate(-90 '+sivsoNum(xc+3.5)+' '+sivsoNum(y+6)+')"');
+      else barras+=sivsoTxt(xc+3.5,y-5,t,'sv-val sv-inv-v','start',' transform="rotate(-90 '+sivsoNum(xc+3.5)+' '+sivsoNum(y-5)+')"')}
+    barras+=sivsoTxt(cx,H-B+18,SIVSO_MESES[m-1],gw<36?'sv-cat sv-cat-p':'sv-cat','middle');
+    h+=sivsoGrupoMes(m,L+gw*(m-1),T-10,gw,H-T-B+32,barras)}
+  return{svg:'<svg viewBox="0 0 '+W+' '+H+'" class="sivso-svg" role="img" aria-label="Inventario por mes">'+h+'</svg>',
+    ley:[['sw-invb','Inventario '+a]].concat(hayPy?[['sw-py','Inventario '+(a-1)]]:[]),
+    hint:'Inventario al cierre de cada mes (Consolidado inventarios + EAN MASTER) · Barra café: '+a+(hayPy?' · gris: '+(a-1):'')+
+      ' · Pasa el cursor por un mes para ver el detalle'+(I.na.length?' · No lo filtran: '+I.na.join(', '):'')}}
+/* Pide el inventario la primera vez y arma la vista; {aviso} mientras carga o si no hay datos. */
+function sivsoVistaInvCtx(anio,W){
+  if(typeof invCargar!=='function')return{aviso:'<div class="mtd-vacio">Inventario no disponible</div>'};
+  if(!invD){
+    if(invError)return{aviso:'<div class="mtd-vacio">No pude leer el inventario (s3_inv.json): '+esc(invError)+'</div>'};
+    invCargar(function(){if(sivsoData&&SIVSO_VISTAS_GRAF[sivsoVistaGraf].k==='inv'){var a=sivsoAnioSel();sivsoRenderMensual(a,sivsoCortes[a]||0)}});
+    return{aviso:'<div class="mtd-estado"><span class="mtd-spinner"></span>Cargando el inventario…</div>'}}
+  var I=sivsoInvSerie=sivsoSerieInv(anio),r=sivsoVistaInv(I,W);
+  if(r)return r;
+  var ms=invD.meses;
+  return{aviso:'<div class="mtd-vacio">Sin inventario para '+anio+' con estos filtros'+
+    (ms.length?' · el inventario va de '+sivsoEtqMes(ms[0])+' a '+sivsoEtqMes(ms[ms.length-1]):'')+'</div>'}}
+
+/* ── Vista 0: Lanzamientos producto a producto ──
+   Solo productos INNOVACIÓN de "Products 2026" (aunque el botón ★ esté apagado), con los demás
+   filtros del tablero y el MISMO rango de los KPIs: ene → último mes con Sell Out del año.
+   Por producto: Sell In (carbón) y Sell Out (rojo ISDIN) en barras de una sola escala y la
+   ABSORCIÓN = Sell Out ÷ Sell In con su pastilla: ≥ 100 % el canal vende todo lo que entra
+   (verde), 70–99 % en camino (neutro), < 70 % se acumula inventario (rojo). Orden: Sell Out.
+   Clic en un producto = filtro Producto de todo el tablero. HTML (no SVG): se acomoda solo al
+   ancho y en el celular cada producto pasa a dos renglones. */
+function sivsoVistaLanzCtx(anio,corte){
+  if(!sivsoLanzD){
+    if(sivsoLanzError)return{aviso:'<div class="mtd-vacio">No pude leer la hoja "Products 2026": '+esc(sivsoLanzError)+'</div>',hint:'Lanzamientos'};
+    sivsoLanzCargar(function(){if(sivsoData&&SIVSO_VISTAS_GRAF[sivsoVistaGraf].k==='lanz'){var a=sivsoAnioSel();sivsoRenderMensual(a,sivsoCortes[a]||0)}});
+    if(!sivsoLanzD)return{aviso:'<div class="mtd-estado"><span class="mtd-spinner"></span>Cargando los lanzamientos (Products 2026)…</div>',hint:'Lanzamientos'}}
+  if(!sivsoLanzD.n)return{aviso:'<div class="mtd-vacio">La hoja "Products 2026" no tiene productos con Innovación = INNOVACIÓN.</div>',hint:'Lanzamientos'};
+  var cSO=sivsoCortesSO[anio]||corte,g={},nSin=0;
+  sivsoFilas().forEach(function(f){if(f.a!==anio||f.m>cSO||!sivsoEsLanz(f))return;
+    var k=sivsoValor(f,'producto'),x=g[k]||(g[k]={k:k,nombre:f.producto||f.productId,bu:f.bu||'',si:0,so:0});
+    x.si+=sivsoSi(f);x.so+=sivsoSo(f)});
+  var l=Object.keys(g).map(function(k){return g[k]}).filter(function(x){if(!x.si&&!x.so){nSin++;return false}return true})
+    .sort(function(a,b){return b.so-a.so||b.si-a.si});
+  var rango=sivsoEtqCorte(anio,cSO);
+  if(!l.length)return{aviso:'<div class="mtd-vacio">Sin Sell In ni Sell Out de lanzamientos en '+esc(rango)+' con estos filtros</div>',hint:'Lanzamientos · '+rango};
+  var tSi=0,tSo=0,mx=0;l.forEach(function(x){tSi+=x.si;tSo+=x.so;mx=Math.max(mx,x.si,x.so)});
+  function abs(x){return x.si>0?x.so/x.si:null}
+  function clase(p){var r=p==null?null:Math.round(p*100);   // por el % que se ve (99,7 % se ve 100 %)
+    return r==null?'nd':(r>=100?'ok':(r>=70?'med':'baja'))}
+  function pct(p){return p==null?'–':mtdPctEntero(p)}
+  var pT=tSi>0?tSo/tSi:null,fs=sivsoFset.producto;
+  var h='<div class="sivso-lz">'+
+    '<div class="lz-res">'+
+      '<div><span class="e">Lanzamientos con movimiento</span><b>'+l.length+'</b>'+(nSin?'<small>'+nSin+' sin venta en el rango</small>':'')+'</div>'+
+      '<div><span class="e"><i class="lz-sw si"></i>Sell In</span><b>'+esc(sivsoFmtCorta(tSi))+'</b></div>'+
+      '<div><span class="e"><i class="lz-sw so"></i>Sell Out</span><b>'+esc(sivsoFmtCorta(tSo))+'</b></div>'+
+      '<div><span class="e">Absorción total</span><b class="lz-p '+clase(pT)+'">'+pct(pT)+'</b><small>Sell Out ÷ Sell In · '+esc(rango)+'</small></div>'+
+    '</div>'+
+    '<div class="lz-cab"><span>Producto</span><span>Sell In vs Sell Out</span><span>Absorción</span></div><div class="lz-lista">';
+  l.forEach(function(x){var p=abs(x),wSi=mx>0?x.si/mx*100:0,wSo=mx>0?x.so/mx*100:0,sel=!!(fs&&fs[x.k]);
+    var marca=p==null?0:Math.min(p,1.5)/1.5*100;
+    h+='<div class="lz-fila clicable'+(sel?' sel':(fs?' atenuada':''))+'" tabindex="0" role="button" onclick="sivsoAlternar(\'producto\',\''+esc(String(x.k))+'\')"'+
+      ' onkeydown="if(event.key===\'Enter\'){event.preventDefault();sivsoAlternar(\'producto\',\''+esc(String(x.k))+'\')}"'+
+      ' title="'+esc(x.nombre)+' · Sell In '+esc(sivsoFmt(x.si))+' · Sell Out '+esc(sivsoFmt(x.so))+' · Absorción '+pct(p)+' · clic para filtrar">'+
+      '<span class="lz-nom">'+esc(x.nombre)+'<small>'+esc(x.bu)+'</small></span>'+
+      '<span class="lz-barras">'+
+        '<span class="lz-b"><i class="si" style="width:'+wSi.toFixed(1)+'%"></i><em>'+esc(sivsoFmtCorta(x.si))+'</em></span>'+
+        '<span class="lz-b"><i class="so" style="width:'+wSo.toFixed(1)+'%"></i><em>'+esc(sivsoFmtCorta(x.so))+'</em></span></span>'+
+      '<span class="lz-abs"><b class="lz-p '+clase(p)+'">'+pct(p)+'</b>'+
+        '<span class="lz-reg" aria-hidden="true"><i class="'+clase(p)+'" style="width:'+marca.toFixed(1)+'%"></i><u></u></span></span></div>'});
+  h+='</div><div class="lz-ley"><span><i class="lz-sw si"></i>Sell In</span><span><i class="lz-sw so"></i>Sell Out</span>'+
+    '<span><b class="lz-p ok">≥ 100 %</b> vende lo que entra</span><span><b class="lz-p med">70–99 %</b> en camino</span>'+
+    '<span><b class="lz-p baja">&lt; 70 %</b> se acumula inventario</span><span class="lz-reg-ley"><u></u> línea = 100 %</span></div></div>';
+  return{html:h,hint:'Solo productos de lanzamiento (Innovación en Products 2026) · '+rango+' (hasta el último mes con Sell Out) · '+
+    'Absorción = Sell Out ÷ Sell In · ordenados por Sell Out · clic en un producto: lo filtra en todo el tablero'}}
+
+/* Franja de "piruletas" ΔPY% (estilo Zebra): base, tallo y cabeza con el %. */
+function sivsoPiruletas(items,y0,alto){
+  var mx=0;items.forEach(function(it){if(it.p!=null)mx=Math.max(mx,Math.abs(it.p))});
+  var neg=items.some(function(it){return it.p!=null&&it.p<0}),pos=items.some(function(it){return it.p!=null&&it.p>0});
+  var base=neg&&pos?y0+alto/2:(neg?y0+14:y0+alto),esc_=(neg&&pos?alto/2-14:alto-16)/(mx||1),h='';
+  items.forEach(function(it){if(it.p==null)return;var y=base-it.p*esc_,c=it.p>=0?SIVSO_COL.pos:SIVSO_COL.neg;
+    h+='<line x1="'+sivsoNum(it.x)+'" x2="'+sivsoNum(it.x)+'" y1="'+sivsoNum(base)+'" y2="'+sivsoNum(y)+'" stroke="'+c+'" stroke-width="3"/>'+
+      '<circle cx="'+sivsoNum(it.x)+'" cy="'+sivsoNum(y)+'" r="4.5" fill="'+c+'"/>'+
+      sivsoTxt(it.x,it.p>=0?y-9:y+17,sivsoPctSigno(it.p),'sv-pct','middle')});
+  return{h:h,base:base}}
+
+/* ── Vista 2: variación mensual + cascada YTD anterior → YTD actual ── */
+function sivsoVistaYtd(S,W){
+  var med=sivsoYtdMed,k=med,kp=med+'Py',u=S.ult[med],A=S.acc,a=S.anio,nom=med==='si'?'Sell In':'Sell Out';
+  if(!u)return null;
+  var H=380,T=8,B=30,L=74,R=70,n=u+2,cw=(W-L-R)/n,h='',m;
+  var ytd=0,ytdPy=0;for(m=1;m<=u;m++){ytd+=A[m][k];ytdPy+=A[m][kp]}
+  // Piruletas ΔPY% por mes
+  var its=[];for(m=1;m<=u;m++)its.push({x:L+cw*(m+.5),p:A[m][kp]>0?(A[m][k]-A[m][kp])/A[m][kp]:null});
+  var pir=sivsoPiruletas(its,T+18,96);
+  h+='<line x1="'+sivsoNum(L+cw)+'" x2="'+sivsoNum(L+cw*(u+1))+'" y1="'+sivsoNum(pir.base)+'" y2="'+sivsoNum(pir.base)+'" stroke="'+SIVSO_COL.eje+'" stroke-width="2"/>'+
+    pir.h+sivsoTxt(L-10,pir.base-30,'ΔPY%','sv-fila','end');
+  // Cascada desde 0
+  var y0=T+150,yB=H-B,top=Math.max(ytd,ytdPy),cum=ytdPy,mx=top;
+  for(m=1;m<=u;m++){cum+=A[m][k]-A[m][kp];mx=Math.max(mx,cum)}
+  var esc_=(yB-y0-24)/(mx||1);function Y(v){return yB-Math.max(0,v)*esc_}
+  h+=sivsoRect(L+cw*.12,Y(ytdPy),cw*.76,yB-Y(ytdPy),SIVSO_COL.pyTxt)+sivsoTxt(L+cw*.5,Y(ytdPy)-6,sivsoFmtCorta(ytdPy),'sv-val','middle')+
+    sivsoTxt(L+cw*.5,yB+18,'YTD '+(a-1),'sv-cat','middle');
+  cum=ytdPy;
+  for(m=1;m<=u;m++){var d=A[m][k]-A[m][kp],x0=L+cw*m,c=d>=0?SIVSO_COL.pos:SIVSO_COL.neg;
+    var barra='<line x1="'+sivsoNum(x0-cw*.12)+'" x2="'+sivsoNum(x0+cw*.12)+'" y1="'+sivsoNum(Y(cum))+'" y2="'+sivsoNum(Y(cum))+'" stroke="'+SIVSO_COL.eje+'" stroke-dasharray="2 2"/>'+
+      sivsoRect(x0+cw*.12,Y(cum),cw*.76,Y(cum+d)-Y(cum)||(d?1:0),c)+
+      sivsoTxt(x0+cw*.5,Y(Math.max(cum,cum+d))-6,sivsoSigno(d),'sv-val','middle')+
+      sivsoTxt(x0+cw*.5,yB+18,SIVSO_MESES[m-1],'sv-cat','middle');
+    h+=sivsoGrupoMes(m,x0,T,cw,H-T,barra);cum+=d}
+  var xY=L+cw*(u+1);
+  h+=sivsoRect(xY+cw*.12,Y(ytd),cw*.76,yB-Y(ytd),SIVSO_COL.ac)+sivsoTxt(xY+cw*.5,Y(ytd)-6,sivsoFmtCorta(ytd),'sv-val sv-b','middle')+
+    sivsoTxt(xY+cw*.5,yB+18,'YTD '+a,'sv-cat sv-b','middle')+
+    '<line x1="'+L+'" x2="'+(W-R)+'" y1="'+yB+'" y2="'+yB+'" stroke="'+SIVSO_COL.eje+'" stroke-width="2"/>';
+  sivsoTotTip={nom:nom,a:a,ytd:ytd,ytdPy:ytdPy,etq:'YTD '+a,rango:SIVSO_MESES[0]+'–'+SIVSO_MESES[u-1]+' '+a+' vs '+(a-1)};
+  h+=sivsoHitTotal(xY,T,cw,H-T)+sivsoHitTotal(L,T,cw,H-T);
+  // Flecha de la variación total YTD vs YTD anterior
+  var p=ytdPy>0?(ytd-ytdPy)/ytdPy:null;
+  if(p!=null){var xa=W-R+14,c2=p>=0?SIVSO_COL.pos:SIVSO_COL.neg,ya=Y(ytdPy),yb=Y(ytd);
+    h+='<line x1="'+sivsoNum(L+cw*.88)+'" x2="'+sivsoNum(xa)+'" y1="'+sivsoNum(ya)+'" y2="'+sivsoNum(ya)+'" stroke="'+SIVSO_COL.rej+'"/>'+
+      '<line x1="'+sivsoNum(xY+cw*.88)+'" x2="'+sivsoNum(xa)+'" y1="'+sivsoNum(yb)+'" y2="'+sivsoNum(yb)+'" stroke="'+SIVSO_COL.rej+'"/>'+
+      '<line x1="'+xa+'" x2="'+xa+'" y1="'+sivsoNum(ya)+'" y2="'+sivsoNum(yb+(p>=0?4:-4))+'" stroke="'+c2+'" stroke-width="2.5"/>'+
+      '<path d="M'+(xa-5)+','+sivsoNum(yb+(p>=0?7:-7))+' L'+xa+','+sivsoNum(yb)+' L'+(xa+5)+','+sivsoNum(yb+(p>=0?7:-7))+'Z" fill="'+c2+'"/>'+
+      sivsoTxt(xa+8,(ya+yb)/2+4,sivsoPctSigno(p),'sv-pct','start')}
+  return{svg:'<svg viewBox="0 0 '+W+' '+H+'" class="sivso-svg" role="img" aria-label="Variación YTD de '+nom+'">'+h+'</svg>',
+    ley:[],med:true,
+    hint:nom+': ΔPY% de cada mes vs el mismo mes de '+(a-1)+' · Cascada: cuánto aporta cada mes para ir del YTD '+(a-1)+' al YTD '+a+
+      ' ('+SIVSO_MESES[0]+'–'+SIVSO_MESES[u-1]+')'}}
+
+/* ── Vistas 3 y 4: Zebra de una sola medida ── */
+function sivsoVistaZebra(S,W,med,o){
+  // `o` (opcional, otras pestañas): {meses:[números de mes a mostrar], nombre, fn, sel, hay}.
+  var k=med,kp=med+'Py',u=S.ult[med],A=S.acc,a=S.anio,nom=(o&&o.nombre)||(med==='si'?'Sell In':'Sell Out');
+  var M=o&&o.meses?o.meses.filter(function(m){return A[m]&&(A[m][k]||A[m][kp])}):[];
+  if(!(o&&o.meses))for(var q=1;q<=u;q++)M.push(q);
+  var n=M.length;if(!n)return null;
+  var H=440,T=36,B=30,L=80,gapT=34,tw=Math.max(80,(W-L)/(n+2)),cw=(W-L-gapT-tw)/n,h='',j,m;
+  var xT=L+cw*n+gapT;
+  h+=sivsoTxt(8,22,nom,'sv-titulo','start')+sivsoTxt(8+nom.length*11+10,22,a+' vs '+(a-1),'sv-sub','start');
+  // o.mesesTotal: meses que suman en la columna Total (p. ej. solo los elegidos con clic).
+  var ytd=0,ytdPy=0;((o&&o.mesesTotal)||M).forEach(function(m){if(!A[m])return;ytd+=A[m][k];ytdPy+=A[m][kp]});
+  // 1) ΔPY%
+  var its=M.map(function(m,j){return{x:L+cw*(j+.5),p:A[m][kp]>0?(A[m][k]-A[m][kp])/A[m][kp]:null}});
+  var pir=sivsoPiruletas(its,T+6,92),pT=ytdPy>0?(ytd-ytdPy)/ytdPy:null,pirT=sivsoPiruletas([{x:xT+tw/2,p:pT}],T+6,92);
+  h+='<line x1="'+L+'" x2="'+sivsoNum(L+cw*n)+'" y1="'+sivsoNum(pir.base)+'" y2="'+sivsoNum(pir.base)+'" stroke="'+SIVSO_COL.eje+'" stroke-width="2"/>'+pir.h+
+    '<line x1="'+sivsoNum(xT)+'" x2="'+sivsoNum(xT+tw)+'" y1="'+sivsoNum(pirT.base)+'" y2="'+sivsoNum(pirT.base)+'" stroke="'+SIVSO_COL.eje+'" stroke-width="2"/>'+pirT.h+
+    sivsoTxt(L-10,T+50,'ΔPY%','sv-fila','end');
+  // 2) ΔPY (barras con base común; el Total con su propia escala)
+  var y1=T+128,alto1=64,ds=M.map(function(m){return A[m][k]-A[m][kp]});
+  function barrasDelta(vals,x0,ancho,paso){
+    var mx=sivsoMax(vals.map(Math.abs))||1,neg=vals.some(function(v){return v<0}),pos=vals.some(function(v){return v>0});
+    var base=neg&&pos?y1+alto1/2:(neg?y1+12:y1+alto1),e=(neg&&pos?alto1/2-14:alto1-16)/mx,out='';
+    vals.forEach(function(v,i){var x=x0+paso*i+ancho*.1,c=v>=0?SIVSO_COL.pos:SIVSO_COL.neg;
+      out+=sivsoRect(x,base,ancho*.8,-v*e,c)+sivsoTxt(x+ancho*.4,v>=0?base-v*e-5:base-v*e+13,sivsoSigno(v),'sv-val','middle')});
+    return{h:out,base:base}}
+  var bd=barrasDelta(ds,L,cw,cw),bdT=barrasDelta([ytd-ytdPy],xT,tw,0);
+  h+=bd.h+'<line x1="'+L+'" x2="'+sivsoNum(L+cw*n)+'" y1="'+sivsoNum(bd.base)+'" y2="'+sivsoNum(bd.base)+'" stroke="'+SIVSO_COL.eje+'" stroke-width="2"/>'+
+    bdT.h+'<line x1="'+sivsoNum(xT)+'" x2="'+sivsoNum(xT+tw)+'" y1="'+sivsoNum(bdT.base)+'" y2="'+sivsoNum(bdT.base)+'" stroke="'+SIVSO_COL.eje+'" stroke-width="2"/>'+
+    sivsoTxt(L-10,y1+alto1/2+4,'ΔPY','sv-fila','end');
+  // 3) Columnas actual (oscuro, delante) vs anterior (claro, detrás y corrido a la izquierda)
+  var y2=y1+alto1+30,yB=H-B,mx2=0;M.forEach(function(m){mx2=Math.max(mx2,A[m][k],A[m][kp])});
+  var e2=(yB-y2-20)/(mx2||1);function Y(v){return yB-Math.max(0,v)*e2}
+  for(j=0;j<n;j++){m=M[j];var x0=L+cw*j,x=A[m];
+    var col=sivsoRect(x0+cw*.06,Y(x[kp]),cw*.62,yB-Y(x[kp]),SIVSO_COL.py)+
+      sivsoRect(x0+cw*.2,Y(x[k]),cw*.66,yB-Y(x[k]),SIVSO_COL.ac)+
+      sivsoTxt(x0+cw*.53,Y(Math.max(x[k],x[kp]))-6,sivsoFmtCorta(x[k]),'sv-val','middle')+
+      sivsoTxt(x0+cw*.5,yB+18,SIVSO_MESES[m-1],'sv-cat','middle');
+    h+=sivsoGrupoMes(m,x0,T+40,cw,H-T-40,col,o)}
+  var e3=(yB-y2-20)/(Math.max(ytd,ytdPy)||1);
+  h+=sivsoRect(xT+tw*.06,yB-ytdPy*e3,tw*.62,ytdPy*e3,SIVSO_COL.py)+sivsoRect(xT+tw*.2,yB-ytd*e3,tw*.66,ytd*e3,SIVSO_COL.ac)+
+    sivsoTxt(xT+tw*.53,yB-Math.max(ytd,ytdPy)*e3-6,sivsoFmtCorta(ytd),'sv-val sv-b','middle')+
+    sivsoTxt(xT+tw*.5,yB+18,o&&o.etqTotal||'Total YTD','sv-cat sv-b','middle')+
+    '<line x1="'+L+'" x2="'+sivsoNum(L+cw*n)+'" y1="'+yB+'" y2="'+yB+'" stroke="'+SIVSO_COL.eje+'" stroke-width="2"/>'+
+    '<line x1="'+sivsoNum(xT)+'" x2="'+sivsoNum(xT+tw)+'" y1="'+yB+'" y2="'+yB+'" stroke="'+SIVSO_COL.eje+'" stroke-width="2"/>'+
+    sivsoTxt(L-10,y2+(yB-y2)/2,String(a),'sv-fila sv-b','end')+sivsoTxt(L-10,y2+(yB-y2)/2+16,String(a-1),'sv-fila sv-py','end');
+  if(!o){var M0=((o&&o.mesesTotal)||M);
+    sivsoTotTip={nom:nom,a:a,ytd:ytd,ytdPy:ytdPy,etq:o&&o.etqTotal||'Total YTD',rango:SIVSO_MESES[M0[0]-1]+'–'+SIVSO_MESES[M0[M0.length-1]-1]+' '+a+' vs '+(a-1)};
+    h+=sivsoHitTotal(xT,T,tw,H-T)}
+  return{svg:'<svg viewBox="0 0 '+W+' '+H+'" class="sivso-svg" role="img" aria-label="'+esc(nom)+' '+a+' contra '+(a-1)+'">'+h+'</svg>',
+    ley:[['sw-ac',nom+' '+a],['sw-py',nom+' '+(a-1)],['sw-pos','Crece vs '+(a-1)],['sw-neg','Cae vs '+(a-1)]],
+    hint:nom+' por mes: '+a+' oscuro vs '+(a-1)+' claro · ΔPY = diferencia contra '+(a-1)+' · ΔPY% = variación porcentual · Total = '+
+      SIVSO_MESES[M[0]-1]+'–'+SIVSO_MESES[M[n-1]-1]}}
+
+/* Pinta la vista activa + la navegación (flechas, puntos con nombre, deslizar). */
 function sivsoRenderMensual(anio,corte){
-  var filas=sivsoPeriodo('mes',anio,corte).filas,hay=!!sivsoFset.mes;
-  var acc={};for(var m=1;m<=12;m++)acc[m]={si:0,so:0};
-  filas.forEach(function(f){acc[f.m].si+=sivsoSi(f);acc[f.m].so+=sivsoSo(f)});
   var cont=document.getElementById('sivsoGraficoMensual');if(!cont)return;
-  var max=0;for(var mm=1;mm<=12;mm++)max=Math.max(max,acc[mm].si,acc[mm].so);
-  document.getElementById('sivsoHintMensual').innerText=
-    anio+' · '+(sivsoUnidad==='#'?'unidades':'pesos')+' · barra oscura Sell In, barra roja Sell Out · clic en un mes para filtrar todo el tablero (varios a la vez)';
-  if(max<=0){cont.innerHTML='<div class="mtd-vacio">Sin datos para '+anio+'</div>';return}
-  var ALTO=170,escala=ALTO/(max*1.15),h='';
-  for(var t=1;t<=12;t++){
-    var x=acc[t],siPx=Math.round(Math.max(0,x.si)*escala),soPx=Math.round(Math.max(0,x.so)*escala);
-    var sel=hay&&!!sivsoFset.mes[t];
-    h+='<div class="sivso-mescol clicable'+(sel?' sel':(hay?' atenuada':''))+'" tabindex="0" role="button" aria-pressed="'+
-      (sel?'true':'false')+'" title="'+esc(SIVSO_MESES[t-1])+' · Sell In '+esc(sivsoFmt(x.si))+' · Sell Out '+esc(sivsoFmt(x.so))+
-      ' · clic para filtrar por este mes" onclick="sivsoAlternar(\'mes\','+t+')" onkeydown="if(event.key===\'Enter\'||event.key===\' \'){event.preventDefault();sivsoAlternar(\'mes\','+t+')}">'+
-      '<div class="sivso-parbar">'+
-        '<div class="sivso-bar si" style="height:'+siPx+'px"></div>'+
-        '<div class="sivso-bar so" style="height:'+soPx+'px"></div>'+
-      '</div>'+
-      '<div class="sivso-mescat">'+SIVSO_MESES[t-1]+'</div></div>'}
-  cont.innerHTML='<div class="sivso-chart">'+h+'</div>'+
-    '<div class="hist-legend"><span class="it"><span class="sw-venta"></span>Sell In</span>'+
-    '<span class="it"><span class="sw-so"></span>Sell Out</span></div>'}
+  var S=sivsoSerie=sivsoSerieMensual(anio);
+  // Con la pestaña oculta (precarga) el ancho medido es 0: se usa uno típico y
+  // sivsoAlEntrar lo vuelve a pintar con el ancho real al abrir la pestaña.
+  var W=cont.clientWidth>0?Math.max(360,Math.round(cont.clientWidth)):1100;
+  var v=SIVSO_VISTAS_GRAF[sivsoVistaGraf],r;
+  if(v.k==='lanz')r=sivsoVistaLanzCtx(anio,corte);
+  else if(v.k==='combo')r=sivsoVistaCombo(S,W);
+  else if(v.k==='inv')r=sivsoVistaInvCtx(anio,W);
+  else if(v.k==='ytd')r=sivsoVistaYtd(S,W);
+  else r=sivsoVistaZebra(S,W,v.k==='zsi'?'si':'so');
+  var tit=document.getElementById('sivsoGrafTit');if(tit)tit.innerText=v.t;
+  var nav=document.getElementById('sivsoGrafNav');
+  if(nav)nav.innerHTML=SIVSO_VISTAS_GRAF.map(function(x,i){
+    return'<button type="button" class="sivso-punto'+(i===sivsoVistaGraf?' activo':'')+'" onclick="sivsoSetVistaGraf('+i+')"'+
+      ' aria-pressed="'+(i===sivsoVistaGraf?'true':'false')+'" title="'+esc(x.t)+'"><i></i><span>'+esc(x.t)+'</span></button>'}).join('');
+  var hint=document.getElementById('sivsoHintMensual');
+  var u=sivsoUnidad==='#'?'unidades':'pesos';
+  if(r&&r.aviso){cont.innerHTML=r.aviso;if(hint)hint.innerText=r.hint||'Inventario: Consolidado inventarios (por cliente y EAN)';return}
+  if(r&&r.html){cont.innerHTML=r.html;if(hint)hint.innerText='Cifras en '+u+' · '+r.hint;return}
+  if(!r){cont.innerHTML='<div class="mtd-vacio">Sin datos para '+anio+'</div>';if(hint)hint.innerText=anio+' · '+u;return}
+  if(hint)hint.innerText='Cifras en '+u+' · '+r.hint+' · Clic en un mes: filtra todo el tablero (varios a la vez)';
+  cont.innerHTML=(r.med?'<div class="chips-periodo sivso-med">'+[['so','Sell Out'],['si','Sell In']].map(function(o){
+      return'<button type="button" class="chip-periodo'+(sivsoYtdMed===o[0]?' activo':'')+'" onclick="sivsoSetYtdMed(\''+o[0]+'\')">'+o[1]+'</button>'}).join('')+'</div>':'')+
+    r.svg+
+    (r.ley.length?'<div class="hist-legend sivso-ley">'+r.ley.map(function(l){return'<span class="it"><span class="sw '+l[0]+'"></span>'+esc(l[1])+'</span>'}).join('')+'</div>':'')}
+
+/* Repinta el gráfico al cambiar el ancho (SVG medido en píxeles reales). */
+var sivsoResizeT=null;
+if(typeof window!=='undefined'&&window.addEventListener)window.addEventListener('resize',function(){
+  clearTimeout(sivsoResizeT);sivsoResizeT=setTimeout(function(){
+    if(sivsoData&&typeof mtdVistaActiva!=='undefined'&&mtdVistaActiva==='sivso'){var a=sivsoAnioSel();sivsoRenderMensual(a,sivsoCortes[a]||0)}},150)});
+/* Deslizar con el dedo cambia de vista (como el botón de desplazar del BI). */
+function sivsoIniciarSwipe(){
+  var el=document.getElementById('sivsoGraficoMensual');if(!el||!el.addEventListener||!el.dataset||el.dataset.swipe)return;el.dataset.swipe='1';
+  var x0=null;
+  el.addEventListener('touchstart',function(e){x0=e.touches[0].clientX},{passive:true});
+  el.addEventListener('touchend',function(e){if(x0==null)return;var dx=e.changedTouches[0].clientX-x0;x0=null;
+    if(Math.abs(dx)>60)sivsoMoverGraf(dx<0?1:-1)},{passive:true})}
+
+/* ══════════ Histórico mensual (años × meses) ══════════
+   Sell Out o Sell In (chips dentro de la tarjeta), todos los años de la hoja,
+   con los mismos filtros del tablero salvo Año y Mes: clic en un año lo elige
+   arriba; clic en un mes filtra por ese mes (los elegidos quedan resaltados). */
+var sivsoHistMed='so';
+function sivsoSetHistMed(m){sivsoHistMed=m;sivsoRenderHistorico()}
+function sivsoRenderHistorico(){
+  var tb=document.getElementById('sivsoTablaHist');if(!tb)return;
+  var chips=document.getElementById('sivsoHistChips');
+  if(chips)chips.innerHTML=[['so','Sell Out'],['si','Sell In'],['inv','Inventario']].map(function(o){
+    return'<button type="button" class="chip-periodo'+(sivsoHistMed===o[0]?' activo':'')+'" onclick="sivsoSetHistMed(\''+o[0]+'\')">'+o[1]+'</button>'}).join('');
+  if(sivsoHistMed==='inv'){sivsoRenderHistoricoInv(tb);return}
+  var anios=sivsoAnios(),acc={},hay={},tot=[],totH=[],m;
+  anios.forEach(function(a){acc[a]=[];hay[a]=[];for(m=0;m<=12;m++){acc[a][m]=0;hay[a][m]=0}});
+  for(m=0;m<=12;m++){tot[m]=0;totH[m]=0}
+  sivsoFilas('mes').forEach(function(f){if(!acc[f.a])return;var v=sivsoHistMed==='si'?sivsoSi(f):sivsoSo(f);
+    acc[f.a][f.m]+=v;acc[f.a][0]+=v;tot[f.m]+=v;tot[0]+=v;if(v){hay[f.a][f.m]=1;hay[f.a][0]=1;totH[f.m]=1;totH[0]=1}});
+  var anioSel=sivsoAnioSel(),fm=sivsoFset.mes;
+  function num(v,h){return h?FMT.format(Math.round(v)):'–'}
+  var h='<thead><tr><th class="anio">Año</th>';
+  for(m=1;m<=12;m++)h+='<th class="mes clicable'+(fm&&fm[m]?' sel':'')+'" onclick="sivsoAlternar(\'mes\','+m+')" title="Clic para filtrar por '+SIVSO_MESES[m-1]+'">'+SIVSO_MESES[m-1]+'</th>';
+  h+='<th>Total</th></tr></thead><tbody>';
+  anios.forEach(function(a){
+    h+='<tr class="clicable'+(a===anioSel?' sel':'')+'" onclick="sivsoSetAnio('+a+')" title="Clic para ver '+a+' en el tablero"><td class="anio">'+a+'</td>';
+    for(m=1;m<=12;m++)h+='<td class="'+(fm&&fm[m]?'msel':'')+'">'+num(acc[a][m],hay[a][m])+'</td>';
+    h+='<td class="tot">'+num(acc[a][0],hay[a][0])+'</td></tr>'});
+  h+='</tbody><tfoot><tr><td class="anio">Total</td>';
+  for(m=1;m<=12;m++)h+='<td>'+num(tot[m],totH[m])+'</td>';
+  h+='<td class="tot">'+num(tot[0],totH[0])+'</td></tr></tfoot>';
+  tb.innerHTML=h;
+  var hint=document.getElementById('sivsoHintHist');
+  if(hint)hint.innerText=(sivsoHistMed==='si'?'Sell In':'Sell Out')+' · '+(sivsoUnidad==='#'?'unidades':'pesos')+
+    ' · con los filtros del tablero (salvo año y mes) · clic en un año para verlo arriba, clic en un mes para filtrar'}
+
+/* Histórico de INVENTARIO (s3_inv.json): años × meses, foto al cierre de cada mes. No se suma
+   entre meses: la columna "Último" es la foto del último mes con dato del año y no hay fila Total. */
+function sivsoRenderHistoricoInv(tb){
+  var hint=document.getElementById('sivsoHintHist');
+  if(hint)hint.innerText='Inventario al cierre de cada mes · '+(sivsoUnidad==='#'?'unidades':'pesos')+
+    ' · Consolidado inventarios · con los filtros de cliente, canal, KAM, BU y lanzamientos · no se suma entre meses';
+  if(typeof invCargar!=='function'){tb.innerHTML='<tbody><tr><td>Inventario no disponible</td></tr></tbody>';return}
+  if(!invD){
+    if(invError){tb.innerHTML='<tbody><tr><td>No pude leer el inventario: '+esc(invError)+'</td></tr></tbody>';return}
+    tb.innerHTML='<tbody><tr><td><span class="mtd-spinner"></span>Cargando el inventario…</td></tr></tbody>';
+    invCargar(function(){if(sivsoHistMed==='inv')sivsoRenderHistorico()});return}
+  var pasa=sivsoInvPasa(),acc={},m;
+  invD.filas.forEach(function(r){if(!pasa(r))return;var a=Number(r.mes.slice(0,4)),mm=Number(r.mes.slice(5,7));
+    var x=acc[a]||(acc[a]={v:{},h:{}});x.v[mm]=(x.v[mm]||0)+(sivsoUnidad==='#'?r.u:r.a);x.h[mm]=1});
+  var anios=Object.keys(acc).map(Number).sort(function(a,b){return b-a}),fm=sivsoFset.mes,anioSel=sivsoAnioSel();
+  if(!anios.length){tb.innerHTML='<tbody><tr><td>Sin inventario con estos filtros</td></tr></tbody>';return}
+  var h='<thead><tr><th class="anio">Año</th>';
+  for(m=1;m<=12;m++)h+='<th class="mes'+(fm&&fm[m]?' sel':'')+'">'+SIVSO_MESES[m-1]+'</th>';
+  h+='<th title="Foto del último mes con dato">Último</th></tr></thead><tbody>';
+  anios.forEach(function(a){var x=acc[a],ult=0;
+    h+='<tr class="'+(a===anioSel?'sel':'')+'"><td class="anio">'+a+'</td>';
+    for(m=1;m<=12;m++){if(x.h[m])ult=m;h+='<td class="'+(fm&&fm[m]?'msel':'')+'">'+(x.h[m]?FMT.format(Math.round(x.v[m])):'–')+'</td>'}
+    h+='<td class="tot">'+(ult?FMT.format(Math.round(x.v[ult]))+' <small>'+SIVSO_MESES[ult-1]+'</small>':'–')+'</td></tr>'});
+  tb.innerHTML=h+'</tbody>'}
 
 /* Donut %Participación de Sell Out por BU — conic-gradient CSS, sin librería.
    Solo BU con Sell Out NETO POSITIVO: con devoluciones netas negativas los
    grados salían negativos y el gráfico se rompía (porcentajes > 100 %). La BU
    se agrupa sin importar mayúsculas ("Foto" = "FOTO"). */
-var SIVSO_DONUT_COLORES=['#2b2830','#e41f33','#7f77dd','#2a78d6','#008300','#eda100','#8b5cf6','#6b7280'];
+/* Paleta de marca ISDIN: carbón, rojo y sus tintes. */
+var SIVSO_DONUT_COLORES=['#2b2830','#e41f33','#6b6670','#f29aa3','#a8a4ad','#d9d7dc','#8f1220','#f9d2d6'];
 /* El donut es un conic-gradient CSS (sin geometría clicable por trozo): la zona
    clicable es la LEYENDA (un botón por BU, con el color de su trozo). Con BU
    elegidas, los trozos no elegidos se atenúan (el mismo color con transparencia). */

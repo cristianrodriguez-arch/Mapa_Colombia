@@ -133,13 +133,32 @@ DIMENSION_PRODUCTOS = {
 # El PDV se identifica por POS_ID (SAP ID + código interno). El libro de 2025 no lo trae:
 # se toma el que su SF_ID tiene en 2026 (ver resolver_pos_id en etl_sellout.py).
 # FILTROS (Affiliate = Colombia) se aplica igual. Genera s3_*.json en CARPETA_SALIDA.
+# Desde el 2026-10-27 el MAPA (so_*) también lee esta lista (2025 + 2026; RUTA_EXCEL
+# solo se usa si no existe). FUENTES_MAPA = [...] le da al mapa una lista distinta.
 #   python etl_sellout.py            mapa (so_*) + Ventas 3.0 (s3_*)
+#   python etl_sellout.py --sin-s3   solo el mapa
 #   python etl_sellout.py --solo-s3  solo Ventas 3.0
 # Sin FUENTES_S3 no se generan los s3_*.
 FUENTES_S3 = [
     {"ruta": r"G:\My Drive\ISDIN COLOMBIA\VENTAS\SELL-OUT\2025\3. Affiliate_Master so.xlsm", "hoja": "Final"},
     {"ruta": r"G:\My Drive\ISDIN COLOMBIA\VENTAS\SELL-OUT\2026\3. Affiliate_Master so 2026.xlsm", "hoja": "Final"},
 ]
+
+# Inventario (Sell Out PDV y SI vs SO). Fuente: los "Consolidado inventarios Semestre N"
+# (hoja Hoja1: cliente × producto del cliente × local × mes, en unidades). Cruces:
+#   producto: Origin + Código_prod_cliente → MAESTRO_EAN (Ean_isdin, Ean_description)
+#   PDV:      Origin + Código_local_cliente → MAESTRO_PDV (ISDIN_PDV_DESC, SF_ID, POS_ID)
+# En pesos usa el precio de cada EAN en "Transformación final" (RUTA_INVENTARIO).
+# Genera s3_inv.json (cliente × EAN × mes) y s3_inv_pdv.json (PDV × mes) junto con los s3_*;
+# solo eso: python etl_sellout.py --solo-inv. Sin FUENTES_INVENTARIO no se generan.
+FUENTES_INVENTARIO = [
+    {"ruta": r"G:\My Drive\ISDIN COLOMBIA\VENTAS\SELL-OUT\Inventarios\HISTORICOS\2026\Consolidado inventarios Semestre 1.xlsx", "hoja": "Hoja1"},
+    {"ruta": r"G:\My Drive\ISDIN COLOMBIA\VENTAS\SELL-OUT\Inventarios\HISTORICOS\2026\Consolidado inventarios Semestre 2.xlsx", "hoja": "Hoja1"},
+]
+MAESTRO_EAN = {"ruta": r"G:\My Drive\ISDIN COLOMBIA\VENTAS\SELL-OUT\EAN MASTER Master.xlsx", "hoja": "Master_EAN"}
+MAESTRO_PDV = {"ruta": r"G:\My Drive\ISDIN COLOMBIA\VENTAS\SELL-OUT\PDV MASTER Master.xlsx", "hoja": "Master_Puntos"}
+RUTA_INVENTARIO = r"G:\My Drive\ISDIN COLOMBIA\VENTAS\SELL-OUT\Inventarios\HISTORICOS\2026\Transformación final.xlsm"   # solo precios
+# HOJA_INVENTARIO = "Consolidado"
 
 # Fragmentos del detalle PDV × producto (se piden solo al filtrar por PDV o producto).
 N_FRAGMENTOS_S3_PDV = 32

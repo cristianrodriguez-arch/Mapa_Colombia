@@ -82,7 +82,7 @@ Requiere geopandas (ver `CLAUDE.md` para el detalle de cada KML).
 
 ## 2. ETL de Sell Out (`etl_sellout.py`)
 
-Lee en streaming el Excel consolidado del **paso 3 del Sell Out** (`3. Affiliate_Master so 2026.xlsm`, hoja `Final`), agrega las ventas y escribe en Drive los JSON que consume el visor. Procesa unas 570 mil filas en unos 35 segundos.
+Lee en streaming el Excel consolidado del **paso 3 del Sell Out** (hoja `Final` de cada `3. Affiliate_Master so` listado en `FUENTES_S3`: **2025 y 2026**; sin `FUENTES_S3`, solo `RUTA_EXCEL`), agrega las ventas y escribe en Drive los JSON que consume el visor. **Desde el 2026-10-27 el mapa también trae 2025** (ene-2025 → último mes cargado): lee los libros del más reciente al más antiguo y, si un libro no trae columna `POS_ID`, la deduce de `SF_ID` / `Sold To ID` / descripción con `resolver_pos_id` (la misma regla de Ventas). Los `so_*.json` se escriben en ASCII para que la web app los pueda cachear (con dos años `so_pdv.json` pesa ~4,6 MB). Procesa unas 570 mil filas en unos 35 segundos.
 
 ### Instalación
 
@@ -99,7 +99,10 @@ Usa **python-calamine** para leer el Excel (rápido). Si no está instalado, cae
 ```powershell
 venv\Scripts\python.exe etl_sellout.py --inspect        # revisa hojas, encabezados, mapeo, filtros y 3 filas
 venv\Scripts\python.exe etl_sellout.py --limite 5000    # prueba con las primeras 5000 filas
-venv\Scripts\python.exe etl_sellout.py                  # corrida completa
+venv\Scripts\python.exe etl_sellout.py                  # corrida completa: mapa (so_*) + Ventas (s3_*), 2025 y 2026
+venv\Scripts\python.exe etl_sellout.py --sin-s3         # solo el mapa
+venv\Scripts\python.exe etl_sellout.py --solo-s3        # solo la pestaña Ventas
+venv\Scripts\python.exe etl_sellout.py --solo-inv       # solo el inventario (Consolidados por semestre + EAN/PDV MASTER): s3_inv.json y s3_inv_pdv.json
 ```
 
 Corre siempre `--inspect` primero cuando cambie la estructura del Excel. Muestra qué columna quedó asignada a cada campo y cómo se normalizan las primeras filas.
@@ -110,7 +113,8 @@ Después de cada corrida, ejecuta `limpiarCache()` en el editor de Apps Script p
 
 | Variable | Para qué sirve |
 | --- | --- |
-| `RUTA_EXCEL` | Ruta al `.xlsm` del paso 3. |
+| `FUENTES_S3` | Libros por año, del más antiguo al más reciente (`{"ruta": ..., "hoja": "Final"}`). Alimentan **el mapa y la pestaña Ventas**. `FUENTES_MAPA` (opcional) le da al mapa una lista distinta. |
+| `RUTA_EXCEL` | Ruta al `.xlsm` del paso 3; solo se usa si no hay `FUENTES_S3` ni `FUENTES_MAPA`. |
 | `CARPETA_SALIDA` | Carpeta de Drive (`_visor_json`) donde se escriben los JSON. |
 | `NOMBRE_HOJA` / `FILA_ENCABEZADOS` | Hoja con los datos (`"Final"`) y fila de encabezados. |
 | `COLUMNAS` | Para cada campo (`fecha`, `pos_id`, `pdv_desc`, `bu`, `sku`, `prod_desc`, `familia`, `units`, `amount`), lista de fragmentos que se buscan en los encabezados. Primero se buscan coincidencias exactas y luego parciales. Los fragmentos de 3 letras o menos solo cuentan como palabra completa. |
@@ -160,7 +164,7 @@ Un único proyecto de Apps Script (gestionado con [`clasp`](https://github.com/g
 
 El cruce PDV ↔ ventas se hace por `POS_ID` = `Nº Oficina Farmacia`, con la misma normalización que usa el ETL.
 
-**Pestañas del visor:** **Ventas** (la que abre por defecto: resumen del mes arriba y crecimiento por cliente, BU, producto o punto de venta abajo; ver [Pestaña Ventas: el resumen del mes, dato por dato](#pestaña-ventas-el-resumen-del-mes-dato-por-dato)), **Mapa** (lo que describe el resto de esta sección), **Yoobic · Perfect Store** y los informes anteriores **Ventas MTD (clásico)** y **SI vs SO (clásico)**.
+**Pestañas del visor:** **Ventas** (la que abre por defecto), con tres subpestañas: **Sell Out PDV** (réplica del Power BI de sell-out, ETL paso 3, con el inventario de los Consolidados por semestre), **SI vs SO** y **Ventas MTD**; **Mapa** (lo que describe el resto de esta sección); **Perfect Store** (Yoobic); y **Ventas Backup**, la pestaña Ventas anterior (resumen del mes arriba y crecimiento por cliente, BU, producto o punto de venta abajo; ver [Pestaña Ventas: el resumen del mes, dato por dato](#pestaña-ventas-el-resumen-del-mes-dato-por-dato)). En las gráficas de Ventas, el botón **ⓘ** junto al título explica qué muestra cada una.
 
 ### Qué muestra
 
