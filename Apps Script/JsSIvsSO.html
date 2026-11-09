@@ -517,7 +517,7 @@ function sivsoRenderKpi(filas,anioAnt,anio,corte){
    Los meses sin dato del año actual NO se pintan como cero (la línea se corta en
    el último mes con dato de esa serie); las variaciones y el YTD comparan solo
    hasta ese mes. Clic en un mes = filtro de mes en todo el tablero.
-   Colores del manual de marca: neutros #414141 / gris claro, durazno #d09375 para
+   Paleta de marca ISDIN: carbón #2b2830 / gris claro, rojo #e41f33 para
    Sell Out, verde ok #086124 y rojo #b71c1c solo para variaciones. */
 var SIVSO_VISTAS_GRAF=[
   {k:'lanz',  t:'Lanzamientos'},
@@ -526,7 +526,7 @@ var SIVSO_VISTAS_GRAF=[
   {k:'ytd',   t:'Variación YTD'},
   {k:'zsi',   t:'Sell In'},
   {k:'zso',   t:'Sell Out'}];
-var SIVSO_COL={ac:'#414141',py:'#d2cfc9',pyTxt:'#8a8a8a',so:'#d09375',soPy:'#b98466',pos:'#086124',neg:'#b71c1c',eje:'#9a9a9a',rej:'#ece9e3'};
+var SIVSO_COL={ac:'#2b2830',py:'#cfcdd2',pyTxt:'#8a8a8a',so:'#e41f33',soPy:'#f07a87',pos:'#086124',neg:'#b71c1c',eje:'#9a9a9a',rej:'#ece9e3'};
 var sivsoVistaGraf=1,   // por defecto "Sell In y Sell Out" (la 0 es Lanzamientos)
     sivsoYtdMed='so',sivsoSerie=null;
 // Se recuerda la CLAVE de la vista (visor.sivsoGrafK): con la vista "Lanzamientos" al inicio los
@@ -685,7 +685,7 @@ function sivsoSerieInv(anio){
     if(a===anio){x.inv+=v;x.hInv=1}else{x.invPy+=v;x.hInvPy=1}});
   var ult={inv:0,invPy:0};for(m=1;m<=12;m++){if(acc[m].hInv)ult.inv=m;if(acc[m].hInvPy)ult.invPy=m}
   return{anio:anio,acc:acc,ult:ult,na:SIVSO_INV_NA.filter(function(d){return!!F[d]}).map(function(d){return SIVSO_DIM_ETQ[d]})}}
-var SIVSO_COL_INV='#725140';
+var SIVSO_COL_INV='#6b6670';
 /* Barras por mes: año elegido (café) delante y año anterior (gris claro) a su izquierda, con la
    cifra de cada mes del año elegido. Si el mes es angosto (celular / iPad) la cifra va vertical,
    dentro de la barra cuando cabe; así nunca se enciman. */
@@ -730,7 +730,7 @@ function sivsoVistaInvCtx(anio,W){
 /* ── Vista 0: Lanzamientos producto a producto ──
    Solo productos INNOVACIÓN de "Products 2026" (aunque el botón ★ esté apagado), con los demás
    filtros del tablero y el MISMO rango de los KPIs: ene → último mes con Sell Out del año.
-   Por producto: Sell In (gris oscuro) y Sell Out (durazno) en barras de una sola escala y la
+   Por producto: Sell In (carbón) y Sell Out (rojo ISDIN) en barras de una sola escala y la
    ABSORCIÓN = Sell Out ÷ Sell In con su pastilla: ≥ 100 % el canal vende todo lo que entra
    (verde), 70–99 % en camino (neutro), < 70 % se acumula inventario (rojo). Orden: Sell Out.
    Clic en un producto = filtro Producto de todo el tablero. HTML (no SVG): se acomoda solo al
@@ -993,8 +993,8 @@ function sivsoRenderHistoricoInv(tb){
    Solo BU con Sell Out NETO POSITIVO: con devoluciones netas negativas los
    grados salían negativos y el gráfico se rompía (porcentajes > 100 %). La BU
    se agrupa sin importar mayúsculas ("Foto" = "FOTO"). */
-/* Paleta del manual de marca: neutros y duraznos (el rojo queda para "requiere atención"). */
-var SIVSO_DONUT_COLORES=['#414141','#d09375','#725140','#ffc7ab','#8a8a8a','#cecece','#433026','#ead7c9'];
+/* Paleta de marca ISDIN: carbón, rojo y sus tintes. */
+var SIVSO_DONUT_COLORES=['#2b2830','#e41f33','#6b6670','#f29aa3','#a8a4ad','#d9d7dc','#8f1220','#f9d2d6'];
 /* El donut es un conic-gradient CSS (sin geometría clicable por trozo): la zona
    clicable es la LEYENDA (un botón por BU, con el color de su trozo). Con BU
    elegidas, los trozos no elegidos se atenúan (el mismo color con transparencia). */

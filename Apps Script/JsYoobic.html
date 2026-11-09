@@ -33,12 +33,12 @@ function ybNivel(pct){
   if(pct==null||!isFinite(pct))return'sin';
   if(pct>=YB_UMBRALES.alto)return'alto';if(pct>=YB_UMBRALES.medio)return'medio';
   if(pct>=YB_UMBRALES.bajo)return'bajo';return'muybajo'}
-/* Semáforo con la paleta del manual de marca (verde ok, durazno 70, durazno 90, rojo
-   de error): solo en Perfect Store; el mapa conserva SEM. Para texto, el durazno 70
+/* Semáforo con la paleta del manual de marca (verde ok, rojo claro, rojo ISDIN, rojo
+   de error): solo en Perfect Store; el mapa conserva SEM. Para texto, el rojo claro
    no llega a 4.5:1 sobre blanco y se oscurece (ybColorTxt). */
-var YB_SEM={alto:'#086124',medio:'#d09375',bajo:'#725140',muybajo:'#b71c1c',sin:'#cecece'};
+var YB_SEM={alto:'#086124',medio:'#f29aa3',bajo:'#e41f33',muybajo:'#8f1220',sin:'#cecece'};
 function ybColorPct(pct){return YB_SEM[ybNivel(pct)]}
-function ybColorTxt(pct){var n=ybNivel(pct);return n==='medio'?'#9c6446':n==='sin'?'var(--muted)':YB_SEM[n]}
+function ybColorTxt(pct){var n=ybNivel(pct);return n==='medio'?'#b3121f':n==='sin'?'var(--muted)':YB_SEM[n]}
 
 /* ── Formatos ── */
 function ybNum(v,dec){if(v==null||!isFinite(v))return'–';
@@ -560,7 +560,7 @@ function ybRolDe(nombre){
    El cruce PDV → tienda es el mismo del mapa: Id cuenta (15) o POS_ID.
    Clic en una porción de la torta = detalle de esos PDV (panel lateral). */
 var ybCobDim='cliente',ybCobUlt=null,ybCobPanel=null;
-var YB_COB_COL={si:'#725140',no:'#ffc7ab'};
+var YB_COB_COL={si:'#2b2830',no:'#f29aa3'};
 function ybSetCobDim(d){ybCobDim=d;ybRenderCobertura()}
 /* La llama recAsignaciones (JsNucleo) cuando los datos del mapa llegan después que Yoobic. */
 function ybCoberturaRefrescar(){
@@ -1109,7 +1109,7 @@ function ybDatosDemo(){
     meta:{actualizadoEn:new Date().toISOString(),misiones:mis.length}}}
 
 function ybFotosDemo(){
-  var fotos={},cols=['#086124','#d09375','#725140','#b71c1c'];
+  var fotos={},cols=['#086124','#f29aa3','#e41f33','#8f1220'];
   ybMis.forEach(function(m,ix){var lista=[],n=2+(ix%3);
     for(var i=0;i<n;i++){var tipo=i<2?0:1,g=m.s[0]||0,col=cols[g>=85?0:g>=70?1:g>=50?2:3];
       var svg='<svg xmlns="http://www.w3.org/2000/svg" width="420" height="315"><rect width="420" height="315" fill="#eef1f4"/>'+

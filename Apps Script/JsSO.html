@@ -53,7 +53,7 @@ var SO_CAMPOS=[
 function soChipsN(dim){return dim==='mes'?soE.meses.length:(dim==='trim'?soE.trim.length:soE.prom.length)}
 var SO_DIM_ETQ={cli:'Cliente',bu:'BU',sku:'EAN',pdv:'PDV',ciudad:'Ciudad',canal:'Canal',sub:'Channel 2'};
 var SO_MAX_PDV_DET=400;    // con más PDV filtrados, el detalle por EAN pesaría demasiado
-var SO_COLORES=['#414141','#d09375','#725140','#ffc7ab','#8a8a8a','#cecece','#433026','#ead7c9'];
+var SO_COLORES=['#2b2830','#e41f33','#6b6670','#f29aa3','#a8a4ad','#d9d7dc','#8f1220','#f9d2d6'];
 var SO_SEL={},soVisibles={cli:true,bu:true,sku:true};
 try{var _sv=JSON.parse(localStorage.getItem('visor.soFiltros')||'null');if(_sv){soVisibles={};_sv.forEach(function(d){soVisibles[d]=true})}}catch(e){}
 try{var _sp=JSON.parse(localStorage.getItem('visor.so')||'null');if(_sp){if(_sp.unidad)soE.unidad=_sp.unidad;if(_sp.vista)soE.vista=_sp.vista}}catch(e){}

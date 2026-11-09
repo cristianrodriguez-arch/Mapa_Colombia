@@ -9,18 +9,18 @@
 
 :root{
   /* Identidad visual ISDIN (repo manual-identidad-visual-ISDIN, 2026-10-27):
-     neutros + durazno + arena del manual; Montserrat como sustituta web de Gotham.
+     carbón #2B2830 + rojo #E41F33 (paleta de marca, 2026-11-06); Montserrat como sustituta web de Gotham.
      Superficies */
-  --lienzo:#f5f3ee;  --surface:#ffffff;  --surface-2:#fcf5ed;
+  --lienzo:#f4f3f5;  --surface:#ffffff;  --surface-2:#f7f6f8;
   /* Texto */
-  --ink:#414141;     --ink-2:#525151;    --muted:#6d6d6d;   --ink-fuerte:#2e2e2b;
+  --ink:#2b2830;     --ink-2:#525151;    --muted:#6d6d6d;   --ink-fuerte:#2b2830;
   /* Líneas */
   --borde:#e1e1e1;   --borde-2:#cecece;
-  /* Acento de marca: durazno. --accent (90) para texto, enlaces y controles activos
-     (7.1:1 sobre blanco); --accent-suave para fondos de selección; --serie para la
+  /* Acento de marca: rojo ISDIN. --accent para texto, enlaces y controles activos
+     (4.6:1 sobre blanco); --accent-suave para fondos de selección; --serie para la
      serie principal de los gráficos (sell-out). El botón principal es --ink. */
-  --accent:#725140;  --accent-2:#433026; --accent-suave:#fff2ec;
-  --foco:#d09375;    --serie:#d09375;    --durazno:#ffc7ab;
+  --accent:#e41f33;  --accent-2:#b3121f; --accent-suave:#fdeaec;
+  --foco:#e41f33;    --serie:#e41f33;    --durazno:#f9d2d6;
   /* Estados: el rojo es solo "requiere atención" (variación negativa, aviso grave). */
   --desel:#cecece;   --error:#b71c1c;    --aviso:#b06a00;  --producto:#7f77dd;
   /* Semáforo de rendimiento del mapa (color con significado: alto/medio/bajo/brecha). */
@@ -35,7 +35,7 @@
   /* Una sola tipografía en todo el visor (2026-10-29): tablas y gráficas también van en
      Montserrat, con cifras tabulares (mismo ancho por dígito) para que los números alineen. */
   --font-dense:var(--font);
-  --rojo-marca:#d7352d;   /* barra central del logo ISDIN */
+  --rojo-marca:#e41f33;   /* barra central del logo ISDIN */
 }
 
 *{box-sizing:border-box}
@@ -55,7 +55,7 @@ table,svg,svg text,.leaflet-container,.leaflet-tooltip,.leaflet-popup-content{
 /* ══════════ Riel de navegación · Material 3 Expressive ══════════
    COLAPSADO: 96 px, cada destino = indicador en píldora (56×32) con el icono y la
    etiqueta debajo. EXPANDIDO: 240 px, logo completo y el indicador ocupa toda la
-   fila (icono + etiqueta). Activo = indicador durazno; hover = capa de estado. */
+   fila (icono + etiqueta). Activo = indicador rojo claro; hover = capa de estado. */
 .nav-rail{display:flex;flex-direction:column;gap:4px;min-width:0;overflow:hidden auto;
   background:var(--lienzo);padding:12px 12px 16px;font-family:var(--font)}
 .rail-cab{display:flex;flex-direction:column;align-items:center;gap:6px;margin-bottom:14px}
@@ -127,7 +127,7 @@ body.redimensionando #map{pointer-events:none}
 .marca{display:flex;align-items:center;gap:9px;padding-top:2px}
 .marca h1{margin:0;font-size:16px;font-weight:700;white-space:nowrap;color:var(--ink-fuerte);letter-spacing:-.02em}
 /* Subpestañas de "Ventas" (Sell Out · SI vs SO · Ventas MTD): pestañas secundarias de
-   Material 3, en la cabecera; indicador inferior durazno en la activa. */
+   Material 3, en la cabecera; indicador inferior rojo claro en la activa. */
 .ventas-subtabs{display:flex;align-items:flex-end;gap:2px;align-self:stretch;margin:-8px 0;
   border-left:1px solid var(--borde);padding-left:10px}
 .ventas-subtabs[hidden]{display:none}
@@ -714,8 +714,8 @@ body.redimensionando #map{pointer-events:none}
 .kc-barras{display:flex;flex-direction:column;gap:3px}
 .kc-b{position:relative;height:17px;display:flex;align-items:center}
 .kc-b i{position:absolute;left:0;top:0;bottom:0;border-radius:0 4px 4px 0}
-.kc-b i.si{background:#414141}.kc-b i.so{background:#d09375}
-.kc-b i.si-py{background:#d2cfc9}.kc-b i.so-py{background:#ffc7ab}
+.kc-b i.si{background:#2b2830}.kc-b i.so{background:#e41f33}
+.kc-b i.si-py{background:#cfcdd2}.kc-b i.so-py{background:#f29aa3}
 .kc-b span{position:relative;font-size:11px;color:#fff;padding-left:8px;white-space:nowrap;
   text-shadow:0 0 3px rgba(0,0,0,.35)}
 .kc-fila.ant .kc-b span{color:var(--ink);text-shadow:none}
@@ -790,11 +790,11 @@ body.redimensionando #map{pointer-events:none}
 .sivso-svg .sv-lineas{pointer-events:none}
 .sivso-ley{justify-content:center;margin-top:6px}
 .sivso-ley .sw{display:inline-block;width:18px;height:10px;border-radius:2px;margin-right:6px;vertical-align:-1px}
-.sw-ac{background:#414141}.sw-py{background:#d2cfc9}.sw-pyl{background:#8a8a8a;height:3px!important}
-.sw-so{background:#d09375;height:3px!important}
-.sw-sopy{height:3px!important;background:repeating-linear-gradient(90deg,#d09375 0 6px,transparent 6px 9px)}
+.sw-ac{background:#2b2830}.sw-py{background:#cfcdd2}.sw-pyl{background:#8a8a8a;height:3px!important}
+.sw-so{background:#e41f33;height:3px!important}
+.sw-sopy{height:3px!important;background:repeating-linear-gradient(90deg,#e41f33 0 6px,transparent 6px 9px)}
 .sw-pos{background:#086124}.sw-neg{background:#b71c1c}
-.sw-inv{background:#725140;height:3px!important}
+.sw-inv{background:#6b6670;height:3px!important}
 .sw-invpy{height:3px!important;background:repeating-linear-gradient(90deg,#8a8a8a 0 6px,transparent 6px 9px)}
 .sivso-tip{position:absolute;z-index:5;min-width:230px;background:var(--surface);border:1px solid var(--borde);
   border-radius:var(--radio);box-shadow:0 6px 18px rgba(46,46,43,.16);padding:8px 10px;font-size:12px;pointer-events:none}
@@ -812,7 +812,7 @@ body.redimensionando #map{pointer-events:none}
 .sivso-hist th.clicable,.sivso-hist tbody tr.clicable{cursor:pointer}
 .sivso-hist th.clicable:hover{color:var(--ink-fuerte);background:var(--surface-2)}
 .sivso-hist th.sel{background:var(--accent-suave);box-shadow:inset 0 -3px 0 var(--accent)}
-.sivso-hist td.msel{background:#fff8f3}
+.sivso-hist td.msel{background:#fdf5f6}
 .sivso-hist tbody tr.sel td{background:var(--surface-2);font-weight:600}
 .sivso-hist tbody tr.clicable:hover td{background:var(--lienzo)}
 .sivso-hist .tot{font-weight:700;color:var(--ink-fuerte)}
@@ -851,10 +851,10 @@ body.redimensionando #map{pointer-events:none}
 .card.colapsada>.cab-col{margin-bottom:0}
 .sivso-top>.card.colapsada{gap:0}
 /* Inventario en barras */
-.sivso-svg .sv-inv-v{font-size:11px;font-weight:600;fill:#725140}
+.sivso-svg .sv-inv-v{font-size:11px;font-weight:600;fill:#6b6670}
 .sivso-svg .sv-inv-dentro{font-size:10.5px;font-weight:600;fill:#fff}
 .sivso-svg .sv-cat-p{font-size:9.5px}
-.sw-invb{background:#725140}
+.sw-invb{background:#6b6670}
 /* Sell Out PDV: cabecera de la visual con buscador + CSV */
 .so-cab-acc{display:flex;align-items:center;gap:8px}
 /* SI vs SO: botón ★ Lanzamientos (encendido = solo productos INNOVACIÓN de Products 2026) */
@@ -869,7 +869,7 @@ body.redimensionando #map{pointer-events:none}
 .lz-res b{font-size:20px;font-weight:700;color:var(--ink-fuerte);line-height:1.2}
 .lz-res small{font-size:11px;color:var(--muted)}
 .lz-sw{display:inline-block;width:12px;height:8px;border-radius:2px}
-.lz-sw.si{background:#414141}.lz-sw.so{background:#d09375}
+.lz-sw.si{background:#2b2830}.lz-sw.so{background:#e41f33}
 .lz-cab,.lz-fila{display:grid;grid-template-columns:minmax(150px,1.1fr) minmax(0,2.4fr) 150px;gap:14px;align-items:center}
 .lz-cab{font-size:10.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--ink-2);
   padding:0 8px 6px;border-bottom:1px solid var(--borde-2)}
@@ -885,15 +885,15 @@ body.redimensionando #map{pointer-events:none}
 .lz-barras{display:flex;flex-direction:column;gap:3px;min-width:0}
 .lz-b{display:flex;align-items:center;gap:6px;height:13px}
 .lz-b i{display:block;height:100%;border-radius:0 3px 3px 0;min-width:2px;flex:0 0 auto;max-width:calc(100% - 70px)}
-.lz-b i.si{background:#414141}.lz-b i.so{background:#d09375}
+.lz-b i.si{background:#2b2830}.lz-b i.so{background:#e41f33}
 .lz-b em{font-style:normal;font-size:11px;color:var(--ink-2);white-space:nowrap}
 .lz-abs{display:flex;align-items:center;justify-content:flex-end;gap:10px}
 .lz-p{font-weight:700;font-size:13px;padding:2px 8px;border-radius:999px;background:var(--lienzo);color:var(--ink-2);white-space:nowrap}
-.lz-p.ok{background:#e6f1e9;color:#086124}.lz-p.med{background:#f4ece6;color:#725140}.lz-p.baja{background:#fbe9e9;color:#b71c1c}
+.lz-p.ok{background:#e6f1e9;color:#086124}.lz-p.med{background:#f1f0f2;color:#2b2830}.lz-p.baja{background:#fdeaec;color:#b3121f}
 .lz-res .lz-p{font-size:20px;padding:0;background:none}
 .lz-reg{position:relative;width:62px;height:6px;border-radius:3px;background:var(--borde)}
 .lz-reg i{position:absolute;left:0;top:0;bottom:0;border-radius:3px;background:#8a8a8a}
-.lz-reg i.ok{background:#086124}.lz-reg i.med{background:#d09375}.lz-reg i.baja{background:#b71c1c}
+.lz-reg i.ok{background:#086124}.lz-reg i.med{background:#a8a4ad}.lz-reg i.baja{background:#e41f33}
 .lz-reg u{position:absolute;left:66.67%;top:-3px;bottom:-3px;width:1.5px;background:var(--ink)}
 .lz-ley{display:flex;flex-wrap:wrap;gap:6px 18px;justify-content:center;margin-top:10px;font-size:11.5px;color:var(--ink-2);align-items:center}
 .lz-ley span{display:flex;align-items:center;gap:6px}
@@ -941,9 +941,9 @@ body.redimensionando #map{pointer-events:none}
 .so-compacto .vt3-fila{padding-top:3px;padding-bottom:3px}
 /* Columna Inventario (Crecimiento por EAN y Top Clientes) */
 .vt3-chart.con-inv .vt3-fila{grid-template-columns:minmax(150px,1.6fr) 64px minmax(130px,2.2fr) minmax(130px,2fr) minmax(120px,1.6fr) 74px 78px}
-.vt3-fila .inv{justify-content:flex-end;color:#725140;font-weight:600;border-left:1px solid var(--borde);padding-left:4px}
+.vt3-fila .inv{justify-content:flex-end;color:#6b6670;font-weight:600;border-left:1px solid var(--borde);padding-left:4px}
 .vt3-encab .inv,.so-th-inv{justify-content:flex-end}
-.vt3-encab .so-th-inv .vt3-th{color:#725140;font-weight:700}
+.vt3-encab .so-th-inv .vt3-th{color:#6b6670;font-weight:700}
 .so-abrir{border:none;background:none;cursor:pointer;color:var(--ink-2);font-size:15px;width:18px;padding:0;margin-right:4px;
   display:inline-block;transition:transform .15s ease}
 .so-abrir.abierto{transform:rotate(90deg);color:var(--accent)}
@@ -1447,12 +1447,12 @@ body:not(.vista-mapa) .btn-centrar{display:none}
 
 /* ══════════ Perfect Store con la identidad visual ISDIN ══════════
    El semáforo de la pestaña usa la paleta del manual (YB_SEM en JsYoobic):
-   verde ok · durazno 70 · durazno 90 · rojo de error. Títulos en Montserrat, cifras
+   verde ok · rojo claro · rojo ISDIN · rojo profundo. Títulos en Montserrat, cifras
    tabulares, tarjetas arena/blanco y barras con esquinas suaves. */
-#vistaYoobic{--sem-alto:#086124;--sem-medio:#d09375;--sem-bajo:#725140;--sem-muybajo:#b71c1c;--sem-sin:#cecece}
+#vistaYoobic{--sem-alto:#086124;--sem-medio:#f29aa3;--sem-bajo:#e41f33;--sem-muybajo:#8f1220;--sem-sin:#cecece}
 #vistaYoobic h2,#vistaYoobic h3,#vistaYoobic .yb-kpi .etq{font-family:var(--font);color:var(--ink-fuerte)}
 #vistaYoobic .yb-kpi .num{font-family:var(--font);letter-spacing:-.02em}
-#vistaYoobic .yb-pista{background:#efece6;height:7px;border-radius:999px}
+#vistaYoobic .yb-pista{background:#eceaee;height:7px;border-radius:999px}
 #vistaYoobic .yb-pista span{border-radius:999px}
 #vistaYoobic .yb-col-pista span{border-radius:6px 6px 0 0}
 #vistaYoobic .barra-pista{height:10px}
@@ -1479,7 +1479,7 @@ body:not(.vista-mapa) .btn-centrar{display:none}
 .yb-cob-cab .chip-periodo{padding:4px 10px;font-size:11.5px}
 .yb-cob-fila{cursor:default}
 .yb-cob-fila .cat small{color:var(--muted);font-weight:400}
-.yb-cob-pista{background:#efece6;border-radius:999px}
+.yb-cob-pista{background:#eceaee;border-radius:999px}
 #vistaYoobic .yb-cob-fila:hover .barra-relleno{background:var(--accent-2)}
 .yb-porcion{cursor:pointer;transition:opacity .15s ease}
 .yb-porcion:hover,.yb-porcion:focus{opacity:.85;outline:none}
