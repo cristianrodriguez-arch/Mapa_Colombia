@@ -17,6 +17,7 @@
 <?!= include('Estilos'); ?>
 </head>
 <body>
+<script>try{if(localStorage.getItem('visor.tema')==='oscuro')document.documentElement.setAttribute('data-tema','oscuro')}catch(e){}</script>
 
 <!-- ═══ Modales ═══════════════════════════════════════════════════════ -->
 
@@ -86,6 +87,11 @@
       <div class="rail-sep"><span>Respaldo</span></div>
       <button type="button" class="rail-item mtdtab-top clasico" id="btnVistaVentas3" role="tab" aria-selected="false"
               onclick="mostrarVistaSuperior('ventas3')" title="Pestaña Ventas anterior (sell-in y sell-out por cliente, BU, producto y PDV)"><span class="rail-ind"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13 3a9 9 0 0 0-9 9H1l3.89 3.89.07.14L9 12H6c0-3.87 3.13-7 7-7s7 3.13 7 7-3.13 7-7 7c-1.93 0-3.68-.79-4.94-2.06l-1.42 1.42A8.954 8.954 0 0 0 13 21a9 9 0 0 0 0-18zm-1 5v5l4.28 2.54.72-1.21-3.5-2.08V8H12z"/></svg></span><span class="rail-lbl">Ventas Backup</span></button>
+    </div>
+    <!-- Modo claro / oscuro de todo el visor (alternarTema en JsNucleo; se recuerda en visor.tema) -->
+    <div class="rail-pie">
+      <button type="button" class="rail-item rail-tema" id="btnTema" onclick="alternarTema()" aria-pressed="false"
+              title="Cambiar a modo oscuro"><span class="rail-ind"><svg viewBox="0 0 24 24" aria-hidden="true" id="icoTema"><path d="M12 3a9 9 0 1 0 9 9c0-.46-.04-.92-.1-1.36a5.39 5.39 0 0 1-4.4 2.26 5.4 5.4 0 0 1-3.14-9.8c-.44-.06-.9-.1-1.36-.1z"/></svg></span><span class="rail-lbl" id="lblTema">Modo oscuro</span></button>
     </div>
   </nav>
 
@@ -163,7 +169,6 @@
 
     <div class="acciones">
       <button class="btn btn-centrar" onclick="centrarBricks()" title="Encuadrar el mapa en los bricks">Centrar</button>
-      <button class="btn" onclick="abrirDiag()" title="Ver qué devolvieron las hojas y el ETL">Diagnóstico</button>
     </div>
   </header>
 
@@ -406,6 +411,8 @@
   </div>
 
   <div id="vistaSIvsSO" hidden>
+    <!-- Cabecera + filtros inmovilizados al desplazarse (2026-11-11) -->
+    <div class="sivso-fijo">
     <div class="mtd-head">
       <h2>SI VS SO</h2>
       <span class="sub">Sell In vs. Sell Out</span>
@@ -442,6 +449,7 @@
           class="contador-filtros" id="sivsoContador" hidden>0</span></button>
       </div>
     </div>
+    </div>
 
     <div id="sivsoEstado" class="mtd-estado"><span class="mtd-spinner"></span>Cargando datos…</div>
 
@@ -473,7 +481,8 @@
       </div>
 
         <div class="card mtd-panel sivso-donut-card">
-          <h3>% Participación Sell Out por BU<span class="info" tabindex="0" role="button" aria-label="Qué muestra"><span class="info-i" aria-hidden="true">i</span><span class="hint info-pop">Del total filtrado · año seleccionado · clic en una BU para filtrar</span></span></h3>
+          <div class="mtd-panel-cab sivso-donut-cab"><h3>% Participación <span id="sivsoDonutTit">Sell Out</span> por BU<span class="info" tabindex="0" role="button" aria-label="Qué muestra"><span class="info-i" aria-hidden="true">i</span><span class="hint info-pop">Del total filtrado · año y meses elegidos · Sell In o Sell Out con los botones · clic en una BU para filtrar</span></span></h3>
+            <div class="chips-periodo" id="sivsoDonutMed"></div></div>
           <div id="sivsoDonutBu"></div>
         </div>
       </div><!-- /.sivso-top -->
@@ -513,8 +522,8 @@
       </div>
 
       <div class="card mtd-panel">
-        <div class="mtd-panel-cab"><h3>Clientes e inventario<span class="info" tabindex="0" role="button" aria-label="Qué muestra"><span class="info-i" aria-hidden="true">i</span><span class="hint info-pop" id="sivsoHintClientes">INV = último mes con dato en la selección, no una suma · DDI y Diferencia INV pendientes de confirmar la fórmula</span></span></h3><button class="mtd-btn-csv" onclick="sivsoCsvClientes()" title="Descargar lo que muestra la tabla">⬇ CSV</button></div>
-        <div class="mtd-scroll"><table class="mtd-tabla" id="sivsoTablaClientes"></table></div>
+        <div class="mtd-panel-cab"><h3>Clientes e inventario<span class="info" tabindex="0" role="button" aria-label="Qué muestra"><span class="info-i" aria-hidden="true">i</span><span class="hint info-pop" id="sivsoHintClientes">INV = último mes con dato en la selección, no una suma · DDI = días de inventario · ⊞ abre el detalle por BU y luego por producto</span></span></h3><button class="mtd-btn-csv" onclick="sivsoCsvClientes()" title="Descargar lo que muestra la tabla">⬇ CSV</button></div>
+        <div class="mtd-scroll"><table class="mtd-tabla sivso-arbol" id="sivsoTablaClientes"></table></div>
       </div>
     </div>
   </div>
@@ -570,7 +579,7 @@
 
   <div id="vistaYoobic" hidden>
     <div class="mtd-head">
-      <h2>PERFECT STORE · YOOBIC</h2>
+      <h2>Perfect Store · Yoobic</h2>
       <span class="sub">Ejecución en punto de venta · Disponibilidad 40 · Lineal 25 · Vis. permanente 20 · Vis. campaña 15</span>
       <span class="acc">
         <span class="sub" id="ybActualizado"></span>
@@ -622,6 +631,8 @@
         <div class="tabs yb-subtabs" id="ybSubtabs">
           <button class="tab activa" data-v="resumen" onclick="ybVerSub('resumen')">Resumen Perfect Store</button>
           <button class="tab" data-v="agotados" onclick="ybVerSub('agotados')">Agotados</button>
+          <button class="tab" data-v="detalle" onclick="ybVerSub('detalle')">Detalle PDV</button>
+          <button class="tab" data-v="testers" onclick="ybVerSub('testers')">Testers</button>
           <button class="tab" data-v="fotos" onclick="ybVerSub('fotos')">Fotos</button>
         </div>
         <div class="yb-alcance">
@@ -642,7 +653,7 @@
         <div class="mtd-grid">
           <div class="yb-col-der">
           <div class="card mtd-panel">
-            <h3>Global Perfect Store por mes</h3>
+            <h3 id="ybTitEvol">Global Perfect Store por mes</h3>
             <div class="hint">Promedio de todas las encuestas de cada mes · color = nivel · pasa el cursor sobre una columna para ver los 4 pilares</div>
             <div id="ybEvol"></div>
             <div class="mtd-scroll yb-scroll-corto"><table class="mtd-tabla" id="ybTablaMes"></table></div>
@@ -673,12 +684,12 @@
           </div>
           <div class="yb-col-der">
             <div class="card mtd-panel">
-              <h3>Global por cliente</h3>
+              <h3 id="ybTitCli">Global por cliente</h3>
               <div class="hint">Clic para añadir o quitar del filtro</div>
               <div id="ybBarCliente"></div>
             </div>
             <div class="card mtd-panel">
-              <h3>Global por delegado</h3>
+              <h3 id="ybTitDel">Global por delegado</h3>
               <div class="hint">Quien llenó la encuesta · clic para filtrar</div>
               <div id="ybBarDelegado"></div>
             </div>
@@ -697,7 +708,12 @@
           <div class="cifras" id="ybAgotKpis"></div>
           <div class="hint" id="ybHintAgot" style="margin-top:8px"></div>
         </div>
-        <div class="mtd-grid">
+        <div class="mtd-grid yb-grid3">
+          <div class="card mtd-panel">
+            <h3>Agotados por BU</h3>
+            <div class="hint">¿Qué BU está más agotada? Agotados · % de sus respuestas sin stock · clic para filtrar la BU</div>
+            <div id="ybBarAgotBu"></div>
+          </div>
           <div class="card mtd-panel">
             <h3>Productos más agotados</h3>
             <div class="hint">N.º de PDV donde el producto está agotado · clic para filtrar por ese producto</div>
@@ -720,6 +736,49 @@
           </div>
           <div class="hint" id="ybHintTablaAgot"></div>
           <div class="mtd-scroll yb-scroll-alto"><table class="mtd-tabla" id="ybTablaAgot"></table></div>
+        </div>
+      </section>
+
+      <!-- Sub-pestaña: Detalle PDV (una fila por PDV con bajadas, puntajes, Sell Out e inventario) -->
+      <section id="ybSubDetalle" hidden>
+        <div class="card mtd-panel">
+          <h3>Bajadas (muebles) por PDV</h3>
+          <div class="hint">PDV según su última encuesta · clic para filtrar todo Perfect Store por esa cantidad de bajadas</div>
+          <div class="yb-bajadas" id="ybDetBajadas"></div>
+        </div>
+        <div class="card mtd-panel">
+          <div class="mtd-panel-cab">
+            <h3>Detalle PDV</h3>
+            <button class="mtd-btn-csv" onclick="ybCsvDetalle()" title="Descargar lo que muestra la tabla">⬇ CSV</button>
+          </div>
+          <div class="hint" id="ybHintDet"></div>
+          <div class="mtd-scroll yb-scroll-alto"><table class="mtd-tabla" id="ybTablaDet"></table></div>
+        </div>
+      </section>
+
+      <!-- Sub-pestaña: Testers (agotados de testers por PDV) -->
+      <section id="ybSubTesters" hidden>
+        <div class="hint" id="ybTestVacio" hidden></div>
+        <div class="card mtd-kpi">
+          <div class="cifras" id="ybTestKpis"></div>
+          <div class="hint" id="ybHintTest" style="margin-top:8px"></div>
+        </div>
+        <div class="card mtd-panel">
+          <h3>Testers más agotados</h3>
+          <div class="hint">N.º de PDV donde falta el tester</div>
+          <div id="ybBarTestProd"></div>
+        </div>
+        <div class="card mtd-panel">
+          <div class="mtd-panel-cab">
+            <h3>Testers por PDV</h3>
+            <div class="chips-periodo" id="ybTestChips">
+              <button type="button" class="chip-periodo activo" data-v="falt" onclick="ybSetVistaTest('falt')">Con faltantes</button>
+              <button type="button" class="chip-periodo" data-v="todos" onclick="ybSetVistaTest('todos')">Todos los PDV</button>
+            </div>
+            <button class="mtd-btn-csv" onclick="ybCsvTesters()" title="Descargar lo que muestra la tabla">⬇ CSV</button>
+          </div>
+          <div class="hint" id="ybHintTablaTest"></div>
+          <div class="mtd-scroll yb-scroll-alto"><table class="mtd-tabla" id="ybTablaTest"></table></div>
         </div>
       </section>
 

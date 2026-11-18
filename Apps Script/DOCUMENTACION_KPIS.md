@@ -71,7 +71,16 @@ Reglas:
 | **Inventario (gráfico mensual, vista 1)** | Desde el 2026-10-29: Σ `Units` de los **"Consolidado inventarios Semestre N"** (producto cruzado con EAN MASTER; `s3_inv.json`) por mes, año elegido y anterior, en **barras**; en pesos × precio de "Transformación final". Foto al cierre del mes. Filtran Cliente, Canal, KAM, BU y Buscar cliente; Producto, Marca y Strategic/Tactic market **no**. Reemplaza a la vista "Tendencia" |
 | **Inventario (Sell Out PDV)** | Misma fuente. Tarjeta y columna "Inv. <mes>" (EAN y Clientes) = foto del **último mes con inventario del año elegido** (no depende de los meses elegidos). Con filtros de PDV / ciudad / canal, la tarjeta usa el inventario por PDV |
 | **Inventario por PDV (Sell Out PDV · Puntos de Venta)** | Σ `Units` de los Consolidados del PDV (local cruzado con PDV MASTER → POS_ID / SF_ID; si no, Sold To ID + "_" + código local; `s3_inv_pdv.json`) en el último mes con dato; en pesos × precio de Transformación final. Cruza ~82 % de las unidades. Con filtros de BU / EAN no aplica |
-| **DDI / Diferencia INV** | **No implementados** (la hoja `DIAS DE INV` está rota). Propuesta por confirmar con el equipo: `DDI = INV ÷ (Prom SO ÷ 30)` |
+| **Prom SO (tabla Clientes)** | Sell Out de los últimos N meses (caja Prom SO, 3 por defecto) que terminan en el **último mes con Sell Out** del año ÷ N = venta promedio de un mes del cliente |
+| **DDI** (días de inventario, 2026-11-11, fórmula del Looker) | `INV ÷ Prom SO × 30`: cuántos días de venta cubre el inventario al ritmo de los últimos meses. Sin Sell Out en la ventana = – |
+| **Diferencia INV** | `(60 − DDI) × Prom SO ÷ 30` = 2 meses de venta − INV: unidades (o pesos) que **faltan** (+) o **sobran** (−) para tener 60 días de inventario |
+| **Tendencia** | `SO del último mes con Sell Out ÷ Prom SO − 1`: ▲ verde si el último mes vendió más que el promedio, ▼ rojo si menos, – si igual (en el Looker: 🟩 / ❗ / ➖) |
+| **Tabla Clientes e inventario por niveles** (2026-11-17) | Cliente › BU › Producto, como el Looker: todo cerrado se ve por cliente y "+" abre el detalle. Las mismas medidas en los tres niveles (Sell In, ΔSI %, Sell Out, ΔSO %, % Part SI / SO sobre el total de la tabla, Prom SO, INV, DDI, Diferencia INV y Tendencia); las BU de un cliente suman lo del cliente. Canal y KAM salieron de las columnas (siguen en el CSV) |
+| **DDI por mes (gráfico Inventario)** (2026-11-17) | Línea roja sobre las barras de inventario, eje derecho en días: `INV del mes ÷ (Sell Out de los N meses que terminan en ese mes ÷ N) × 30`, N = caja Prom SO. **Siempre en unidades** (el inventario en pesos se valoriza con otro precio que el Sell Out) y con el Sell Out **solo de los clientes que reportan inventario ese mes**. Inventario = `s3_inv.json` (Consolidados); Sell Out = hoja Data de Carga Looker. Por eso puede diferir del DDI de la tabla, que usa el INV de Carga Looker (Type=INV) |
+| **Inventario con filtros de producto** (2026-11-17) | El gráfico y el histórico de inventario ya respetan Producto, Marca y Strategic / Tactic market: el inventario viene por EAN, así que se cruza con el catálogo de la hoja **"Products 2026"** (Product ID → EAN; si el Product ID no está, por nombre). Un producto de SI vs SO que no esté en esa hoja no aporta inventario |
+| **% Participación por BU** | Torta de Sell Out **o Sell In** (botones de la tarjeta, 2026-11-17) por BU, con los filtros del tablero |
+| **Absorción EAN** (vista del gráfico mensual; antes "Lanzamientos") | `Sell Out ÷ Sell In` por producto, de enero al último mes con Sell Out. Desde el 2026-11-17 muestra **todos** los productos con los filtros del tablero; con ★ Lanzamientos, solo los de lanzamiento |
+| **Filtro Meses** (2026-11-17) | Intervalo Desde – Hasta del año elegido; escribe el filtro de mes (KPIs, tortas, tablas; el gráfico mensual resalta esos meses). El año completo hasta su último mes con dato = sin filtro. La vista **Variación YTD** se eliminó ese día |
 
 ### 3.3 Resumen del mes (arriba en la pestaña Ventas; motor `JsVentas.html`)
 
@@ -213,7 +222,7 @@ Helper único en `JsVentasMtd.html` (lo usan también las tablas de SI vs SO). `
 | 20 | Caché: trozo de 90.000 **caracteres** puede pasar 100 KB con tildes → `putAll` fallaba en silencio | Media | ✅ JSON ASCII / trozo de 30.000 si hay no-ASCII; ahora se registra en el log |
 
 **Pendientes / decisiones del equipo (no resueltas aquí):**
-- **DDI y Diferencia INV** (fórmula por confirmar; ver §3.2).
+- ~~DDI y Diferencia INV~~ implementados el 2026-11-11 con las fórmulas del Looker (ver §3.2).
 - **Comparativa mes-contra-mes real** (si se quiere "vs mes anterior" hay que definirla: `Real -1` es año anterior).
 - **`Real -1 (LOCAL)` de CUMPLIMIENTO ≠ `Real -1` de PLANTILLA**: se usa el de PLANTILLA/Histórico; conviene que quien mantiene la hoja confirme por qué difieren.
 - **Seguridad**: la web app corre `USER_DEPLOYING` con `access: DOMAIN`: cualquier usuario del dominio ve el detalle por KAM/cliente. No hay filtro por usuario.

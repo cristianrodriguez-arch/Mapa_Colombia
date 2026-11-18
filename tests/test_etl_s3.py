@@ -88,6 +88,11 @@ def main():
             fila(ENC_2026, Fecha=datetime(2026, 1, 1), **{"Sold To ID": "11026712", "SF_ID": "MP_1",
                  "Ean_isdin": "8470001901200", "Ean_description": "REPARADOR LABIAL", "Origin": "MEDIPIEL S.A.",
                  "Units": 3, "Amount": 300, "ISDIN_PDV_DESC": "MEDIPIEL ANDINO", "KAM": "SARA CARDONA"}, **e),
+            # El MISMO PDV también vende por DIGITAL / WEB: el canal es de la fila, no del PDV.
+            fila(ENC_2026, Fecha=datetime(2026, 1, 1), **{"Sold To ID": "11026712", "SF_ID": "MP_1",
+                 "Ean_isdin": "8470001901200", "Ean_description": "REPARADOR LABIAL", "Origin": "MEDIPIEL S.A.",
+                 "Units": 1, "Amount": 100, "ISDIN_PDV_DESC": "MEDIPIEL ANDINO", "KAM": "SARA CARDONA",
+                 "Currency": "COP", "Affiliate": "Colombia", "Canal": "DIGITAL", "Sub_Canal": "WEB"}),
             fila(ENC_2026, Fecha=datetime(2026, 1, 1), **{"Sold To ID": "11049529", "SF_ID": "001P10000NUEVOQAA",
                  "POS_ID": "11049529_1023", "Ean_isdin": "8470001901200", "Origin": "FARMATODO COLOMBIA S.A.",
                  "Units": 3, "Amount": 330, "ISDIN_PDV_DESC": "1023 - FARMATODO CENTRO MAYOR",
@@ -119,23 +124,29 @@ def main():
         t("sin POS_ID ni forma de armarlo: se queda el SF_ID", "MP_1" in pdv and len(pdv) == 4)
         t("descripción del PDV = la más reciente", pdv["11026707_001"][1] == "CV CENTRO NUEVO")
         t("el manifiesto cuenta las filas de cada regla", cubo["meta"]["pdv_pos_id"] == {
-            "pos_id": 2, "sf_id_en_otro_anio": 2, "sf_id_compuesto": 1, "codigo_descripcion": 1, "sin_pos_id": 1})
+            "pos_id": 2, "sf_id_en_otro_anio": 2, "sf_id_compuesto": 1, "codigo_descripcion": 1, "sin_pos_id": 2})
         ifa = [p[0] for p in cubo["pdv"]].index("11049529_1023")
         t("Farmatodo 1023: 2025 y 2026 en el MISMO punto de venta",
-          sorted(r[1:] for r in cubo["pm"] if r[0] == ifa) == [[0, 2, 200], [2, 3, 330]])
+          sorted(r[1:4] for r in cubo["pm"] if r[0] == ifa) == [[0, 2, 200], [2, 3, 330]])
         ic = [c[0] for c in cubo["clientes"]].index("11026707")
         ip = [p[0] for p in cubo["pdv"]].index("11026707_001")
         cs = sorted(r for r in cubo["cs"] if r[0] == ic)
         t("cliente × producto × mes con coma decimal ('500,5')",
           [r[2:] for r in cs] == [[0, 10, 1000], [1, 5, 500.5], [2, 12, 1200]])
-        t("PDV × mes", sorted(r[1:] for r in cubo["pm"] if r[0] == ip) == [[0, 10, 1000], [1, 5, 500.5], [2, 12, 1200]])
+        t("PDV × mes", sorted(r[1:4] for r in cubo["pm"] if r[0] == ip) == [[0, 10, 1000], [1, 5, 500.5], [2, 12, 1200]])
         t("BU del producto sale de DIM Productos (en mayúsculas)",
           sorted(s[2] for s in cubo["skus"]) == ["DERMA", "FOTO"] and cubo["bus"] == ["DERMA", "FOTO"])
         pb = json.loads((salida / "s3_pb_01.json").read_text(encoding="utf-8"))
-        t("un archivo PDV × mes por BU", pb["bu"] == "FOTO" and sorted(pb["pb"]) == sorted(
+        t("un archivo PDV × mes por BU", pb["bu"] == "FOTO" and sorted(r[:4] for r in pb["pb"]) == sorted(
             [[ip, 0, 10, 1000], [ip, 1, 5, 500.5], [ip, 2, 12, 1200]]))
         frag = json.loads((salida / f"s3_pdv_{ip % 4:02d}.json").read_text(encoding="utf-8"))
-        t("fragmento por PDV: [iSku, iMes, und, imp]", len(frag["filas"][str(ip)]) == 3)
+        t("fragmento por PDV: [iSku, iMes, und, imp, iCanal]", len(frag["filas"][str(ip)]) == 3
+          and all(len(r) == 5 for r in frag["filas"][str(ip)]))
+        canales = [tuple(c) for c in cubo["canales"]]
+        imp_ = [p[0] for p in cubo["pdv"]].index("MP_1")
+        por_canal = {canales[r[4]]: r[2] for r in cubo["pm"] if r[0] == imp_}
+        t("un PDV que vende por TIENDA y DIGITAL: pm separa la venta por canal de la fila",
+          por_canal == {("TIENDA", "TIENDA"): 3, ("DIGITAL", "WEB"): 1})
         todos = list(salida.glob("s3_*.json"))
         t("todos los archivos llevan el mismo 'generado'",
           {json.loads(p.read_text(encoding="utf-8"))["generado"] for p in todos} == {cubo["generado"]})

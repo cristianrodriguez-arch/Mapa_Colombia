@@ -21,9 +21,10 @@
        elegido ÷ N (los meses sin dato cuentan como 0). Antes ignoraba el año
        elegido y no rellenaba huecos.
 
-   DDI ("Días De Inventario") y "Diferencia INV" quedan fuera a propósito: la
-   hoja 'DIAS DE INV' de donde saldría esa fórmula está rota (ver CLAUDE.md /
-   Code.js). Propuesta pendiente de confirmar: DDI = INV ÷ (Prom SO ÷ 30).
+   Tabla Clientes e inventario (2026-11-11, fórmulas del Looker del equipo; desde el 2026-11-17 con
+   jerarquía Cliente › BU › Producto que se abre con "+"): Prom SO,
+   DDI = INV ÷ Prom SO × 30, Diferencia INV = (60 − DDI) × Prom SO ÷ 30 y Tendencia =
+   SO del último mes ÷ Prom SO − 1, con la ventana que termina en el último mes con SO.
    Sell Through (Type=ST) tampoco se usa en esta pestaña.
    ═══════════════════════════════════════════════════════════════ */
 
@@ -108,6 +109,7 @@ function onSIvsSOCargado(data){
   sivsoCargando=false;sivsoErrorCarga='';
   // doh = DOH objetivo por SAP ID (hoja 'Info SO-INV'); lo usa la pestaña Ventas.
   sivsoData={filas:sivsoExpandir_(data),meta:(data&&data.meta)||{},doh:(data&&data.doh)||{}};
+  if(typeof soAlCanalCli==='function')soAlCanalCli();   // filtro Canal de Sell Out PDV
   sivsoCortes={};sivsoCortesSO={};
   sivsoData.filas.forEach(function(f){
     if((f.si||f.so)&&(!sivsoCortes[f.a]||f.m>sivsoCortes[f.a]))sivsoCortes[f.a]=f.m;
@@ -204,6 +206,7 @@ function sivsoOpciones(dim){
    solo se ofrecen si la hoja Data trae esas columnas con datos. */
 var SIVSO_CAMPOS=[
   {dim:'cliente', etq:'Cliente',  tope:800, fijo:true},   // siempre a la vista (desplegable; antes era "Buscar cliente" de texto)
+  {dim:'rango',   etq:'Meses',    rango:true, fijo:true},  // intervalo Desde – Hasta del año (2026-11-17): escribe el filtro de mes
   {dim:'anio',    etq:'Año',      chips:true},             // un solo año; sin la caja = el más reciente
   {dim:'channel', etq:'Canal'},
   {dim:'kam',     etq:'KAM encargado'},
@@ -222,12 +225,15 @@ function sivsoConstruirCampos(){
   var cont=document.getElementById('sivsoCampos');if(!cont||cont.dataset.listo)return;cont.dataset.listo='1';
   cont.innerHTML=SIVSO_CAMPOS.map(function(c){
     var x=c.fijo?'':'<button type="button" class="chip-x" title="Quitar este filtro" onclick="sivsoQuitarDim(event,\''+c.dim+'\')">\u2715</button>';
+    if(c.rango)return'<div class="campo yb-campo campo-fijo sivso-rango" data-dim="rango"><label for="sivsoMesDesde"><span>'+esc(c.etq)+'</span></label>'+
+      '<div class="sivso-rango-sel"><select id="sivsoMesDesde" class="yb-sel-simple" aria-label="Desde el mes" onchange="sivsoSetRango()"></select>'+
+      '<span>a</span><select id="sivsoMesHasta" class="yb-sel-simple" aria-label="Hasta el mes" onchange="sivsoSetRango()"></select></div></div>';
     if(c.chips)return'<div class="campo yb-campo so-chips" data-dim="'+c.dim+'"'+(sivsoVisibles[c.dim]||sivsoAnioElegido()?'':' hidden')+'>'+
       '<label><span>'+esc(c.etq)+'</span>'+x+'</label><div class="chips-periodo" id="sivsoAnioChips"></div></div>';
     return'<div class="campo yb-campo'+(c.fijo?' campo-fijo':'')+'" data-dim="'+c.dim+'"'+(c.fijo||sivsoVisibles[c.dim]||sivsoFiltros[c.dim].length?'':' hidden')+'>'+
       '<label for="sivsoSel_'+c.dim+'"><span>'+esc(c.etq)+'</span>'+x+
       '</label><select id="sivsoSel_'+c.dim+'" multiple></select></div>'}).join('');
-  sivsoPintarChipsAnio()}
+  sivsoPintarChipsAnio();sivsoPintarRango()}
 /* true si el año elegido NO es el más reciente (entonces la caja Año se muestra). */
 function sivsoAnioElegido(){var a=sivsoData?sivsoAnios():[],e=document.getElementById('sivsoAnioFil');
   return!!a.length&&!!(e&&e.value)&&sivsoAnioSel()!==a[0]}
@@ -235,7 +241,7 @@ function sivsoCrearSelectores(){
   if(Object.keys(SIVSO_SEL).length)return;
   sivsoConstruirCampos();
   SIVSO_CAMPOS.forEach(function(c){
-    var dim=c.dim;if(c.chips)return;
+    var dim=c.dim;if(c.chips||c.rango)return;
     SIVSO_SEL[dim]=new Selector({dim:dim,id:'sivsoSel_'+dim,multi:true,tope:c.tope||400,
       ops:function(){return sivsoOpciones(dim)},
       sel:function(){return sivsoFiltros[dim]},
@@ -302,6 +308,8 @@ function sivsoRenderChips(){
   var items=[];
   SIVSO_DIMS.forEach(function(d){
     var v=sivsoFiltros[d];
+    if(d==='mes'&&v.length>1){var r=sivsoRangoMeses();
+      if(r){items.push({dim:d,valor:null,etq:'Meses: '+SIVSO_MESES[r[0]-1]+'–'+SIVSO_MESES[r[1]-1]});return}}
     if(v.length>4)items.push({dim:d,valor:null,etq:SIVSO_DIM_ETQ[d]+': '+v.length+' seleccionados'});
     else v.forEach(function(x){
       var txt=d==='mes'?SIVSO_MESES[x-1]:((d==='cliente'||d==='producto')&&sivsoNombres[d][x])||x;
@@ -323,6 +331,27 @@ function sivsoPintarChipsAnio(){
   cont.innerHTML=sivsoAnios().map(function(a){
     return'<button type="button" class="chip-periodo'+(String(a)===actual?' activo':'')+
       '" onclick="sivsoSetAnio('+a+')">'+a+'</button>'}).join('')}
+
+/* Intervalo de meses (caja "Meses"): Desde – Hasta del año elegido. Escribe el filtro de mes con
+   los meses contiguos del intervalo; el año completo (Ene → su último mes con dato) = sin filtro.
+   Los meses elegidos con clic en el gráfico se ven como su primer y último mes. */
+function sivsoRangoMeses(){
+  var a=sivsoFiltros.mes.map(Number).sort(function(x,y){return x-y});
+  if(!a.length)return null;
+  for(var i=1;i<a.length;i++)if(a[i]!==a[i-1]+1)return null;
+  return[a[0],a[a.length-1]]}
+function sivsoPintarRango(){
+  var d=document.getElementById('sivsoMesDesde'),h=document.getElementById('sivsoMesHasta');if(!d||!h||!sivsoData)return;
+  var ult=sivsoCortes[sivsoAnioSel()]||12,f=sivsoFiltros.mes.map(Number).sort(function(x,y){return x-y}),ops='';
+  for(var m=1;m<=12;m++)ops+='<option value="'+m+'">'+SIVSO_MESES[m-1]+'</option>';
+  if(d.innerHTML!==ops){d.innerHTML=ops;h.innerHTML=ops}
+  d.value=String(f.length?f[0]:1);h.value=String(f.length?f[f.length-1]:ult)}
+function sivsoSetRango(){
+  var d=Number(document.getElementById('sivsoMesDesde').value)||1,h=Number(document.getElementById('sivsoMesHasta').value)||12;
+  if(d>h){var t=d;d=h;h=t}
+  var ult=sivsoCortes[sivsoAnioSel()]||12,a=[];
+  if(!(d===1&&h>=ult))for(var m=d;m<=h;m++)a.push(m);
+  setSivsoFiltro('mes',a);renderSIvsSO();sivsoSincronizarSelectores(false)}
 
 function sivsoSetAnio(a){
   document.getElementById('sivsoAnioFil').value=String(a);
@@ -376,7 +405,7 @@ function sivsoFilas(ig){
    (y por nombre si la fila no lo trae); con el inventario, por EAN. */
 var sivsoLanz=false,sivsoLanzD=null,sivsoLanzCargando=false;
 function sivsoLanzPreparar(d){
-  var L={pid:{},ean:{},nom:{},n:0};
+  var L={pid:{},ean:{},nom:{},n:0,cat:d.catalogo||[]};   // cat: [Product ID, EAN, nombre] de TODA la hoja
   (d.productos||[]).forEach(function(p){if(p[0])L.pid[String(p[0])]=1;if(p[1])L.ean[String(p[1])]=1;if(p[2])L.nom[normTxt(p[2])]=1;L.n++});
   return L}
 function sivsoEsLanz(f){var L=sivsoLanzD;return!!L&&(!!L.pid[f.productId]||!!L.nom[normTxt(f.producto)])}
@@ -438,6 +467,8 @@ function sivsoCeldaPart(v,th){
 /* Rótulo del corte: "ene–sep 2025" (parcial) o "2025" (año completo). Con meses
    elegidos con clic en el gráfico mensual: "Mar, May 2025". */
 function sivsoEtqCorte(anio,corte){
+  var rg=sivsoRangoMeses();
+  if(rg&&rg[1]>rg[0])return SIVSO_MESES[rg[0]-1]+'–'+SIVSO_MESES[rg[1]-1]+' '+anio;
   if(sivsoFiltros.mes.length)
     return sivsoFiltros.mes.slice().sort(function(a,b){return a-b})
       .map(function(m){return SIVSO_MESES[m-1]}).join(', ')+' '+anio;
@@ -455,6 +486,7 @@ function renderSIvsSO(){
   var per=sivsoPeriodo(null,anio,corte);
 
   sivsoRenderChips();
+  sivsoPintarRango();
   sivsoActualizarContador();
   sivsoPintarLanz();
   // KPIs y absorción (SO/SI): mismo rango para Sell In y Sell Out, hasta el último mes con Sell Out
@@ -503,44 +535,38 @@ function sivsoRenderKpi(filas,anioAnt,anio,corte){
    Todas leen el MISMO contexto: sivsoFilas('mes') (todos los filtros menos el
    mes, para que el gráfico no se encoja al hacer clic en un mes: los meses
    elegidos se resaltan y los demás se atenúan) + el año elegido y el anterior.
-     L lanz   · Lanzamientos producto a producto (Sell In vs Sell Out y absorción), ver
-                sivsoVistaLanzCtx. Va primero en la navegación.
-     0 combo  · barras Sell In (claro = año anterior, oscuro = actual) y líneas
-                Sell Out (continua = actual, punteada = anterior). Sin variaciones.
-     1 inv    · Inventario al cierre de cada mes, año actual y anterior (líneas). Fuente:
-                s3_inv.json ("Consolidado inventarios" + EAN MASTER, cliente × EAN × mes; carga compartida
-                con Sell Out PDV: invCargar en JsSO). Desde 2026-10-29 reemplaza "Tendencia".
-     2 ytd    · variación mensual contra el año anterior (ΔPY%) y cascada del YTD
-                anterior al YTD actual (estilo Zebra BI). Medida: Sell Out o Sell In.
-     3 zsi    · Zebra de Sell In: ΔPY%, ΔPY y columnas actual vs anterior + Total.
-     4 zso    · Igual, de Sell Out.
+   Orden de la navegación (pedido del usuario, 2026-11-17; "Variación YTD" se quitó):
+     combo · barras Sell In (claro = año anterior, oscuro = actual) y líneas Sell Out
+             (continua = actual, punteada = anterior). Es la vista por defecto.
+     zsi   · Zebra de Sell In: ΔPY%, ΔPY y columnas actual vs anterior + Total.
+     zso   · Igual, de Sell Out.
+     inv   · Inventario al cierre de cada mes (barras) + línea de DÍAS DE INVENTARIO (DDI) por mes.
+             Fuente: s3_inv.json ("Consolidado inventarios" + EAN MASTER, cliente × EAN × mes; carga
+             compartida con Sell Out PDV: invCargar en JsSO). Lo filtran TODOS los filtros.
+     abs   · Absorción EAN (antes "Lanzamientos"): Sell In vs Sell Out y absorción producto a
+             producto, ver sivsoVistaAbsCtx.
    Los meses sin dato del año actual NO se pintan como cero (la línea se corta en
-   el último mes con dato de esa serie); las variaciones y el YTD comparan solo
-   hasta ese mes. Clic en un mes = filtro de mes en todo el tablero.
+   el último mes con dato de esa serie); las variaciones comparan solo hasta ese
+   mes. Clic en un mes = filtro de mes en todo el tablero.
    Paleta de marca ISDIN: carbón #2b2830 / gris claro, rojo #e41f33 para
    Sell Out, verde ok #086124 y rojo #b71c1c solo para variaciones. */
 var SIVSO_VISTAS_GRAF=[
-  {k:'lanz',  t:'Lanzamientos'},
   {k:'combo', t:'Sell In y Sell Out'},
-  {k:'inv',   t:'Inventario'},
-  {k:'ytd',   t:'Variación YTD'},
   {k:'zsi',   t:'Sell In'},
-  {k:'zso',   t:'Sell Out'}];
+  {k:'zso',   t:'Sell Out'},
+  {k:'inv',   t:'Inventario'},
+  {k:'abs',   t:'Absorción EAN'}];
 var SIVSO_COL={ac:'#2b2830',py:'#cfcdd2',pyTxt:'#8a8a8a',so:'#e41f33',soPy:'#f07a87',pos:'#086124',neg:'#b71c1c',eje:'#9a9a9a',rej:'#ece9e3'};
-var sivsoVistaGraf=1,   // por defecto "Sell In y Sell Out" (la 0 es Lanzamientos)
-    sivsoYtdMed='so',sivsoSerie=null;
-// Se recuerda la CLAVE de la vista (visor.sivsoGrafK): con la vista "Lanzamientos" al inicio los
-// índices viejos (visor.sivsoGraf) se corrieron uno.
+var sivsoVistaGraf=0,sivsoSerie=null;   // por defecto "Sell In y Sell Out"
+// Se recuerda la CLAVE de la vista (visor.sivsoGrafK); una clave que ya no existe vuelve a la primera.
 try{var _gk=localStorage.getItem('visor.sivsoGrafK');
-  if(_gk)SIVSO_VISTAS_GRAF.forEach(function(v,i){if(v.k===_gk)sivsoVistaGraf=i});
-  else{var _gi=localStorage.getItem('visor.sivsoGraf');if(_gi!=null)sivsoVistaGraf=Math.max(0,Math.min(5,Number(_gi)+1))}}catch(e){}
+  if(_gk)SIVSO_VISTAS_GRAF.forEach(function(v,i){if(v.k===_gk)sivsoVistaGraf=i})}catch(e){}
 
 function sivsoSetVistaGraf(i){
   sivsoVistaGraf=(i+SIVSO_VISTAS_GRAF.length)%SIVSO_VISTAS_GRAF.length;
   try{localStorage.setItem('visor.sivsoGrafK',SIVSO_VISTAS_GRAF[sivsoVistaGraf].k)}catch(e){}
   var anio=sivsoAnioSel();sivsoRenderMensual(anio,sivsoCortes[anio]||0)}
 function sivsoMoverGraf(d){sivsoSetVistaGraf(sivsoVistaGraf+d)}
-function sivsoSetYtdMed(m){sivsoYtdMed=m;sivsoSetVistaGraf(sivsoVistaGraf)}
 
 /* Serie mensual del año elegido y del anterior dentro del contexto sin mes. */
 function sivsoSerieMensual(anio){
@@ -593,7 +619,9 @@ function sivsoTip(ev,m){
   if(SIVSO_VISTAS_GRAF[sivsoVistaGraf].k==='inv'&&I&&I.anio===a){var y=I.acc[m];
     tip.innerHTML='<div class="t">'+SIVSO_MESES[m-1]+'</div><table>'+
       fila('sw-inv','Inventario '+a,y.inv,y.hInv)+fila('sw-invpy','Inventario '+(a-1),y.invPy,y.hInvPy)+
-      fila('sw-so','Sell Out '+a,x.so,x.hSo)+'</table><div class="pie">Clic para filtrar por este mes</div>'}
+      fila('sw-so','Sell Out '+a,x.so,x.hSo)+
+      '<tr><td><span class="sw sw-ddi"></span>Días de inventario</td><td>'+(y.ddi!=null?FMT.format(Math.round(y.ddi))+' días':'–')+'</td></tr>'+
+      '</table><div class="pie">Clic para filtrar por este mes</div>'}
   else tip.innerHTML='<div class="t">'+SIVSO_MESES[m-1]+'</div><table>'+
     fila('sw-py','Sell In '+(a-1),x.siPy,x.hSiPy)+fila('sw-ac','Sell In '+a,x.si,x.hSi)+
     fila('sw-so','Sell Out '+a,x.so,x.hSo)+fila('sw-sopy','Sell Out '+(a-1),x.soPy,x.hSoPy)+'</table>'+
@@ -650,50 +678,91 @@ function sivsoVistaCombo(S,W){
     ley:[['sw-py','Sell In '+(a-1)],['sw-ac','Sell In '+a],['sw-so','Sell Out '+a],['sw-sopy','Sell Out '+(a-1)]],
     hint:'Barras: Sell In ('+(a-1)+' claro, '+a+' oscuro) · Líneas: Sell Out ('+a+' continua, '+(a-1)+' punteada)'}}
 
-/* ── Vista 1: Inventario en barras (s3_inv.json: cliente × EAN × mes de los Consolidado inventarios) ──
-   Foto al cierre de cada mes (no se suma entre meses) del año elegido y del anterior. La
-   filtran Cliente, Canal y KAM (atributos del cliente en SI vs SO, por SAP ID), BU y "Buscar
-   cliente". Producto, Marca y Strategic / Tactic market NO: Looker identifica el producto por
-   Product ID y el inventario por EAN; el aviso lo dice en el botón ⓘ. Ignora el filtro de mes
-   (como las demás vistas: los meses elegidos se resaltan). */
-var SIVSO_INV_NA=['producto','brand','smk','tmk'];
+/* ── Vista Inventario en barras (s3_inv.json: cliente × EAN × mes de los Consolidado inventarios) ──
+   Foto al cierre de cada mes (no se suma entre meses) del año elegido y del anterior. Desde el
+   2026-11-17 la filtran TODOS los filtros del tablero: Cliente, Canal y KAM (atributos del cliente
+   en SI vs SO, por SAP ID), BU, lanzamientos y, con el catálogo de la hoja "Products 2026"
+   (Product ID → EAN), también Producto, Marca y Strategic / Tactic market. Ignora el filtro de
+   mes (como las demás vistas: los meses elegidos se resaltan). Encima, la línea de DÍAS DE
+   INVENTARIO por mes (misma fórmula del DDI de la tabla Clientes e inventario). */
+var SIVSO_INV_PROD=['producto','brand','smk','tmk'];
 var sivsoCliAttr=null,sivsoInvSerie=null;
 function sivsoAtributosCli(){
   if(sivsoCliAttr&&sivsoCliAttr.d===sivsoData)return sivsoCliAttr.m;
   var m={};(sivsoData.filas||[]).forEach(function(f){if(f.sapId&&!m[f.sapId])m[f.sapId]={channel:f.channel||'',kam:f.kam||'',cn:f.cn||''}});
   sivsoCliAttr={d:sivsoData,m:m};return m}
-/* ¿La fila de inventario pasa los filtros del tablero que aplican (cliente, canal, KAM, BU,
-   lanzamientos por EAN y el texto de cliente)? */
+/* EAN que dejan pasar los filtros de producto (Producto, Marca, Strategic / Tactic market). El
+   inventario viene por EAN y SI vs SO por Product ID: se cruzan con el catálogo de "Products 2026"
+   (Product ID → EAN; si el Product ID no está, por nombre del producto). null = sin filtros de
+   producto · 'cargando' = todavía no llega el catálogo (o no se pudo leer). */
+function sivsoInvEans(){
+  var dims=SIVSO_INV_PROD.filter(function(d){return!!sivsoFset[d]});
+  if(!dims.length)return null;
+  if(!sivsoLanzD)return'cargando';
+  if(!sivsoCache)sivsoCache={};
+  if(sivsoCache.invEans)return sivsoCache.invEans;
+  var pid={},nom={},S={};
+  (sivsoData.filas||[]).forEach(function(f){
+    for(var i=0;i<dims.length;i++)if(!sivsoFset[dims[i]][sivsoValor(f,dims[i])])return;
+    if(f.productId)pid[String(f.productId)]=1;
+    if(f.producto)nom[normTxt(f.producto)]=1});
+  (sivsoLanzD.cat||[]).forEach(function(c){if(!c[1])return;
+    if((c[0]&&pid[String(c[0])])||(c[2]&&nom[normTxt(c[2])]))S[String(c[1])]=1});
+  return(sivsoCache.invEans=S)}
+/* Pide el catálogo (viene con los lanzamientos) y repinta lo que lo necesita. */
+function sivsoInvPedirCatalogo(){
+  if(sivsoLanzD||sivsoLanzError)return;
+  sivsoLanzCargar(function(){sivsoCache=null;if(!sivsoData)return;
+    var a=sivsoAnioSel();if(SIVSO_VISTAS_GRAF[sivsoVistaGraf].k==='inv')sivsoRenderMensual(a,sivsoCortes[a]||0);
+    if(sivsoHistMed==='inv')sivsoRenderHistorico()})}
+/* ¿La fila de inventario pasa los filtros del tablero? */
 function sivsoInvPasa(){
-  var at=sivsoAtributosCli(),q=sivsoTextoCliente(),F=sivsoFset,L=sivsoLanz&&sivsoLanzD;
+  var at=sivsoAtributosCli(),q=sivsoTextoCliente(),F=sivsoFset,L=sivsoLanz&&sivsoLanzD,E=sivsoInvEans();
+  if(E==='cargando')E=null;
   return function(r){
     var c=at[r.sap]||{channel:'',kam:'',cn:normTxt(r.cliente)};
     if(L&&!L.ean[r.ean])return false;
+    if(E&&!E[r.ean])return false;
     if(F.cliente&&!F.cliente[r.sap])return false;
     if(F.channel&&!F.channel[c.channel])return false;
     if(F.kam&&!F.kam[c.kam])return false;
     if(F.buK&&!F.buK[r.bu])return false;
     if(q&&c.cn.indexOf(q)===-1)return false;
     return true}}
+/* Inventario por mes del año elegido y del anterior + DDI por mes del año elegido.
+   DDI (días de inventario, la fórmula de la tabla Clientes e inventario) SIEMPRE en unidades
+   (el inventario en pesos se valoriza distinto que el Sell Out): INV del mes ÷ (Sell Out de los N
+   meses que terminan en ese mes ÷ N) × 30, N = caja Prom SO (3 por defecto). El Sell Out es SOLO el
+   de los clientes que reportan inventario ese mes (si no, los que no reportan bajarían el DDI). */
 function sivsoSerieInv(anio){
-  var acc={},m;for(m=1;m<=12;m++)acc[m]={inv:0,invPy:0,hInv:0,hInvPy:0};
-  var F=sivsoFset,pasa=sivsoInvPasa();
+  var acc={},m;for(m=1;m<=12;m++)acc[m]={inv:0,invPy:0,hInv:0,hInvPy:0,invU:0,ddi:null};
+  var pasa=sivsoInvPasa(),saps={};
   invD.filas.forEach(function(r){
     var a=Number(r.mes.slice(0,4));if(a!==anio&&a!==anio-1)return;
     if(!pasa(r))return;
-    var v=sivsoUnidad==='#'?r.u:r.a,x=acc[Number(r.mes.slice(5,7))];
-    if(a===anio){x.inv+=v;x.hInv=1}else{x.invPy+=v;x.hInvPy=1}});
+    var mm=Number(r.mes.slice(5,7)),v=sivsoUnidad==='#'?r.u:r.a,x=acc[mm];
+    if(a===anio){x.inv+=v;x.hInv=1;x.invU+=r.u||0;(saps[mm]||(saps[mm]={}))[r.sap]=1}
+    else{x.invPy+=v;x.hInvPy=1}});
+  var nP=sivsoPromN(),so={};
+  sivsoFilas('mes').forEach(function(f){var x=so[f.k]||(so[f.k]={});x[f.sapId]=(x[f.sapId]||0)+(f.soU||0)});
+  for(m=1;m<=12;m++){var x=acc[m];if(!x.hInv||!saps[m])continue;
+    var k1=anio*12+m-1,s=0;
+    for(var k=k1-nP+1;k<=k1;k++){var y=so[k];if(y)for(var sp in saps[m])s+=y[sp]||0}
+    var p=s/nP;x.ddi=p>0?x.invU/p*30:null}
   var ult={inv:0,invPy:0};for(m=1;m<=12;m++){if(acc[m].hInv)ult.inv=m;if(acc[m].hInvPy)ult.invPy=m}
-  return{anio:anio,acc:acc,ult:ult,na:SIVSO_INV_NA.filter(function(d){return!!F[d]}).map(function(d){return SIVSO_DIM_ETQ[d]})}}
-var SIVSO_COL_INV='#6b6670';
+  return{anio:anio,acc:acc,ult:ult,nP:nP,
+    na:sivsoInvEans()==='cargando'?['Producto / Marca / markets (falta el catálogo de "Products 2026")']:[]}}
+var SIVSO_COL_INV='#6b6670',SIVSO_COL_DDI='#e41f33';
 /* Barras por mes: año elegido (café) delante y año anterior (gris claro) a su izquierda, con la
    cifra de cada mes del año elegido. Si el mes es angosto (celular / iPad) la cifra va vertical,
-   dentro de la barra cuando cabe; así nunca se enciman. */
+   dentro de la barra cuando cabe; así nunca se enciman. La línea roja (eje de la derecha, en días)
+   son los días de inventario de cada mes. */
 function sivsoVistaInv(I,W){
-  var A=I.acc,m,hayPy=false,max=0;
-  for(m=1;m<=12;m++){max=Math.max(max,A[m].inv,A[m].invPy);if(A[m].hInvPy)hayPy=true}
+  var A=I.acc,m,hayPy=false,max=0,dd=[],mxD=0;
+  for(m=1;m<=12;m++){max=Math.max(max,A[m].inv,A[m].invPy);if(A[m].hInvPy)hayPy=true;
+    if(A[m].ddi!=null){dd.push(m);mxD=Math.max(mxD,A[m].ddi)}}
   if(max<=0)return null;
-  var L=W<520?52:70,R=12,gw=(W-L-R)/12,a=I.anio,h='';
+  var L=W<520?52:70,R=dd.length?(W<520?40:52):12,gw=(W-L-R)/12,a=I.anio,h='';
   var etqs=[];for(m=1;m<=12;m++)etqs.push(A[m].hInv?sivsoFmtCorta(A[m].inv):'');
   var largo=0;etqs.forEach(function(t){largo=Math.max(largo,t.length)});
   var anchoTxt=largo*6.4,vertical=anchoTxt>gw-6;
@@ -710,10 +779,21 @@ function sivsoVistaInv(I,W){
       else barras+=sivsoTxt(xc+3.5,y-5,t,'sv-val sv-inv-v','start',' transform="rotate(-90 '+sivsoNum(xc+3.5)+' '+sivsoNum(y-5)+')"')}
     barras+=sivsoTxt(cx,H-B+18,SIVSO_MESES[m-1],gw<36?'sv-cat sv-cat-p':'sv-cat','middle');
     h+=sivsoGrupoMes(m,L+gw*(m-1),T-10,gw,H-T-B+32,barras)}
-  return{svg:'<svg viewBox="0 0 '+W+' '+H+'" class="sivso-svg" role="img" aria-label="Inventario por mes">'+h+'</svg>',
-    ley:[['sw-invb','Inventario '+a]].concat(hayPy?[['sw-py','Inventario '+(a-1)]]:[]),
+  // Días de inventario: línea con su propio eje (derecha, en días) y la cifra de cada mes.
+  if(dd.length){
+    var eD=sivsoEje(mxD*1.12),alto=H-T-B;
+    var YD=function(v){return H-B-alto*Math.max(0,v)/eD.max};
+    for(var i=0;i<=4;i++){var vd=eD.paso*i;h+=sivsoTxt(W-R+6,YD(vd)+4,FMT.format(Math.round(vd))+' d','sv-eje sv-eje-ddi','start')}
+    var pts=dd.map(function(mm){return[L+gw*(mm-.5),YD(A[mm].ddi)]});
+    h+='<g class="sv-ddi">'+sivsoLinea(pts,SIVSO_COL_DDI,2.4)+
+      pts.map(function(pt,j){return sivsoTxt(pt[0],pt[1]-10,FMT.format(Math.round(A[dd[j]].ddi))+' d','sv-val sv-ddi-v','middle')}).join('')+'</g>'}
+  return{svg:'<svg viewBox="0 0 '+W+' '+H+'" class="sivso-svg" role="img" aria-label="Inventario y días de inventario por mes">'+h+'</svg>',
+    ley:[['sw-invb','Inventario '+a]].concat(hayPy?[['sw-py','Inventario '+(a-1)]]:[]).concat(dd.length?[['sw-ddi','Días de inventario '+a]]:[]),
     hint:'Inventario al cierre de cada mes (Consolidado inventarios + EAN MASTER) · Barra café: '+a+(hayPy?' · gris: '+(a-1):'')+
-      ' · Pasa el cursor por un mes para ver el detalle'+(I.na.length?' · No lo filtran: '+I.na.join(', '):'')}}
+      (dd.length?' · Línea roja (eje derecho): días de inventario = INV ÷ Sell Out promedio de los últimos '+I.nP+' meses × 30, '+
+        'en unidades y solo con los clientes que reportan inventario ese mes (la caja Prom SO de Productos cambia los meses)':'')+
+      ' · Lo filtran todos los filtros del tablero · Pasa el cursor por un mes para ver el detalle'+
+      (I.na.length?' · Aún no lo filtran: '+I.na.join(', '):'')}}
 /* Pide el inventario la primera vez y arma la vista; {aviso} mientras carga o si no hay datos. */
 function sivsoVistaInvCtx(anio,W){
   if(typeof invCargar!=='function')return{aviso:'<div class="mtd-vacio">Inventario no disponible</div>'};
@@ -721,34 +801,31 @@ function sivsoVistaInvCtx(anio,W){
     if(invError)return{aviso:'<div class="mtd-vacio">No pude leer el inventario (s3_inv.json): '+esc(invError)+'</div>'};
     invCargar(function(){if(sivsoData&&SIVSO_VISTAS_GRAF[sivsoVistaGraf].k==='inv'){var a=sivsoAnioSel();sivsoRenderMensual(a,sivsoCortes[a]||0)}});
     return{aviso:'<div class="mtd-estado"><span class="mtd-spinner"></span>Cargando el inventario…</div>'}}
+  if(sivsoInvEans()==='cargando'&&!sivsoLanzError){sivsoInvPedirCatalogo();
+    return{aviso:'<div class="mtd-estado"><span class="mtd-spinner"></span>Cruzando el producto con su EAN (Products 2026)…</div>'}}
   var I=sivsoInvSerie=sivsoSerieInv(anio),r=sivsoVistaInv(I,W);
   if(r)return r;
   var ms=invD.meses;
   return{aviso:'<div class="mtd-vacio">Sin inventario para '+anio+' con estos filtros'+
     (ms.length?' · el inventario va de '+sivsoEtqMes(ms[0])+' a '+sivsoEtqMes(ms[ms.length-1]):'')+'</div>'}}
 
-/* ── Vista 0: Lanzamientos producto a producto ──
-   Solo productos INNOVACIÓN de "Products 2026" (aunque el botón ★ esté apagado), con los demás
-   filtros del tablero y el MISMO rango de los KPIs: ene → último mes con Sell Out del año.
+/* ── Vista Absorción EAN (antes "Lanzamientos", renombrada el 2026-11-17) ──
+   Producto a producto (todos los del tablero; con ★ Lanzamientos, solo los de lanzamiento), con
+   los demás filtros y el MISMO rango de los KPIs: ene → último mes con Sell Out del año.
    Por producto: Sell In (carbón) y Sell Out (rojo ISDIN) en barras de una sola escala y la
    ABSORCIÓN = Sell Out ÷ Sell In con su pastilla: ≥ 100 % el canal vende todo lo que entra
    (verde), 70–99 % en camino (neutro), < 70 % se acumula inventario (rojo). Orden: Sell Out.
    Clic en un producto = filtro Producto de todo el tablero. HTML (no SVG): se acomoda solo al
    ancho y en el celular cada producto pasa a dos renglones. */
-function sivsoVistaLanzCtx(anio,corte){
-  if(!sivsoLanzD){
-    if(sivsoLanzError)return{aviso:'<div class="mtd-vacio">No pude leer la hoja "Products 2026": '+esc(sivsoLanzError)+'</div>',hint:'Lanzamientos'};
-    sivsoLanzCargar(function(){if(sivsoData&&SIVSO_VISTAS_GRAF[sivsoVistaGraf].k==='lanz'){var a=sivsoAnioSel();sivsoRenderMensual(a,sivsoCortes[a]||0)}});
-    if(!sivsoLanzD)return{aviso:'<div class="mtd-estado"><span class="mtd-spinner"></span>Cargando los lanzamientos (Products 2026)…</div>',hint:'Lanzamientos'}}
-  if(!sivsoLanzD.n)return{aviso:'<div class="mtd-vacio">La hoja "Products 2026" no tiene productos con Innovación = INNOVACIÓN.</div>',hint:'Lanzamientos'};
+function sivsoVistaAbsCtx(anio,corte){
   var cSO=sivsoCortesSO[anio]||corte,g={},nSin=0;
-  sivsoFilas().forEach(function(f){if(f.a!==anio||f.m>cSO||!sivsoEsLanz(f))return;
+  sivsoFilas().forEach(function(f){if(f.a!==anio||f.m>cSO)return;
     var k=sivsoValor(f,'producto'),x=g[k]||(g[k]={k:k,nombre:f.producto||f.productId,bu:f.bu||'',si:0,so:0});
     x.si+=sivsoSi(f);x.so+=sivsoSo(f)});
   var l=Object.keys(g).map(function(k){return g[k]}).filter(function(x){if(!x.si&&!x.so){nSin++;return false}return true})
     .sort(function(a,b){return b.so-a.so||b.si-a.si});
   var rango=sivsoEtqCorte(anio,cSO);
-  if(!l.length)return{aviso:'<div class="mtd-vacio">Sin Sell In ni Sell Out de lanzamientos en '+esc(rango)+' con estos filtros</div>',hint:'Lanzamientos · '+rango};
+  if(!l.length)return{aviso:'<div class="mtd-vacio">Sin Sell In ni Sell Out en '+esc(rango)+' con estos filtros</div>',hint:'Absorción EAN · '+rango};
   var tSi=0,tSo=0,mx=0;l.forEach(function(x){tSi+=x.si;tSo+=x.so;mx=Math.max(mx,x.si,x.so)});
   function abs(x){return x.si>0?x.so/x.si:null}
   function clase(p){var r=p==null?null:Math.round(p*100);   // por el % que se ve (99,7 % se ve 100 %)
@@ -757,7 +834,7 @@ function sivsoVistaLanzCtx(anio,corte){
   var pT=tSi>0?tSo/tSi:null,fs=sivsoFset.producto;
   var h='<div class="sivso-lz">'+
     '<div class="lz-res">'+
-      '<div><span class="e">Lanzamientos con movimiento</span><b>'+l.length+'</b>'+(nSin?'<small>'+nSin+' sin venta en el rango</small>':'')+'</div>'+
+      '<div><span class="e">'+(sivsoLanz?'Lanzamientos':'Productos')+' con movimiento</span><b>'+l.length+'</b>'+(nSin?'<small>'+nSin+' sin venta en el rango</small>':'')+'</div>'+
       '<div><span class="e"><i class="lz-sw si"></i>Sell In</span><b>'+esc(sivsoFmtCorta(tSi))+'</b></div>'+
       '<div><span class="e"><i class="lz-sw so"></i>Sell Out</span><b>'+esc(sivsoFmtCorta(tSo))+'</b></div>'+
       '<div><span class="e">Absorción total</span><b class="lz-p '+clase(pT)+'">'+pct(pT)+'</b><small>Sell Out ÷ Sell In · '+esc(rango)+'</small></div>'+
@@ -777,8 +854,9 @@ function sivsoVistaLanzCtx(anio,corte){
   h+='</div><div class="lz-ley"><span><i class="lz-sw si"></i>Sell In</span><span><i class="lz-sw so"></i>Sell Out</span>'+
     '<span><b class="lz-p ok">≥ 100 %</b> vende lo que entra</span><span><b class="lz-p med">70–99 %</b> en camino</span>'+
     '<span><b class="lz-p baja">&lt; 70 %</b> se acumula inventario</span><span class="lz-reg-ley"><u></u> línea = 100 %</span></div></div>';
-  return{html:h,hint:'Solo productos de lanzamiento (Innovación en Products 2026) · '+rango+' (hasta el último mes con Sell Out) · '+
-    'Absorción = Sell Out ÷ Sell In · ordenados por Sell Out · clic en un producto: lo filtra en todo el tablero'}}
+  return{html:h,hint:'Absorción por producto (EAN) = Sell Out ÷ Sell In · '+rango+' (hasta el último mes con Sell Out) · '+
+    (sivsoLanz?'solo lanzamientos (★) · ':'todos los productos con los filtros del tablero (★ Lanzamientos deja solo los de lanzamiento) · ')+
+    'ordenados por Sell Out · clic en un producto: lo filtra en todo el tablero'}}
 
 /* Franja de "piruletas" ΔPY% (estilo Zebra): base, tallo y cabeza con el %. */
 function sivsoPiruletas(items,y0,alto){
@@ -791,50 +869,7 @@ function sivsoPiruletas(items,y0,alto){
       sivsoTxt(it.x,it.p>=0?y-9:y+17,sivsoPctSigno(it.p),'sv-pct','middle')});
   return{h:h,base:base}}
 
-/* ── Vista 2: variación mensual + cascada YTD anterior → YTD actual ── */
-function sivsoVistaYtd(S,W){
-  var med=sivsoYtdMed,k=med,kp=med+'Py',u=S.ult[med],A=S.acc,a=S.anio,nom=med==='si'?'Sell In':'Sell Out';
-  if(!u)return null;
-  var H=380,T=8,B=30,L=74,R=70,n=u+2,cw=(W-L-R)/n,h='',m;
-  var ytd=0,ytdPy=0;for(m=1;m<=u;m++){ytd+=A[m][k];ytdPy+=A[m][kp]}
-  // Piruletas ΔPY% por mes
-  var its=[];for(m=1;m<=u;m++)its.push({x:L+cw*(m+.5),p:A[m][kp]>0?(A[m][k]-A[m][kp])/A[m][kp]:null});
-  var pir=sivsoPiruletas(its,T+18,96);
-  h+='<line x1="'+sivsoNum(L+cw)+'" x2="'+sivsoNum(L+cw*(u+1))+'" y1="'+sivsoNum(pir.base)+'" y2="'+sivsoNum(pir.base)+'" stroke="'+SIVSO_COL.eje+'" stroke-width="2"/>'+
-    pir.h+sivsoTxt(L-10,pir.base-30,'ΔPY%','sv-fila','end');
-  // Cascada desde 0
-  var y0=T+150,yB=H-B,top=Math.max(ytd,ytdPy),cum=ytdPy,mx=top;
-  for(m=1;m<=u;m++){cum+=A[m][k]-A[m][kp];mx=Math.max(mx,cum)}
-  var esc_=(yB-y0-24)/(mx||1);function Y(v){return yB-Math.max(0,v)*esc_}
-  h+=sivsoRect(L+cw*.12,Y(ytdPy),cw*.76,yB-Y(ytdPy),SIVSO_COL.pyTxt)+sivsoTxt(L+cw*.5,Y(ytdPy)-6,sivsoFmtCorta(ytdPy),'sv-val','middle')+
-    sivsoTxt(L+cw*.5,yB+18,'YTD '+(a-1),'sv-cat','middle');
-  cum=ytdPy;
-  for(m=1;m<=u;m++){var d=A[m][k]-A[m][kp],x0=L+cw*m,c=d>=0?SIVSO_COL.pos:SIVSO_COL.neg;
-    var barra='<line x1="'+sivsoNum(x0-cw*.12)+'" x2="'+sivsoNum(x0+cw*.12)+'" y1="'+sivsoNum(Y(cum))+'" y2="'+sivsoNum(Y(cum))+'" stroke="'+SIVSO_COL.eje+'" stroke-dasharray="2 2"/>'+
-      sivsoRect(x0+cw*.12,Y(cum),cw*.76,Y(cum+d)-Y(cum)||(d?1:0),c)+
-      sivsoTxt(x0+cw*.5,Y(Math.max(cum,cum+d))-6,sivsoSigno(d),'sv-val','middle')+
-      sivsoTxt(x0+cw*.5,yB+18,SIVSO_MESES[m-1],'sv-cat','middle');
-    h+=sivsoGrupoMes(m,x0,T,cw,H-T,barra);cum+=d}
-  var xY=L+cw*(u+1);
-  h+=sivsoRect(xY+cw*.12,Y(ytd),cw*.76,yB-Y(ytd),SIVSO_COL.ac)+sivsoTxt(xY+cw*.5,Y(ytd)-6,sivsoFmtCorta(ytd),'sv-val sv-b','middle')+
-    sivsoTxt(xY+cw*.5,yB+18,'YTD '+a,'sv-cat sv-b','middle')+
-    '<line x1="'+L+'" x2="'+(W-R)+'" y1="'+yB+'" y2="'+yB+'" stroke="'+SIVSO_COL.eje+'" stroke-width="2"/>';
-  sivsoTotTip={nom:nom,a:a,ytd:ytd,ytdPy:ytdPy,etq:'YTD '+a,rango:SIVSO_MESES[0]+'–'+SIVSO_MESES[u-1]+' '+a+' vs '+(a-1)};
-  h+=sivsoHitTotal(xY,T,cw,H-T)+sivsoHitTotal(L,T,cw,H-T);
-  // Flecha de la variación total YTD vs YTD anterior
-  var p=ytdPy>0?(ytd-ytdPy)/ytdPy:null;
-  if(p!=null){var xa=W-R+14,c2=p>=0?SIVSO_COL.pos:SIVSO_COL.neg,ya=Y(ytdPy),yb=Y(ytd);
-    h+='<line x1="'+sivsoNum(L+cw*.88)+'" x2="'+sivsoNum(xa)+'" y1="'+sivsoNum(ya)+'" y2="'+sivsoNum(ya)+'" stroke="'+SIVSO_COL.rej+'"/>'+
-      '<line x1="'+sivsoNum(xY+cw*.88)+'" x2="'+sivsoNum(xa)+'" y1="'+sivsoNum(yb)+'" y2="'+sivsoNum(yb)+'" stroke="'+SIVSO_COL.rej+'"/>'+
-      '<line x1="'+xa+'" x2="'+xa+'" y1="'+sivsoNum(ya)+'" y2="'+sivsoNum(yb+(p>=0?4:-4))+'" stroke="'+c2+'" stroke-width="2.5"/>'+
-      '<path d="M'+(xa-5)+','+sivsoNum(yb+(p>=0?7:-7))+' L'+xa+','+sivsoNum(yb)+' L'+(xa+5)+','+sivsoNum(yb+(p>=0?7:-7))+'Z" fill="'+c2+'"/>'+
-      sivsoTxt(xa+8,(ya+yb)/2+4,sivsoPctSigno(p),'sv-pct','start')}
-  return{svg:'<svg viewBox="0 0 '+W+' '+H+'" class="sivso-svg" role="img" aria-label="Variación YTD de '+nom+'">'+h+'</svg>',
-    ley:[],med:true,
-    hint:nom+': ΔPY% de cada mes vs el mismo mes de '+(a-1)+' · Cascada: cuánto aporta cada mes para ir del YTD '+(a-1)+' al YTD '+a+
-      ' ('+SIVSO_MESES[0]+'–'+SIVSO_MESES[u-1]+')'}}
-
-/* ── Vistas 3 y 4: Zebra de una sola medida ── */
+/* ── Vistas Sell In y Sell Out: Zebra de una sola medida ── */
 function sivsoVistaZebra(S,W,med,o){
   // `o` (opcional, otras pestañas): {meses:[números de mes a mostrar], nombre, fn, sel, hay}.
   var k=med,kp=med+'Py',u=S.ult[med],A=S.acc,a=S.anio,nom=(o&&o.nombre)||(med==='si'?'Sell In':'Sell Out');
@@ -896,10 +931,9 @@ function sivsoRenderMensual(anio,corte){
   // sivsoAlEntrar lo vuelve a pintar con el ancho real al abrir la pestaña.
   var W=cont.clientWidth>0?Math.max(360,Math.round(cont.clientWidth)):1100;
   var v=SIVSO_VISTAS_GRAF[sivsoVistaGraf],r;
-  if(v.k==='lanz')r=sivsoVistaLanzCtx(anio,corte);
+  if(v.k==='abs')r=sivsoVistaAbsCtx(anio,corte);
   else if(v.k==='combo')r=sivsoVistaCombo(S,W);
   else if(v.k==='inv')r=sivsoVistaInvCtx(anio,W);
-  else if(v.k==='ytd')r=sivsoVistaYtd(S,W);
   else r=sivsoVistaZebra(S,W,v.k==='zsi'?'si':'so');
   var tit=document.getElementById('sivsoGrafTit');if(tit)tit.innerText=v.t;
   var nav=document.getElementById('sivsoGrafNav');
@@ -912,9 +946,7 @@ function sivsoRenderMensual(anio,corte){
   if(r&&r.html){cont.innerHTML=r.html;if(hint)hint.innerText='Cifras en '+u+' · '+r.hint;return}
   if(!r){cont.innerHTML='<div class="mtd-vacio">Sin datos para '+anio+'</div>';if(hint)hint.innerText=anio+' · '+u;return}
   if(hint)hint.innerText='Cifras en '+u+' · '+r.hint+' · Clic en un mes: filtra todo el tablero (varios a la vez)';
-  cont.innerHTML=(r.med?'<div class="chips-periodo sivso-med">'+[['so','Sell Out'],['si','Sell In']].map(function(o){
-      return'<button type="button" class="chip-periodo'+(sivsoYtdMed===o[0]?' activo':'')+'" onclick="sivsoSetYtdMed(\''+o[0]+'\')">'+o[1]+'</button>'}).join('')+'</div>':'')+
-    r.svg+
+  cont.innerHTML=r.svg+
     (r.ley.length?'<div class="hist-legend sivso-ley">'+r.ley.map(function(l){return'<span class="it"><span class="sw '+l[0]+'"></span>'+esc(l[1])+'</span>'}).join('')+'</div>':'')}
 
 /* Repinta el gráfico al cambiar el ancho (SVG medido en píxeles reales). */
@@ -969,12 +1001,13 @@ function sivsoRenderHistorico(){
 function sivsoRenderHistoricoInv(tb){
   var hint=document.getElementById('sivsoHintHist');
   if(hint)hint.innerText='Inventario al cierre de cada mes · '+(sivsoUnidad==='#'?'unidades':'pesos')+
-    ' · Consolidado inventarios · con los filtros de cliente, canal, KAM, BU y lanzamientos · no se suma entre meses';
+    ' · Consolidado inventarios · con todos los filtros del tablero (producto, marca y markets por su EAN en Products 2026) · no se suma entre meses';
   if(typeof invCargar!=='function'){tb.innerHTML='<tbody><tr><td>Inventario no disponible</td></tr></tbody>';return}
   if(!invD){
     if(invError){tb.innerHTML='<tbody><tr><td>No pude leer el inventario: '+esc(invError)+'</td></tr></tbody>';return}
     tb.innerHTML='<tbody><tr><td><span class="mtd-spinner"></span>Cargando el inventario…</td></tr></tbody>';
     invCargar(function(){if(sivsoHistMed==='inv')sivsoRenderHistorico()});return}
+  if(sivsoInvEans()==='cargando')sivsoInvPedirCatalogo();
   var pasa=sivsoInvPasa(),acc={},m;
   invD.filas.forEach(function(r){if(!pasa(r))return;var a=Number(r.mes.slice(0,4)),mm=Number(r.mes.slice(5,7));
     var x=acc[a]||(acc[a]={v:{},h:{}});x.v[mm]=(x.v[mm]||0)+(sivsoUnidad==='#'?r.u:r.a);x.h[mm]=1});
@@ -989,7 +1022,7 @@ function sivsoRenderHistoricoInv(tb){
     h+='<td class="tot">'+(ult?FMT.format(Math.round(x.v[ult]))+' <small>'+SIVSO_MESES[ult-1]+'</small>':'–')+'</td></tr>'});
   tb.innerHTML=h+'</tbody>'}
 
-/* Donut %Participación de Sell Out por BU — conic-gradient CSS, sin librería.
+/* Donut %Participación por BU (Sell Out o Sell In, sivsoDonutMed) — conic-gradient CSS, sin librería.
    Solo BU con Sell Out NETO POSITIVO: con devoluciones netas negativas los
    grados salían negativos y el gráfico se rompía (porcentajes > 100 %). La BU
    se agrupa sin importar mayúsculas ("Foto" = "FOTO"). */
@@ -998,15 +1031,25 @@ var SIVSO_DONUT_COLORES=['#2b2830','#e41f33','#6b6670','#f29aa3','#a8a4ad','#d9d
 /* El donut es un conic-gradient CSS (sin geometría clicable por trozo): la zona
    clicable es la LEYENDA (un botón por BU, con el color de su trozo). Con BU
    elegidas, los trozos no elegidos se atenúan (el mismo color con transparencia). */
-var sivsoDonutItems=[];
+var sivsoDonutItems=[],sivsoDonutMed='so';
 function sivsoClicDonut(i){if(sivsoDonutItems[i])sivsoAlternar('buK',sivsoDonutItems[i].k)}
+/* Sell In o Sell Out en la misma torta (botones en la cabecera de la tarjeta; 2026-11-17). */
+function sivsoSetDonutMed(m){sivsoDonutMed=m;var a=sivsoAnioSel();sivsoRenderDonutBu(a,sivsoCortes[a]||0)}
+/* En modo oscuro el primer color (carbón) no se vería sobre la tarjeta: va casi blanco. */
+function sivsoColoresDonut(){var c=SIVSO_DONUT_COLORES.slice();
+  if(typeof temaOscuro==='function'&&temaOscuro())c[0]='#e6e3e9';return c}
 
 function sivsoRenderDonutBu(anio,corte){
-  var filas=sivsoPeriodo('buK',anio,corte).filas,hay=!!sivsoFset.buK;
+  var filas=sivsoPeriodo('buK',anio,corte).filas,hay=!!sivsoFset.buK,med=sivsoDonutMed,nom=med==='si'?'Sell In':'Sell Out';
   var g={},nombre={};
-  filas.forEach(function(f){var k=f.buK;g[k]=(g[k]||0)+sivsoSo(f);if(!nombre[k])nombre[k]=(f.bu||'').trim()||'Sin BU'});
+  filas.forEach(function(f){var k=f.buK;g[k]=(g[k]||0)+(med==='si'?sivsoSi(f):sivsoSo(f));if(!nombre[k])nombre[k]=(f.bu||'').trim()||'Sin BU'});
   var cont=document.getElementById('sivsoDonutBu');
   if(!cont)return;
+  var tit=document.getElementById('sivsoDonutTit');if(tit)tit.textContent=nom;
+  var bm=document.getElementById('sivsoDonutMed');
+  if(bm)bm.innerHTML=[['si','Sell In'],['so','Sell Out']].map(function(o){
+    return'<button type="button" class="chip-periodo'+(med===o[0]?' activo':'')+'" aria-pressed="'+(med===o[0])+'" onclick="sivsoSetDonutMed(\''+o[0]+'\')">'+o[1]+'</button>'}).join('');
+  var COL=sivsoColoresDonut();
   var neg=Object.keys(g).filter(function(k){return g[k]<0});
   var lista=Object.keys(g).filter(function(k){return g[k]>0})
     .map(function(k){return{k:k,bu:nombre[k],v:g[k]}}).sort(function(a,b){return b.v-a.v});
@@ -1015,7 +1058,7 @@ function sivsoRenderDonutBu(anio,corte){
   if(total<=0){cont.innerHTML='<div class="mtd-vacio">Sin datos</div>';return}
   var acumGrados=0,partes=[];
   lista.forEach(function(x,i){
-    var grados=360*(x.v/total),color=SIVSO_DONUT_COLORES[i%SIVSO_DONUT_COLORES.length];
+    var grados=360*(x.v/total),color=COL[i%COL.length];
     x.sel=hay&&!!sivsoFset.buK[x.k];
     var pinta=(hay&&!x.sel)?color+'40':color;      // #rrggbb + alfa 25 %
     partes.push(pinta+' '+acumGrados.toFixed(2)+'deg '+(acumGrados+grados).toFixed(2)+'deg');
@@ -1028,11 +1071,11 @@ function sivsoRenderDonutBu(anio,corte){
   cont.innerHTML=
     '<div class="sivso-donut-wrap">'+
       '<div class="sivso-donut" style="background:conic-gradient('+partes.join(',')+')">'+
-        '<div class="sivso-donut-hueco"><span>'+sivsoFmtCorta(total)+'</span><span class="et">Sell Out</span></div>'+
+        '<div class="sivso-donut-hueco"><span>'+sivsoFmtCorta(total)+'</span><span class="et">'+nom+'</span></div>'+
       '</div>'+
       '<div class="sivso-donut-leyenda">'+leyenda+'</div>'+
     '</div>'+
-    (neg.length?'<div class="hint">'+neg.length+' BU con Sell Out neto negativo (devoluciones) no se muestran.</div>':'')}
+    (neg.length?'<div class="hint">'+neg.length+' BU con '+nom+' neto negativo (devoluciones) no se muestran.</div>':'')}
 
 /* Inventario al cierre del último mes con foto de INV (fila Type=INV) dentro de
    las filas del año elegido: se SUMA sobre cliente×producto. Devuelve
@@ -1124,51 +1167,161 @@ function sivsoRenderProductos(anio,corte){
       mtdTd(sivsoFmt(tot.so),'Sell Out')+mtdDeltaImp(tot.so,soAntTot,'ΔSO %')+
       mtdTd(sivsoFmt(tot.prom),pn)+mtdTd(sivsoFmt(invTot),'INV')+'</tr>'})}
 
-/* Tabla Clientes e inventario (INV = misma foto que Productos). DDI y
-   "Diferencia INV" quedan fuera — ver nota al inicio del archivo. */
-var sivsoVistaClientes=[];
+/* Tabla Clientes e inventario con jerarquía Cliente › BU › Producto (como el Looker, 2026-11-17).
+   Todo cerrado se ve por cliente; "+" en una fila abre su detalle (cliente → BU → producto) y el
+   botón de los encabezados Cliente / BU abre o cierra ese nivel en todas las filas. Mismas medidas
+   en los tres niveles: Sell In / Sell Out del periodo y su Δ contra el año anterior (mismos meses),
+   % Part sobre el total de la tabla, Prom SO, INV (foto del último mes con inventario, Type=INV),
+   DDI, Diferencia INV y Tendencia (fórmulas del Looker, ver nota al inicio del archivo). Clic en un
+   nombre = filtro de todo el tablero (cliente, BU o producto). sivsoVistaClientes = nivel cliente. */
+var sivsoVistaClientes=[],sivsoArbol={abiertos:{},orden:{k:'so',dir:'desc'}},sivsoArbolD=null,sivsoArbolFilas=[];
+var SIVSO_ARB_NIV=['Cliente','BU','Producto'],SIVSO_ARB_DIM=['cliente','buK','producto'],SIVSO_ARB_TXT={cli:0,bu:1,prod:2};
+var SIVSO_ARB_COLS=[
+  {k:'si',t:'Sell In',c:function(x,t){return mtdTd(sivsoFmt(x.si),t)}},
+  {k:'dSi',t:'ΔSI %',c:function(x,t){return mtdDeltaImp(x.si,x.siAnt,t)}},
+  {k:'so',t:'Sell Out',c:function(x,t){return mtdTd(sivsoFmt(x.so),t)}},
+  {k:'dSo',t:'ΔSO %',c:function(x,t){return mtdDeltaImp(x.so,x.soAnt,t)}},
+  {k:'partSi',t:'% Part SI',c:function(x,t){return sivsoCeldaPart(x.partSi,t)}},
+  {k:'partSo',t:'% Part SO',c:function(x,t){return sivsoCeldaPart(x.partSo,t)}},
+  {k:'promSo',t:'Prom SO',c:function(x,t){return mtdTd(sivsoFmt(x.promSo),t)}},
+  {k:'inv',t:'INV',c:function(x,t){return mtdTd(sivsoFmt(x.inv),t)}},
+  {k:'ddi',t:'DDI',c:function(x,t){return mtdTd(sivsoDdiTxt(x.ddi),t)}},
+  {k:'difInv',t:'Diferencia INV',c:function(x,t){return sivsoCeldaDif(x.difInv,t)}},
+  {k:'tend',t:'Tendencia',c:function(x,t){return sivsoCeldaTend(x.tend,t)}}];
 function sivsoRenderClientes(anio,corte){
   // Contexto que ignora la selección de cliente: la tabla no se encoge.
-  var filas=sivsoPeriodo('cliente',anio,corte).filas,inv=sivsoInventario(filas),hay=!!sivsoFset.cliente;
+  var per=sivsoPeriodo('cliente',anio,corte),filas=per.filas,inv=sivsoInventario(filas),hay=!!sivsoFset.cliente;
   var g={};
-  filas.forEach(function(f){
-    var k=f.sapId||f.cliente;
-    var x=g[k]||(g[k]={key:k,cliente:f.cliente||'(sin nombre)',channel:f.channel||'',kam:f.kam||'',si:0,so:0,inv:0});
-    x.si+=sivsoSi(f);x.so+=sivsoSo(f)});
-  var lista=Object.keys(g).map(function(k){var x=g[k];x.inv=inv.porCliente[k]||0;return x});
-  // % Part es contra el universo de la tabla (todos los clientes mostrados), así
-  // que no cambia al elegir filas; el TOTAL con selección suma las partes elegidas.
-  var tot=lista.reduce(function(a,x){a.si+=x.si;a.so+=x.so;return a},{si:0,so:0});
-  lista.forEach(function(x){x.partSi=tot.si>0?x.si/tot.si:null;x.partSo=tot.so>0?x.so/tot.so:null});
+  function nodo(key,nombre,nivel){return{key:key,nombre:nombre,nivel:nivel,si:0,so:0,siAnt:0,soAnt:0,inv:0,promSo:0,soUlt:0,hijos:{}}}
+  // Ruta cliente → BU → producto de una fila (crear=false: solo clientes que ya están en el periodo).
+  function ruta(f,crear){
+    var kc=f.sapId||f.cliente,c=g[kc];
+    if(!c){if(!crear)return null;c=g[kc]=nodo(kc,f.cliente||'(sin nombre)',0);c.cliente=c.nombre;c.channel=f.channel||'';c.kam=f.kam||''}
+    var kb=f.buK,b=c.hijos[kb]||(c.hijos[kb]=nodo(kb,(f.bu||'').trim()||'Sin BU',1));
+    var kp=f.productId||f.producto,p=b.hijos[kp]||(b.hijos[kp]=nodo(kp,f.producto||'(sin nombre)',2));
+    if(!p.bu)p.bu=b.nombre;
+    return[c,b,p]}
+  function suma(r,campo,v){if(r)for(var i=0;i<3;i++)r[i][campo]+=v}
+  filas.forEach(function(f){var r=ruta(f,true);suma(r,'si',sivsoSi(f));suma(r,'so',sivsoSo(f));
+    if(f.tieneInv&&f.mes===inv.mes)suma(r,'inv',sivsoInv(f))});
+  per.ant.forEach(function(f){var r=ruta(f,false);suma(r,'siAnt',sivsoSi(f));suma(r,'soAnt',sivsoSo(f))});
+  // Días de inventario (fórmulas del Looker "Clientes e inventario"), con la ventana de los
+  // últimos N meses (caja Prom SO, 3 por defecto) que termina en el ÚLTIMO MES CON SELL OUT:
+  //   Prom SO      = Sell Out de esos N meses ÷ N (venta promedio de un mes)
+  //   DDI          = INV ÷ Prom SO × 30            (días que alcanza el inventario)
+  //   Diferencia   = (60 − DDI) × Prom SO ÷ 30     (= 2 meses de venta − INV: > 0 falta, < 0 sobra)
+  //   Tendencia    = Sell Out del último mes ÷ Prom SO − 1
+  var nP=sivsoPromN(),cSO=sivsoCortesSO[anio]||corte,w=sivsoVentanaProm(anio,cSO,nP);
+  sivsoFilas(['cliente','mes']).forEach(function(f){
+    if(f.k<w.k0||f.k>w.k1)return;
+    var r=ruta(f,false);if(!r)return;
+    var v=sivsoSo(f);suma(r,'promSo',v);if(f.k===w.k1)suma(r,'soUlt',v)});
+  var tot={si:0,so:0};Object.keys(g).forEach(function(k){tot.si+=g[k].si;tot.so+=g[k].so});
+  // % Part es contra el universo de la tabla (todos los clientes mostrados), así que no cambia
+  // al elegir filas; el TOTAL con selección suma las partes elegidas.
+  function medidas(x,promSuma){var p=nP?promSuma/nP:0;x.promSo=p;
+    x.ddi=p>0?x.inv/p*30:null;x.difInv=p>0?(60-x.ddi)*p/30:null;x.tend=p>0?x.soUlt/p-1:null;
+    x.dSi=mtdDeltaV(x.si,x.siAnt);x.dSo=mtdDeltaV(x.so,x.soAnt);
+    x.partSi=tot.si>0?x.si/tot.si:null;x.partSo=tot.so>0?x.so/tot.so:null;return x}
+  function cerrar(x){medidas(x,x.promSo);
+    x.lista=Object.keys(x.hijos).map(function(k){return cerrar(x.hijos[k])})
+      .filter(function(h){return h.si||h.so||h.inv||h.promSo||h.siAnt||h.soAnt});
+    return x}
+  var lista=Object.keys(g).map(function(k){return cerrar(g[k])});
   var sel=hay?lista.filter(function(x){return sivsoFset.cliente[x.key]}):lista;
-  var totSel=sel.reduce(function(a,x){a.si+=x.si;a.so+=x.so;a.inv+=x.inv;return a},{si:0,so:0,inv:0});
-  var invTot=hay?totSel.inv:inv.total;
+  var T=sel.reduce(function(a,x){a.si+=x.si;a.so+=x.so;a.siAnt+=x.siAnt;a.soAnt+=x.soAnt;a.inv+=x.inv;a.p+=x.promSo;a.soUlt+=x.soUlt;return a},
+    {si:0,so:0,siAnt:0,soAnt:0,inv:0,p:0,soUlt:0});
+  if(!hay)T.inv=inv.total;
+  medidas(T,T.p*nP);
 
   document.getElementById('sivsoHintClientes').innerText=
-    lista.length+' clientes · INV al cierre de '+
-    (sivsoEtqMes(inv.mes)||'(sin foto de inventario)')+' (suma de sus productos) · '+
-    'clic en una fila para filtrar todo el tablero (varios a la vez) · clic en un encabezado para ordenar';
-  sivsoVistaClientes=lista;
+    lista.length+' clientes · "+" abre el detalle por BU y luego por producto (el botón del encabezado Cliente / BU abre o cierra todos) · '+
+    'INV al cierre de '+(sivsoEtqMes(inv.mes)||'(sin foto de inventario)')+' (suma de sus productos) · '+
+    'Prom SO = Sell Out promedio de un mes en '+(w.etq||'–')+' (últimos '+nP+' meses hasta el último con Sell Out) · '+
+    'DDI = INV ÷ Prom SO × 30 (días que alcanza el inventario) · '+
+    'Diferencia INV = (60 − DDI) × Prom SO ÷ 30 (cuánto falta, +, o sobra, −, para tener 60 días) · '+
+    'Tendencia = Sell Out de '+(cSO?SIVSO_MESES[cSO-1]:'–')+' ÷ Prom SO − 1 · '+
+    'clic en un nombre para filtrar todo el tablero · clic en un encabezado para ordenar';
+  sivsoArbolD={lista:lista,T:T,hay:hay,nP:nP};
+  sivsoPintarArbol()}
 
-  mtdTabla({id:'sivsoTablaClientes',filas:lista,orden:{k:'so',dir:'desc'},
-    vacio:'Sin clientes con los filtros actuales',
-    alOrdenar:function(v){sivsoVistaClientes=v},
-    clic:{valor:function(x){return x.key},activo:function(x){return!!(sivsoFset.cliente&&sivsoFset.cliente[x.key])},
-      haySel:function(){return hay},alClic:function(v){sivsoAlternar('cliente',v)},
-      titulo:'Clic para filtrar por este cliente'},
-    columnas:[
-      {k:'cliente',t:'Cliente',tipo:'txt',celda:function(x){return'<td>'+esc(x.cliente)+'</td>'}},
-      {k:'channel',t:'Canal',tipo:'txt',celda:function(x,t){return mtdTd(esc(x.channel||'–'),t)}},
-      {k:'kam',t:'KAM',tipo:'txt',celda:function(x,t){return mtdTd(esc(x.kam||'–'),t)}},
-      {k:'si',t:'Sell In',tipo:'num',celda:function(x,t){return mtdTd(sivsoFmt(x.si),t)}},
-      {k:'partSi',t:'% Part SI',tipo:'num',celda:function(x,t){return sivsoCeldaPart(x.partSi,t)}},
-      {k:'so',t:'Sell Out',tipo:'num',celda:function(x,t){return mtdTd(sivsoFmt(x.so),t)}},
-      {k:'partSo',t:'% Part SO',tipo:'num',celda:function(x,t){return sivsoCeldaPart(x.partSo,t)}},
-      {k:'inv',t:'INV',tipo:'num',celda:function(x,t){return mtdTd(sivsoFmt(x.inv),t)}}],
-    total:'<tr class="total"><td>'+mtdRotuloTotal(hay)+'</td><td></td><td></td>'+
-      mtdTd(sivsoFmt(totSel.si),'Sell In')+sivsoCeldaPart(tot.si>0?totSel.si/tot.si:null,'% Part SI')+
-      mtdTd(sivsoFmt(totSel.so),'Sell Out')+sivsoCeldaPart(tot.so>0?totSel.so/tot.so:null,'% Part SO')+
-      mtdTd(sivsoFmt(invTot),'INV')+'</tr>'})}
+/* Orden: una columna numérica ordena los tres niveles; Cliente / BU / Producto ordenan su nivel
+   por nombre (los demás niveles quedan por Sell Out). */
+function sivsoArbolOrdenar(l,nivel){
+  var o=sivsoArbol.orden,txt=SIVSO_ARB_TXT[o.k];
+  var col=txt!=null?(txt===nivel?{tipo:'txt',v:function(x){return x.nombre}}:{tipo:'num',k:'so'}):{tipo:'num',k:o.k};
+  return l.slice().sort(mtdComparador(col,txt!=null&&txt!==nivel?'desc':o.dir))}
+function sivsoOrdenarArbol(k){
+  var o=sivsoArbol.orden;
+  sivsoArbol.orden=o.k===k?{k:k,dir:o.dir==='desc'?'asc':'desc'}:{k:k,dir:SIVSO_ARB_TXT[k]!=null?'asc':'desc'};
+  sivsoPintarArbol()}
+function sivsoArbolClave(x,padre){return(padre?padre+'|':'')+x.nivel+':'+x.key}
+/* Claves de las filas de un nivel (0 = clientes, 1 = BU) que tienen detalle. */
+function sivsoArbolClavesNivel(nivel){
+  var D=sivsoArbolD,out=[];if(!D)return out;
+  D.lista.forEach(function(c){var kc=sivsoArbolClave(c);
+    if(nivel===0){if(c.lista.length)out.push(kc)}
+    else c.lista.forEach(function(b){if(b.lista.length)out.push(sivsoArbolClave(b,kc))})});
+  return out}
+function sivsoArbolNivelAbierto(nivel){var A=sivsoArbol.abiertos,l=sivsoArbolClavesNivel(nivel);
+  return!!l.length&&l.every(function(k){return A[k]})}
+/* Botón del encabezado: abre (o cierra, si ya está todo abierto) el nivel en todas las filas.
+   Abrir las BU abre también los clientes; cerrar los clientes cierra todo. */
+function sivsoArbolAbrirNivel(nivel){
+  var A=sivsoArbol.abiertos,l=sivsoArbolClavesNivel(nivel);
+  if(sivsoArbolNivelAbierto(nivel)){
+    if(nivel===0)sivsoArbol.abiertos={};else l.forEach(function(k){delete A[k]})}
+  else{l.forEach(function(k){A[k]=1});if(nivel===1)sivsoArbolClavesNivel(0).forEach(function(k){A[k]=1})}
+  sivsoPintarArbol()}
+function sivsoArbolClic(i,que){
+  var r=sivsoArbolFilas[i];if(!r)return;
+  if(que==='tg'){var A=sivsoArbol.abiertos;if(A[r.clave])delete A[r.clave];else A[r.clave]=1;sivsoPintarArbol();return}
+  sivsoAlternar(SIVSO_ARB_DIM[r.x.nivel],r.x.key)}
+function sivsoPintarArbol(){
+  var el=document.getElementById('sivsoTablaClientes'),D=sivsoArbolD;if(!el||!D)return;
+  var A=sivsoArbol.abiertos,o=sivsoArbol.orden,F=sivsoFset,vis=[];
+  function recorrer(l,nivel,padre,path,cli){
+    sivsoArbolOrdenar(l,nivel).forEach(function(x){var cl=sivsoArbolClave(x,padre),p=path.concat([x.nombre]),c=nivel===0?x:cli;
+      vis.push({x:x,clave:cl,path:p,cli:c});
+      if(nivel<2&&A[cl])recorrer(x.lista,nivel+1,cl,p,c)})}
+  recorrer(D.lista,0,'',[],null);
+  sivsoArbolFilas=vis;
+  sivsoVistaClientes=sivsoArbolOrdenar(D.lista,0);
+  if(!vis.length){mtdVacio('sivsoTablaClientes','Sin clientes con los filtros actuales');return}
+  var cont=el.parentNode,scroll=(cont&&cont.scrollTop)||0;
+  function th(k,t,nivelTg){var act=o.k===k,ab=nivelTg!=null&&sivsoArbolNivelAbierto(nivelTg);
+    return'<th class="ord'+(nivelTg!=null?' arb-th':'')+'" tabindex="0" aria-sort="'+(act?(o.dir==='asc'?'ascending':'descending'):'none')+
+      '" onclick="sivsoOrdenarArbol(\''+k+'\')" onkeydown="if(event.key===\'Enter\'){event.preventDefault();sivsoOrdenarArbol(\''+k+'\')}" title="Clic para ordenar">'+
+      (nivelTg!=null?'<button type="button" class="arb-tg" aria-expanded="'+ab+'" onclick="event.stopPropagation();sivsoArbolAbrirNivel('+nivelTg+')"'+
+        ' title="'+(ab?'Cerrar':'Abrir')+' el detalle de '+(nivelTg?'todas las BU':'todos los clientes')+'">'+(ab?'−':'+')+'</button>':'')+
+      esc(t)+'</th>'}
+  var h='<thead><tr>'+th('cli','Cliente',0)+th('bu','BU',1)+th('prod','Producto')+
+    SIVSO_ARB_COLS.map(function(c){return th(c.k,c.k==='promSo'?'Prom SO ('+D.nP+'m)':c.t)}).join('')+'</tr></thead><tbody>';
+  vis.forEach(function(r,i){
+    var x=r.x,fs=F[SIVSO_ARB_DIM[x.nivel]],sel=!!(fs&&fs[x.key]),ab=!!A[r.clave];
+    var tg=x.nivel<2?(x.lista.length?'<button type="button" class="arb-tg" aria-expanded="'+ab+'" onclick="sivsoArbolClic('+i+',\'tg\')"'+
+      ' title="'+(ab?'Cerrar':'Ver')+' el detalle por '+(x.nivel?'producto':'BU')+'">'+(ab?'−':'+')+'</button>':'<span class="arb-tg vacio"></span>'):'';
+    var nom='<span class="arb-nom" tabindex="0" role="button" onclick="sivsoArbolClic('+i+',\'f\')"'+
+      ' onkeydown="if(event.key===\'Enter\'){event.preventDefault();sivsoArbolClic('+i+',\'f\')}"'+
+      ' title="'+esc(x.nombre)+' · clic para filtrar todo el tablero">'+esc(x.nombre)+'</span>';
+    h+='<tr class="arb-n'+x.nivel+(sel?' sel':(fs?' atenuada':''))+(ab?' abierta':'')+'">';
+    for(var j=0;j<3;j++)h+=j===x.nivel?'<td class="arb-c" data-th="'+SIVSO_ARB_NIV[j]+'">'+tg+nom+'</td>':'<td class="arb-v"></td>';
+    h+=SIVSO_ARB_COLS.map(function(c){return c.c(x,c.t)}).join('')+'</tr>'});
+  h+='<tr class="total"><td>'+mtdRotuloTotal(D.hay)+'</td><td class="arb-v"></td><td class="arb-v"></td>'+
+    SIVSO_ARB_COLS.map(function(c){return c.c(D.T,c.t)}).join('')+'</tr></tbody>';
+  el.innerHTML=h;
+  if(cont&&scroll)cont.scrollTop=scroll}
+
+/* Celdas de días de inventario: DDI en días enteros; Diferencia INV con signo (+ falta para 60
+   días, − sobra); Tendencia con flecha verde (sube) / roja (baja) / – (igual), como el Looker. */
+function sivsoDdiTxt(v){return v==null||!isFinite(v)?'–':FMT.format(Math.round(v))}
+function sivsoCeldaDif(v,t){
+  if(v==null||!isFinite(v))return mtdTd('–',t);
+  var r=Math.round(v);return mtdTd((r>0?'+':'')+sivsoFmt(r),t)}
+function sivsoCeldaTend(v,t){
+  if(v==null||!isFinite(v))return mtdTd('–',t);
+  var p=Math.round(v*1000)/10,c=p>0?'sivso-tend-up':(p<0?'sivso-tend-down':'sivso-tend-0');
+  return mtdTd('<span class="'+c+'">'+(p>0?'▲ +':(p<0?'▼ ':''))+String(p).replace('.',',')+' %</span>',t)}
 
 /* ── CSV ── */
 function sivsoCsvProductos(){
@@ -1180,11 +1333,16 @@ function sivsoCsvProductos(){
     'si_vs_so_productos_'+mtdCsvFecha()+'.csv')}
 
 function sivsoCsvClientes(){
-  mtdDescargarCsv(sivsoVistaClientes,[
-    {clave:'cliente',titulo:'Cliente'},{clave:'channel',titulo:'Canal'},{clave:'kam',titulo:'KAM'},
-    {clave:'si',titulo:'Sell In'},{clave:'partSi',titulo:'% Part SI'},
-    {clave:'so',titulo:'Sell Out'},{clave:'partSo',titulo:'% Part SO'},
-    {clave:'inv',titulo:'INV'}],
+  var filas=sivsoArbolFilas.map(function(r){var x=r.x,c=r.cli||{};
+    return{nivel:SIVSO_ARB_NIV[x.nivel],cliente:r.path[0]||'',bu:r.path[1]||'',producto:r.path[2]||'',channel:c.channel||'',kam:c.kam||'',
+      si:x.si,dSi:x.dSi,so:x.so,dSo:x.dSo,partSi:x.partSi,partSo:x.partSo,promSo:x.promSo,inv:x.inv,ddi:x.ddi,difInv:x.difInv,tend:x.tend}});
+  mtdDescargarCsv(filas,[
+    {clave:'nivel',titulo:'Nivel'},{clave:'cliente',titulo:'Cliente'},{clave:'bu',titulo:'BU'},{clave:'producto',titulo:'Producto'},
+    {clave:'channel',titulo:'Canal'},{clave:'kam',titulo:'KAM'},
+    {clave:'si',titulo:'Sell In'},{clave:'dSi',titulo:'ΔSI %'},{clave:'so',titulo:'Sell Out'},{clave:'dSo',titulo:'ΔSO %'},
+    {clave:'partSi',titulo:'% Part SI'},{clave:'partSo',titulo:'% Part SO'},
+    {clave:'promSo',titulo:'Prom SO'},{clave:'inv',titulo:'INV'},{clave:'ddi',titulo:'DDI'},
+    {clave:'difInv',titulo:'Diferencia INV'},{clave:'tend',titulo:'Tendencia'}],
     'si_vs_so_clientes_'+mtdCsvFecha()+'.csv')}
 
 /* ── Datos de ejemplo para abrir el HTML fuera de Apps Script ──

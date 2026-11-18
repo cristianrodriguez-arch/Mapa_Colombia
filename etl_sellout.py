@@ -1024,7 +1024,10 @@ def ejecutar_s3(cfg, limite=None):
                 filas_tok[tok] += 1
                 u = normalizar_numero(celda(fila, col["units"])) or 0.0
                 a = normalizar_numero(celda(fila, col["amount"])) or 0.0
-                for acumulado in (cs[(cli, sku, am)], pm[(tok, am)], ps[(tok, sku, am)]):
+                # Canal y Channel 2 de LA FILA: un mismo PDV vende por TIENDA y por DIGITAL.
+                cc = (normalizar_texto(celda(fila, col.get("canal"))).upper(),
+                      normalizar_texto(celda(fila, col.get("subcanal"))).upper())
+                for acumulado in (cs[(cli, sku, am)], pm[(tok, am, cc)], ps[(tok, sku, am, cc)]):
                     acumulado[0] += u
                     acumulado[1] += a
                 ic, ip, isk = info_cli[cli], info_pdv[tok], info_sku[sku]
@@ -1052,12 +1055,12 @@ def ejecutar_s3(cfg, limite=None):
         reglas_pdv[regla] += filas_tok[tok]
     pm_tok, ps_tok, info_tok = pm, ps, info_pdv
     pm, ps, info_pdv = defaultdict(lambda: [0.0, 0.0]), defaultdict(lambda: [0.0, 0.0]), defaultdict(dict)
-    for (tok, am), v in pm_tok.items():
-        x = pm[(clave_pdv[tok], am)]
+    for (tok, am, cc), v in pm_tok.items():
+        x = pm[(clave_pdv[tok], am, cc)]
         x[0] += v[0]
         x[1] += v[1]
-    for (tok, s, am), v in ps_tok.items():
-        x = ps[(clave_pdv[tok], s, am)]
+    for (tok, s, am, cc), v in ps_tok.items():
+        x = ps[(clave_pdv[tok], s, am, cc)]
         x[0] += v[0]
         x[1] += v[1]
     for tok, inf in info_tok.items():
@@ -1090,10 +1093,13 @@ def ejecutar_s3(cfg, limite=None):
     def bu_de(sku):
         return ((productos.get(sku) or {}).get("bu") or SIN_BU).upper()
     pb = defaultdict(lambda: [0.0, 0.0])
-    for (p, s, am), v in ps.items():
-        x = pb[(p, bu_de(s), am)]
+    for (p, s, am, cc), v in ps.items():
+        x = pb[(p, bu_de(s), am, cc)]
         x[0] += v[0]
         x[1] += v[1]
+    # Canal + Channel 2 de cada fila: índice en "canales" (5.º elemento de pm, pb y los fragmentos).
+    canales = sorted({k[2] for k in pm})
+    i_cc = {c: i for i, c in enumerate(canales)}
     bus = sorted({k[1] for k in pb})
     i_bu = {b: i for i, b in enumerate(bus)}
     generado = datetime.now().isoformat(timespec="seconds")
@@ -1109,7 +1115,8 @@ def ejecutar_s3(cfg, limite=None):
                  val(info_pdv[p], "depto"), val(info_pdv[p], "canal"), val(info_pdv[p], "subcanal"),
                  val(info_pdv[p], "pos")] for p in pdvs],
         "cs": [[i_cli[c], i_sku[s], i_mes[am], r(v[0]), r(v[1])] for (c, s, am), v in sorted(cs.items())],
-        "pm": [[i_pdv[p], i_mes[am], r(v[0]), r(v[1])] for (p, am), v in sorted(pm.items())],
+        "pm": [[i_pdv[p], i_mes[am], r(v[0]), r(v[1]), i_cc[cc]] for (p, am, cc), v in sorted(pm.items())],
+        "canales": [list(c) for c in canales],
         "bus": bus,
         "fragmentos": {"pdv": n_frag_pdv, "sku": n_frag_sku},
         "meta": {"fuentes": origen, "filas": dict(sorted(conteo.items())),
@@ -1118,10 +1125,10 @@ def ejecutar_s3(cfg, limite=None):
     }
     frag_pdv = [defaultdict(list) for _ in range(n_frag_pdv)]
     frag_sku = [defaultdict(list) for _ in range(n_frag_sku)]
-    for (p, s, am), v in sorted(ps.items()):
-        ip, isk, im = i_pdv[p], i_sku[s], i_mes[am]
-        frag_pdv[ip % n_frag_pdv][ip].append([isk, im, r(v[0]), r(v[1])])
-        frag_sku[isk % n_frag_sku][isk].append([ip, im, r(v[0]), r(v[1])])
+    for (p, s, am, cc), v in sorted(ps.items()):
+        ip, isk, im, ic = i_pdv[p], i_sku[s], i_mes[am], i_cc[cc]
+        frag_pdv[ip % n_frag_pdv][ip].append([isk, im, r(v[0]), r(v[1]), ic])
+        frag_sku[isk % n_frag_sku][isk].append([ip, im, r(v[0]), r(v[1]), ic])
 
     salida.mkdir(parents=True, exist_ok=True)
     escritos = []
@@ -1131,8 +1138,8 @@ def ejecutar_s3(cfg, limite=None):
 
     # Un archivo por BU (todos juntos pasan de 5 MB y la web app ya no los podría cachear).
     por_bu = [[] for _ in bus]
-    for (p, b, am), v in sorted(pb.items()):
-        por_bu[i_bu[b]].append([i_pdv[p], i_mes[am], r(v[0]), r(v[1])])
+    for (p, b, am, cc), v in sorted(pb.items()):
+        por_bu[i_bu[b]].append([i_pdv[p], i_mes[am], r(v[0]), r(v[1]), i_cc[cc]])
     for n, filas_bu in enumerate(por_bu):
         guardar(f"s3_pb_{n:02d}.json", {"generado": generado, "bu": bus[n], "pb": filas_bu})
     for n, d in enumerate(frag_pdv):

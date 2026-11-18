@@ -26,6 +26,8 @@ var ybData=null,ybCargando=false,ybCbs=[],ybErr='';
 var ybFotosData=null,ybFotosCargando=false,ybFotosCbs=[];
 var YB_PILARES=[],ybGrupos=[],ybProductos=[],ybTiendas=[],ybMis=[],ybTiposFoto=[];
 var ybPorId15={},ybPorPos={},ybVer=0;
+var ybBus=[],ybGruposBu=[],ybBajadas=[],ybTesters=[];
+var YB_KEYS=['g','d','l','p','t'];   // claves de columna de cada pilar (Global, Disp., Lineal, Vis. perm., Vis. campaña)
 
 /* Umbrales del semáforo (fracción del puntaje máximo del pilar). */
 var YB_UMBRALES={alto:.85,medio:.70,bajo:.50};
@@ -100,7 +102,10 @@ function ybExpandir(d){
   d=d||{};ybData=d;ybVer++;
   YB_PILARES=(d.pilares||[]).map(function(p){return{k:p.k,etiqueta:p.etiqueta,max:p.max||100}});
   ybGrupos=d.grupos||[];ybTiposFoto=d.tiposFoto||[];
-  ybProductos=(d.productos||[]).map(function(p,i){return{i:i,nombre:p[0],g:p[1],grupo:ybGrupos[p[1]]||''}});
+  ybBus=d.bus||[];ybGruposBu=d.gruposBu||[];ybBajadas=d.bajadas||['0 bajadas','1 bajada','2 o más bajadas'];
+  ybTesters=(d.testers||[]).map(function(x,i){return{i:i,nombre:x[0],bu:x[1]==null?-1:x[1]}});
+  ybProductos=(d.productos||[]).map(function(p,i){var bu=ybGruposBu[p[1]];
+    return{i:i,nombre:p[0],g:p[1],grupo:ybGrupos[p[1]]||'',bu:bu==null?-1:bu}});
   ybTiendas=(d.tiendas||[]).map(function(t,i){
     var o={nombre:t[1]||t[0],cliente:t[2]||'',depto:t[3]||'',ciudad:t[4]||'',dir:t[5]||'',lat:t[6],lng:t[7]};
     return{i:i,id:String(t[0]),id15:String(t[0]).slice(0,15),pos:t[8]||'',enDir:!!t[9],o:o,p:null,
@@ -109,7 +114,8 @@ function ybExpandir(d){
   var dl=d.delegados||[],cp=d.campanas||[];
   ybMis=(d.misiones||[]).map(function(m,i){
     return{i:i,t:ybTiendas[m[0]],fecha:m[1],mes:String(m[1]).slice(0,7),del:dl[m[2]]||'Sin delegado',
-      s:[m[3],m[4],m[5],m[6],m[7]],disp:m[8]||'',camp:cp[m[9]]||'',clave:m[10]}})
+      s:[m[3],m[4],m[5],m[6],m[7]],disp:m[8]||'',camp:cp[m[9]]||'',clave:m[10],
+      bj:m[11]==null?-1:m[11],com:m[12]||'',tf:m[13]==null?-1:m[13],tdisp:m[14]||''}})
     .filter(function(m){return m.t&&m.fecha});
   ybMis.sort(function(a,b){return a.fecha<b.fecha?1:(a.fecha>b.fecha?-1:a.i-b.i)});
   ybPorId15={};ybPorPos={};
@@ -187,6 +193,9 @@ var YB_DIMS=[
   {dim:'del',     etq:'Usuario (Delegado)', fijo:true},
   {dim:'cliente', etq:'Cliente',            fijo:true},
   {dim:'rol',     etq:'Rol del delegado',   fijo:true},   // Team de la hoja Asignacion (VM / LAM)
+  {dim:'pilar',   etq:'Pilar',              fijo:true, unico:true},   // qué puntaje muestran las visuales
+  {dim:'bu',      etq:'BU',                 fijo:true},   // filtra productos y testers por BU
+  {dim:'bajada',  etq:'Bajadas (muebles)',  fijo:true},
   {dim:'camp',    etq:'Campaña'},
   {dim:'depto',   etq:'Departamento'},
   {dim:'ciudad',  etq:'Ciudad'},
@@ -195,12 +204,12 @@ var YB_DIMS=[
   {dim:'grupo',   etq:'Grupo de producto'},
   {dim:'producto',etq:'Producto',           tope:300},
   {dim:'tipoFoto',etq:'Tipo de foto'}];
-var YB_DIMS_MISION=['tienda','del','rol','cliente','camp','depto','ciudad','zona','brick'];
+var YB_DIMS_MISION=['tienda','del','rol','cliente','camp','depto','ciudad','zona','brick','bajada'];
 var ybFiltros={},ybFset={},ybVisibles={},YB_SEL={};
 YB_DIMS.forEach(function(c){ybFiltros[c.dim]=[];ybFset[c.dim]=null;if(c.fijo)ybVisibles[c.dim]=true});
 var ybFecha={modo:'todo',d1:'',d2:''};
 var ybAlcance='ultima';          // 'ultima' | 'todas'
-var ybSub='resumen';             // 'resumen' | 'agotados' | 'fotos'
+var ybSub='resumen';             // 'resumen' | 'agotados' | 'detalle' | 'testers' | 'fotos'
 
 function ybEtqDim(dim){for(var i=0;i<YB_DIMS.length;i++)if(YB_DIMS[i].dim===dim)return YB_DIMS[i].etq;return dim}
 
@@ -215,8 +224,15 @@ function ybValor(m,dim){
   switch(dim){
     case'tienda':return t.id;case'del':return m.del;case'rol':return ybRolDe(m.del);case'cliente':return t.cliente;
     case'camp':return m.camp;case'depto':return t.depto;case'ciudad':return t.ciudad;
-    case'zona':return t.zona;case'brick':return t.brick||'Sin brick'}
+    case'zona':return t.zona;case'brick':return t.brick||'Sin brick';case'bajada':return ybBajadaEtq(m)}
   return''}
+
+/* Bajadas (muebles ISDIN) de la encuesta: "0 bajadas" · "1 bajada" · "2 o más bajadas" · "Sin dato". */
+function ybBajadaEtq(m){return m.bj>=0&&ybBajadas[m.bj]?ybBajadas[m.bj]:'Sin dato'}
+/* Pilar elegido en el filtro Pilar (índice de YB_PILARES; sin elegir = 0, Global). Cambia el
+   puntaje de la evolución, las barras por cliente / delegado y el orden de las tablas de PDV. */
+function ybPilar(){var v=ybFiltros.pilar&&ybFiltros.pilar[0],i=v==null?0:Number(v);return YB_PILARES[i]?i:0}
+function ybPilarCorto(i){var p=YB_PILARES[i];return p?(YB_CORTO[p.k]||p.etiqueta):''}
 
 /* Rango de fechas [desde, hasta] (ISO, inclusive) del filtro de Fecha. */
 function ybRangoFecha(){
@@ -254,16 +270,25 @@ function ybBase(lista){return ybAlcance==='ultima'?ybUltimas(lista):lista}
 /* Productos que cuentan según los filtros de grupo/producto. */
 function ybProductosActivos(){
   return ybProductos.filter(function(p){
+    if(ybFset.bu&&!ybFset.bu[String(p.bu)])return false;
     if(ybFset.grupo&&!ybFset.grupo[String(p.g)])return false;
     if(ybFset.producto&&!ybFset.producto[String(p.i)])return false;
     return true})}
 
+/* Testers que cuentan según el filtro BU (grupo / producto no aplican: son otra lista). */
+function ybTestersActivos(){
+  return ybTesters.filter(function(x){return!ybFset.bu||ybFset.bu[String(x.bu)]})}
+
 /* Opciones en cascada (lo que dejan los DEMÁS filtros), con conteo de PDV. */
 function ybOpciones(dim){
+  if(dim==='pilar')return YB_PILARES.map(function(p,i){return{valor:String(i),etiqueta:p.etiqueta+' (máx. '+p.max+')'}});
+  if(dim==='bu')return ybBus.map(function(b,i){
+    var n=ybProductos.filter(function(p){return p.bu===i}).length+ybTesters.filter(function(x){return x.bu===i}).length;
+    return{valor:String(i),etiqueta:b,cnt:n}}).filter(function(o){return o.cnt>0});
   if(dim==='grupo')return ybGrupos.map(function(g,i){
-    var n=ybProductos.filter(function(p){return p.g===i}).length;
+    var n=ybProductos.filter(function(p){return p.g===i&&(!ybFset.bu||ybFset.bu[String(p.bu)])}).length;
     return{valor:String(i),etiqueta:g,cnt:n}}).filter(function(o){return o.cnt>0});
-  if(dim==='producto')return ybProductos.filter(function(p){return!ybFset.grupo||ybFset.grupo[String(p.g)]})
+  if(dim==='producto')return ybProductos.filter(function(p){return(!ybFset.grupo||ybFset.grupo[String(p.g)])&&(!ybFset.bu||ybFset.bu[String(p.bu)])})
     .map(function(p){return{valor:String(p.i),etiqueta:p.nombre+' · '+p.grupo}});
   if(dim==='tipoFoto')return ybTiposFoto.map(function(t,i){return{valor:String(i),etiqueta:t}});
   var cnt={},etq={};
@@ -285,6 +310,9 @@ function ybPrepararFiltros(){
 function ybConstruirCampos(){
   var cont=document.getElementById('ybCampos');if(!cont||cont.childNodes.length)return;
   cont.innerHTML=YB_DIMS.map(function(c){
+    // Pilar (un solo valor): desplegable simple, como Fecha; las opciones se llenan en ybPintarPilar
+    if(c.unico)return'<div class="campo yb-campo" data-dim="'+c.dim+'"><label for="ybSel_'+c.dim+'"><span>'+esc(c.etq)+'</span></label>'+
+      '<select id="ybSel_'+c.dim+'" class="yb-sel-simple" onchange="ybCambiarFiltro(\''+c.dim+'\',[this.value])"></select></div>';
     return'<div class="campo yb-campo" data-dim="'+c.dim+'"'+(ybVisibles[c.dim]?'':' hidden')+'>'+
       '<label for="ybSel_'+c.dim+'"><span>'+esc(c.etq)+'</span>'+
       (c.fijo?'':'<button type="button" class="chip-x" title="Quitar este filtro" onclick="ybQuitarDim(event,\''+c.dim+'\')">\u2715</button>')+
@@ -293,7 +321,8 @@ function ybConstruirCampos(){
 function ybCrearSelectores(){
   if(ybSelCreados)return;ybSelCreados=true;
   YB_DIMS.forEach(function(c){
-    YB_SEL[c.dim]=new Selector({dim:c.dim,id:'ybSel_'+c.dim,multi:true,tope:c.tope||400,
+    if(c.unico)return;
+    YB_SEL[c.dim]=new Selector({dim:c.dim,id:'ybSel_'+c.dim,multi:!c.unico,tope:c.tope||400,
       ops:function(){return ybOpciones(c.dim)},
       sel:function(){return ybFiltros[c.dim]},
       alCambiar:function(v){ybCambiarFiltro(c.dim,v)}})});
@@ -305,6 +334,8 @@ function ybSincronizar(forzar){
     if(forzar)YB_SEL[d].fijar();else YB_SEL[d].refrescar(false)})}
 
 function ybCambiarFiltro(dim,vals){
+  if(YB_DIMS.some(function(c){return c.dim===dim&&c.unico})&&vals&&vals.length>1)vals=[vals[vals.length-1]];
+  if(dim==='pilar'&&vals&&vals.length===1&&vals[0]==='0')vals=[];   // Global = sin filtro
   setYbFiltro(dim,vals);
   if(dim==='grupo'&&ybFiltros.producto.length){   // producto debe pertenecer al grupo
     setYbFiltro('producto',ybFiltros.producto.filter(function(i){var p=ybProductos[Number(i)];
@@ -316,6 +347,7 @@ function ybCambiarFiltro(dim,vals){
 function ybAlternar(dim,val){
   var a=ybFiltros[dim].slice(),i=a.indexOf(val);
   if(i===-1)a.push(val);else a.splice(i,1);
+  if(dim==='pilar')a=i===-1&&val!=='0'?[val]:[];
   setYbFiltro(dim,a);ybMostrarDim(dim);
   ybRender();if(YB_SEL[dim])YB_SEL[dim].fijar();ybSincronizar(false)}
 
@@ -347,7 +379,22 @@ function ybAlternarPop(ev){
   document.getElementById('ybPopLista').innerHTML=libres.length?libres.map(function(c){
     return'<button type="button" class="pop-op" onclick="ybAgregarDim(\''+c.dim+'\')">'+esc(c.etq)+'</button>'}).join(''):
     '<div class="pop-vacio">Ya están todos los filtros en la barra</div>';
-  pop.hidden=false}
+  pop.hidden=false;ybUbicarPop(pop)}
+/* Antes quedaba anclado a la DERECHA del botón y se abría hacia la izquierda, debajo del riel
+   (cortado). Ahora se ancla a la izquierda y, si no cabe, se corre lo justo para quedar dentro
+   de la ventana (iPad / celular). */
+function ybUbicarPop(pop){
+  if(!pop||!pop.style)return;
+  pop.style.left='0px';pop.style.right='auto';
+  if(!pop.getBoundingClientRect||typeof window==='undefined')return;
+  var vw=window.innerWidth||(document.documentElement&&document.documentElement.clientWidth)||0;if(!vw)return;
+  // Límites: la ventana y el área de la pestaña (#vistaYoobic tiene scroll propio: salirse crea barra horizontal)
+  var izq=8,der=vw-8,v=document.getElementById('vistaYoobic');
+  if(v&&v.getBoundingClientRect&&v.clientWidth){var rv=v.getBoundingClientRect();izq=Math.max(izq,rv.left+8);der=Math.min(der,rv.left+v.clientWidth-8)}
+  var r=pop.getBoundingClientRect(),dx=0;
+  if(r.right>der)dx=der-r.right;
+  if(r.left+dx<izq)dx=izq-r.left;
+  if(dx)pop.style.left=Math.round(dx)+'px'}
 function ybCerrarPop(){var pop=document.getElementById('ybPop');if(pop)pop.hidden=true}
 function ybAgregarDim(dim){ybMostrarDim(dim);ybCerrarPop();ybActualizarContador()}
 
@@ -383,6 +430,8 @@ function ybActualizarContador(){
 function ybNombreValor(dim,v){
   if(dim==='tienda'){for(var i=0;i<ybTiendas.length;i++)if(ybTiendas[i].id===v)return ybTiendas[i].nombre;return v}
   if(dim==='grupo')return ybGrupos[Number(v)]||v;
+  if(dim==='bu')return ybBus[Number(v)]||v;
+  if(dim==='pilar'){var pi=YB_PILARES[Number(v)];return pi?pi.etiqueta:v}
   if(dim==='producto'){var p=ybProductos[Number(v)];return p?p.nombre:v}
   if(dim==='tipoFoto')return ybTiposFoto[Number(v)]||v;
   return v}
@@ -399,21 +448,35 @@ function ybPintarChips(){
 /* ══════════ Render ══════════ */
 function ybVerSub(v){
   ybSub=v;
-  ['resumen','agotados','fotos'].forEach(function(k){
+  ['resumen','agotados','detalle','testers','fotos'].forEach(function(k){
     var s=document.getElementById('ybSub'+k.charAt(0).toUpperCase()+k.slice(1));if(s)s.hidden=(k!==v)});
   document.querySelectorAll('#ybSubtabs .tab').forEach(function(b){
     b.classList.toggle('activa',b.getAttribute('data-v')===v)});
-  // Fotos muestra TODO el historial: "Última encuesta / Todas" no aplica ahí.
-  var al=document.querySelector('.yb-alcance');if(al)al.hidden=(v==='fotos');
+  // Fotos muestra TODO el historial y Detalle PDV siempre una fila por PDV: "Última / Todas" no aplica.
+  var al=document.querySelector('.yb-alcance');if(al)al.hidden=(v==='fotos'||v==='detalle');
   ybRender()}
 
 function ybRender(){
   if(!ybData)return;
-  ybActualizarContador();ybPintarChips();
+  ybActualizarContador();ybPintarChips();ybPintarPilar();
   var lista=ybFiltradas(null);
   if(ybSub==='resumen')ybRenderResumen(lista);
   else if(ybSub==='agotados')ybRenderAgotados(lista);
+  else if(ybSub==='detalle')ybRenderDetalle(lista);
+  else if(ybSub==='testers')ybRenderTesters(lista);
   else ybRenderFotos(lista)}
+
+/* Desplegable del filtro Pilar (sin elegir = Global). */
+function ybPintarPilar(){
+  var el=document.getElementById('ybSel_pilar');if(!el)return;
+  var k=String(ybPilar()),h=YB_PILARES.map(function(p,i){return'<option value="'+i+'"'+(String(i)===k?' selected':'')+'>'+esc(p.etiqueta)+'</option>'}).join('');
+  if(el.innerHTML!==h)el.innerHTML=h;el.value=k}
+
+/* Celda de Comentarios (columna "Comentarios" de la hoja Yoobic, de la encuesta de la fila). */
+function ybTdCom(f,th){var c=f.com||'';
+  return'<td data-th="'+esc(th||'Comentarios')+'" class="txt yb-com"'+(c?' title="'+esc(c)+'"':'')+'>'+
+    (c?esc(c.length>90?c.slice(0,88)+'…':c):'<span class="yb-nd">–</span>')+'</td>'}
+function ybColCom(){return{k:'com',t:'Comentarios',tipo:'txt',celda:ybTdCom}}
 
 /* Promedio de cada pilar (ignora puntajes vacíos; 0 sí cuenta). */
 function ybPromedios(lista){
@@ -442,7 +505,7 @@ function ybRenderResumen(lista){
   var h='';
   YB_PILARES.forEach(function(p,i){
     var v=prom[i],pct=v==null?null:v/p.max;
-    h+='<div class="yb-kpi'+(i===0?' yb-kpi-global':'')+'">'+
+    h+='<div class="yb-kpi'+(i===0?' yb-kpi-global':'')+(i===ybPilar()&&i>0?' yb-kpi-sel':'')+'">'+
       '<div class="etq" title="'+esc(p.etiqueta)+'">'+esc(p.etiqueta)+'</div>'+
       '<div class="num"><span style="color:'+(v==null?'var(--muted)':ybColorTxt(pct))+'">'+ybNum(v)+'</span>'+
       '<span class="de"> / '+p.max+'</span></div>'+
@@ -458,8 +521,12 @@ function ybRenderResumen(lista){
     ' · puntajes oficiales de Yoobic · semáforo: ≥ 85 % alto · 70–85 % medio · 50–70 % bajo · < 50 % muy bajo';
 
   ybRenderEvolucion(lista);
+  var kP=ybPilar(),nomP=kP?ybPilarCorto(kP):'Global';
+  var ti=document.getElementById('ybTitEvol');if(ti)ti.innerText=(kP?YB_PILARES[kP].etiqueta:'Global Perfect Store')+' por mes';
+  ti=document.getElementById('ybTitCli');if(ti)ti.innerText=nomP+' por cliente';
+  ti=document.getElementById('ybTitDel');if(ti)ti.innerText=nomP+' por delegado';
 
-  // Global por cliente y por delegado (clic = filtrar)
+  // Pilar elegido (Global por defecto) por cliente y por delegado (clic = filtrar)
   ybBarrasDim('ybBarCliente','cliente',base,function(m){return m.t.cliente},12);
   ybBarrasDim('ybBarDelegado','del',base,function(m){return m.del},12);
   ybRenderCobertura();
@@ -467,9 +534,9 @@ function ybRenderResumen(lista){
   // Ranking de PDV
   var filas=ybUltimas(lista).map(function(m){var d=ybDispMision(m,prods);
     return{m:m,id:m.t.id,pdv:m.t.nombre,cliente:m.t.cliente,ciudad:m.t.ciudad,fecha:m.fecha,del:m.del,
-      g:m.s[0],d:m.s[1],l:m.s[2],p:m.s[3],t:m.s[4],ag:d.no,disp:d.pct}});
+      g:m.s[0],d:m.s[1],l:m.s[2],p:m.s[3],t:m.s[4],ag:d.no,disp:d.pct,com:m.com}});
   var P=YB_PILARES;
-  mtdTabla({id:'ybTablaPdv',filas:filas,orden:{k:'g',dir:'asc'},vacio:'Sin encuestas con los filtros actuales',
+  mtdTabla({id:'ybTablaPdv',filas:filas,orden:{k:YB_KEYS[kP],dir:'asc'},vacio:'Sin encuestas con los filtros actuales',
     columnas:[
       {k:'pdv',t:'PDV',tipo:'txt',celda:function(f,th){return'<td data-th="'+esc(th)+'" class="txt"><b>'+esc(f.pdv)+'</b><span class="sub">'+esc(f.cliente)+' · '+esc(f.ciudad)+'</span></td>'}},
       {k:'fecha',t:'Última encuesta',tipo:'txt',celda:function(f,th){return'<td data-th="'+esc(th)+'">'+ybFechaTxt(f.fecha)+'</td>'}},
@@ -480,12 +547,13 @@ function ybRenderResumen(lista){
       {k:'p',t:'Vis. perm.',celda:function(f,th){return'<td data-th="'+esc(th)+'">'+ybCeldaPuntaje(f.p,P[3].max)+'</td>'}},
       {k:'t',t:'Vis. campaña',celda:function(f,th){return'<td data-th="'+esc(th)+'">'+ybCeldaPuntaje(f.t,P[4].max)+'</td>'}},
       {k:'ag',t:'Agotados',celda:function(f,th){return'<td data-th="'+esc(th)+'"'+(f.ag?' class="yb-rojo"':'')+'>'+FMT.format(f.ag)+'</td>'}},
+      ybColCom(),
       {k:'fotos',t:'',tipo:'txt',v:function(){return null},celda:function(f){
         return'<td><button type="button" class="mtd-btn-csv" onclick="event.stopPropagation();ybAbrirFotos('+f.m.t.i+')">📷 Fotos</button></td>'}}],
     clic:{valor:function(f){return f.id},activo:function(f){return!!(ybFset.tienda&&ybFset.tienda[f.id])},
       haySel:function(){return!!ybFset.tienda},alClic:function(v){ybAlternar('tienda',v)},
       titulo:'Clic para filtrar por este PDV'}});
-  document.getElementById('ybHintPdv').innerText=FMT.format(filas.length)+' PDV · última encuesta de cada uno · ordenado del peor al mejor Global (clic en un encabezado para reordenar)'}
+  document.getElementById('ybHintPdv').innerText=FMT.format(filas.length)+' PDV · última encuesta de cada uno · ordenado del peor al mejor '+nomP+' (clic en un encabezado para reordenar)'}
 
 /* Columnas por mes: promedio Global de TODAS las encuestas del mes (evolución),
    color = nivel, etiqueta directa encima. Debajo, la tabla mes × pilar. */
@@ -499,11 +567,12 @@ function ybRenderEvolucion(lista){
   if(meses.length>18)meses=meses.slice(-18);
   var P=YB_PILARES,filas=meses.map(function(k){var pr=ybPromedios(porMes[k]);
     return{mes:k,n:porMes[k].length,pdv:ybUltimas(porMes[k]).length,g:pr[0],d:pr[1],l:pr[2],p:pr[3],t:pr[4]}});
+  var kP=ybPilar(),kk=YB_KEYS[kP];
   var h='<div class="yb-cols">';
-  filas.forEach(function(f){var pct=f.g==null?null:f.g/P[0].max;
+  filas.forEach(function(f){var pct=f[kk]==null?null:f[kk]/P[kP].max;
     h+='<div class="yb-col" title="'+esc(em(f.mes))+'\nGlobal '+ybNum(f.g)+' · Disp. '+ybNum(f.d)+' · Lineal '+ybNum(f.l)+
       ' · Vis. perm. '+ybNum(f.p)+' · Vis. campaña '+ybNum(f.t)+'\n'+f.n+' encuestas · '+f.pdv+' PDV">'+
-      '<div class="yb-col-val">'+ybNum(f.g)+'</div>'+
+      '<div class="yb-col-val">'+ybNum(f[kk])+'</div>'+
       '<div class="yb-col-pista"><span style="height:'+(pct==null?0:Math.max(2,Math.round(Math.min(1,pct)*100)))+'%;background:'+ybColorPct(pct)+'"></span></div>'+
       '<div class="yb-col-etq">'+esc(em(f.mes))+'</div></div>'});
   c.innerHTML=h+'</div>';
@@ -569,9 +638,10 @@ function ybCoberturaRefrescar(){
   if(ybData&&typeof mtdVistaActiva!=='undefined'&&mtdVistaActiva==='yoobic'&&ybSub==='resumen')ybRender()}
 
 /* {id tienda: fecha de su última encuesta en el rango} (ybMis va de la más reciente a la más antigua). */
+var ybComCob={};   // {id tienda: comentario de su última encuesta en el rango}
 function ybTiendasEncuestadas(){
-  var r=ybRangoFecha(),s={};
-  ybMis.forEach(function(m){if((!r||(m.fecha>=r[0]&&m.fecha<=r[1]))&&!s[m.t.id])s[m.t.id]=m.fecha});
+  var r=ybRangoFecha(),s={};ybComCob={};
+  ybMis.forEach(function(m){if((!r||(m.fecha>=r[0]&&m.fecha<=r[1]))&&!s[m.t.id]){s[m.t.id]=m.fecha;ybComCob[m.t.id]=m.com||''}});
   return s}
 function ybTiendaDePdv(id,pos){
   return(id&&ybPorId15[String(id).slice(0,15)])||(pos&&ybPorPos[pos])||null}
@@ -586,7 +656,7 @@ function ybCalcularCobertura(){
     var ciudad=p?(p.poblacion&&p.poblacion!=='Sin Población'?p.poblacion:''):(t?t.ciudad:'');
     return{nombre:(p&&p.name&&p.name!=='Sin Nombre'?p.name:'')||(t&&t.nombre)||nombre||'(sin nombre)',
       dir:dir,ciudad:ciudad,cliente:(p&&p.grupo&&p.grupo!=='Sin Grupo'&&p.grupo)||(t&&t.cliente)||'Sin cliente',
-      fecha:f||'',pos:p?p.posId:''}}
+      fecha:f||'',pos:p?p.posId:'',com:t&&f?(ybComCob[t.id]||''):''}}
 
   // Universo A: asignados (hoja Asignacion), un PDV por Nº Oficina Farmacia
   var asig=typeof asignacionesG!=='undefined'?asignacionesG:{},dims={cliente:{},del:{},canal:{}};
@@ -624,7 +694,7 @@ function ybCalcularCobertura(){
 function ybTorta(si,total,etqSi,etqNo,u){
   if(!total)return'<div class="hint">Sin PDV para medir</div>';
   var no=total-si,cx=130,cy=100,r=72,h='',a0=-Math.PI/2;
-  var partes=[{v:si,c:YB_COB_COL.si,e:etqSi,ok:1},{v:no,c:YB_COB_COL.no,e:etqNo,ok:0}].filter(function(p){return p.v>0});
+  var partes=[{v:si,c:typeof colorTema==='function'?colorTema(YB_COB_COL.si):YB_COB_COL.si,e:etqSi,ok:1},{v:no,c:YB_COB_COL.no,e:etqNo,ok:0}].filter(function(p){return p.v>0});
   partes.forEach(function(p){
     var ang=p.v/total*2*Math.PI,a1=a0+ang,med=a0+ang/2;
     var clic=' class="yb-porcion" tabindex="0" role="button" onclick="ybCobDetalle(\''+u+'\','+p.ok+')"'+
@@ -694,7 +764,7 @@ function ybCobFilasPanel(){
   var q=normTxt(ybCobPanel.q||'').trim();
   return(ybCobUlt.listas[ybCobPanel.u]||[]).filter(function(r){
     if(r.ok!==ybCobPanel.ok)return false;
-    return!q||normTxt([r.nombre,r.dir,r.ciudad,r.cliente,r.del,r.canal,r.pos].join(' ')).indexOf(q)!==-1})
+    return!q||normTxt([r.nombre,r.dir,r.ciudad,r.cliente,r.del,r.canal,r.pos,r.com].join(' ')).indexOf(q)!==-1})
     .sort(function(a,b){return a.nombre.localeCompare(b.nombre,'es',{numeric:true})})}
 function ybCobPintarPanel(){
   var P=ybCobPanel;if(!P)return;
@@ -707,7 +777,8 @@ function ybCobPintarPanel(){
       '<div class="n">'+esc(r.nombre)+'</div>'+
       '<div class="d">'+esc([r.dir,r.ciudad].filter(Boolean).join(' · ')||'Sin dirección')+'</div>'+
       '<div class="m">'+esc(r.cliente)+(r.del?' · '+esc(r.del):'')+(r.canal?' · '+esc(r.canal):'')+
-        (r.fecha?' · <b>última encuesta '+ybFechaTxt(r.fecha)+'</b>':'')+'</div></div></div>'}).join('');
+        (r.fecha?' · <b>última encuesta '+ybFechaTxt(r.fecha)+'</b>':'')+'</div>'+
+      (r.com?'<div class="c">💬 '+esc(r.com)+'</div>':'')+'</div></div>'}).join('');
   if(!filas.length)h='<div class="hint" style="padding:12px">Ningún PDV coincide con la búsqueda</div>';
   else if(filas.length>MAX)h+='<div class="hint" style="padding:10px 12px">Se muestran '+MAX+' de '+FMT.format(filas.length)+' · usa Buscar o descarga el CSV</div>';
   document.getElementById('ybCobLista').innerHTML=h;
@@ -716,22 +787,23 @@ function ybCobCsv(){
   var P=ybCobPanel;if(!P)return;
   mtdDescargarCsv(ybCobFilasPanel(),[{clave:'nombre',titulo:'PDV'},{clave:'pos',titulo:'Nº Oficina Farmacia'},
     {clave:'cliente',titulo:'Cliente'},{clave:'dir',titulo:'Dirección'},{clave:'ciudad',titulo:'Ciudad'},
-    {clave:'del',titulo:'Delegado asignado (rol)'},{clave:'canal',titulo:'Canal'},{clave:'fecha',titulo:'Última encuesta'}],
+    {clave:'del',titulo:'Delegado asignado (rol)'},{clave:'canal',titulo:'Canal'},{clave:'fecha',titulo:'Última encuesta'},
+    {clave:'com',titulo:'Comentarios'}],
     'cobertura_'+(P.u==='A'?'asignados':'todos')+'_'+(P.ok?'con':'sin')+'_encuesta_'+mtdCsvFecha()+'.csv')}
 if(typeof document!=='undefined'&&document.addEventListener)
   document.addEventListener('keydown',function(e){if(e.key==='Escape'&&ybCobPanel)ybCobCerrar()});
 
 function ybBarrasDim(id,dim,base,clave,top){
-  var ag={};
-  base.forEach(function(m){var k=clave(m),v=m.s[0];if(v==null)return;
+  var ag={},kP=ybPilar(),nomP=kP?ybPilarCorto(kP):'Global';
+  base.forEach(function(m){var k=clave(m),v=m.s[kP];if(v==null)return;
     var a=ag[k]||(ag[k]={s:0,n:0,pdv:{}});a.s+=v;a.n++;a.pdv[m.t.id]=1});
-  var sel=ybFset[dim],max=(YB_PILARES[0]||{max:100}).max;
+  var sel=ybFset[dim],max=(YB_PILARES[kP]||{max:100}).max;
   var datos=Object.keys(ag).map(function(k){var a=ag[k],v=a.s/a.n;
     return{clave:k,n:v,etq:ybNum(v),pdvs:Object.keys(a.pdv).length}})
     .sort(function(a,b){return b.n-a.n});
   pintarBarras(id,datos.map(function(d){return{clave:d.clave,n:d.n,etq:d.etq,
     clase:sel?(sel[d.clave]?'activa':'apagada'):'',
-    tit:d.clave+': Global '+d.etq+' · '+FMT.format(d.pdvs)+' PDV\n(clic para '+(sel&&sel[d.clave]?'quitarlo del':'añadirlo al')+' filtro)',
+    tit:d.clave+': '+nomP+' '+d.etq+' / '+max+' · '+FMT.format(d.pdvs)+' PDV\n(clic para '+(sel&&sel[d.clave]?'quitarlo del':'añadirlo al')+' filtro)',
     fn:function(){ybAlternar(dim,d.clave)}}}),{topN:top,vacio:'Sin puntajes con los filtros actuales'});
   // Las barras toman el color del nivel del promedio (no el rojo de marca).
   // Mismo recorte que pintarBarras (descarta n<=0) para que los índices coincidan.
@@ -748,20 +820,22 @@ function ybSetVistaAgot(v){ybVistaAgot=v;
 
 function ybRenderAgotados(lista){
   var base=ybBase(lista),prods=ybProductosActivos();
-  var detalle=[],porPdv=[],porProd={},porZona={},si=0,no=0,pdvCon=0;
+  var detalle=[],porPdv=[],porProd={},porZona={},porBu={},si=0,no=0,pdvCon=0;
   base.forEach(function(m){
     var d=ybDispMision(m,prods);si+=d.si;no+=d.no;
+    prods.forEach(function(p){var c=m.disp.charAt(p.i);if(c!=='1'&&c!=='0')return;
+      var b=porBu[p.bu]||(porBu[p.bu]={si:0,no:0,pdv:{}});if(c==='1')b.si++;else{b.no++;b.pdv[m.t.id]=1}});
     if(!d.no)return;pdvCon++;
     var t=m.t;
     porPdv.push({m:m,id:t.id,fecha:m.fecha,depto:t.depto,ciudad:t.ciudad,zona:t.zona,cliente:t.cliente,
-      pdv:t.nombre,del:m.del,n:d.no,pct:d.pct,lista:d.agotados});
+      pdv:t.nombre,del:m.del,n:d.no,pct:d.pct,lista:d.agotados,com:m.com});
     // Fuera de Bogotá la zona ES la ciudad: "MEDELLIN · MEDELLIN" no aporta.
     var zk=(t.zona==='Sin zona'||normTxt(t.zona)===normTxt(t.ciudad))?t.ciudad:t.ciudad+' · '+t.zona;
     porZona[zk]=(porZona[zk]||0)+d.no;
     d.agotados.forEach(function(p){
       porProd[p.i]=(porProd[p.i]||0)+1;
       detalle.push({id:t.id,fecha:m.fecha,depto:t.depto,ciudad:t.ciudad,zona:t.zona,cliente:t.cliente,
-        pdv:t.nombre,del:m.del,grupo:p.grupo,producto:p.nombre,pi:p.i})})});
+        pdv:t.nombre,del:m.del,grupo:p.grupo,bu:ybBus[p.bu]||'',producto:p.nombre,pi:p.i,com:m.com})})});
 
   document.getElementById('ybAgotKpis').innerHTML=
     '<div class="bloque"><div class="etq">Agotados</div><div class="num yb-rojo">'+FMT.format(no)+'</div>'+
@@ -773,6 +847,17 @@ function ybRenderAgotados(lista){
   document.getElementById('ybHintAgot').innerText=(ybAlcance==='ultima'?
     'Según la ÚLTIMA encuesta de cada PDV':'Según TODAS las encuestas')+
     ' · '+FMT.format(prods.length)+' de '+FMT.format(ybProductos.length)+' productos (filtra por Grupo de producto o Producto en "+ Añadir filtro")';
+
+  // ¿Qué BU está más agotada? (agotados de la BU · % sin stock de sus respuestas; clic = filtro BU)
+  var selB=ybFset.bu,datosB=Object.keys(porBu).filter(function(b){return ybBus[Number(b)]}).map(function(b){var x=porBu[b];
+    return{b:b,n:x.no,tot:x.si+x.no,pdvs:Object.keys(x.pdv).length}}).sort(function(a,b){return b.n-a.n});
+  var cB=document.getElementById('ybBarAgotBu');
+  if(cB){if(!ybBus.length)cB.innerHTML='<div class="hint">La hoja no trae la BU de los grupos de producto</div>';
+    else pintarBarras('ybBarAgotBu',datosB.map(function(d){var pct=d.tot?d.n/d.tot:null;
+      return{clave:ybBus[Number(d.b)],n:d.n,etq:FMT.format(d.n)+' · '+ybPctTxt(pct),
+        clase:'brecha'+(selB?(selB[d.b]?' activa':' apagada'):''),
+        tit:ybBus[Number(d.b)]+': '+FMT.format(d.n)+' agotados en '+FMT.format(d.pdvs)+' PDV · '+ybPctTxt(pct)+' de sus respuestas sin stock\n(clic para filtrar la BU)',
+        fn:function(){ybAlternar('bu',d.b)}}}),{vacio:'Sin agotados con los filtros actuales 🎉'})}
 
   var selP=ybFset.producto;
   var datosP=Object.keys(porProd).map(function(i){return{i:i,n:porProd[i]}}).sort(function(a,b){return b.n-a.n});
@@ -802,7 +887,8 @@ function ybRenderAgotados(lista){
         {k:'lista',t:'Productos agotados',tipo:'txt',v:function(f){return f.lista.length},celda:function(f){
           var ps=f.lista.slice(0,8).map(function(p){return'<span class="yb-pill" title="'+esc(p.grupo)+'">'+esc(p.nombre)+'</span>'}).join('');
           if(f.lista.length>8)ps+='<span class="yb-pill yb-pill-mas">+'+(f.lista.length-8)+'</span>';
-          return'<td class="txt yb-pills">'+ps+'</td>'}}],
+          return'<td class="txt yb-pills">'+ps+'</td>'}},
+        ybColCom()],
       clic:{valor:function(f){return f.id},activo:function(f){return!!(ybFset.tienda&&ybFset.tienda[f.id])},
         haySel:function(){return!!ybFset.tienda},alClic:function(v){ybAlternar('tienda',v)},titulo:'Clic para filtrar por este PDV'}});
   }else{
@@ -817,7 +903,9 @@ function ybRenderAgotados(lista){
         {k:'pdv',t:'PDV',tipo:'txt',celda:function(f,th){return'<td data-th="'+esc(th)+'" class="txt"><b>'+esc(f.pdv)+'</b></td>'}},
         {k:'del',t:'Delegado',tipo:'txt',celda:function(f,th){return'<td data-th="'+esc(th)+'" class="txt">'+esc(f.del)+'</td>'}},
         {k:'grupo',t:'Grupo',tipo:'txt',celda:function(f,th){return'<td data-th="'+esc(th)+'" class="txt">'+esc(f.grupo)+'</td>'}},
-        {k:'producto',t:'Producto agotado',tipo:'txt',celda:function(f,th){return'<td data-th="'+esc(th)+'" class="txt yb-rojo">'+esc(f.producto)+'</td>'}}]})}
+        {k:'bu',t:'BU',tipo:'txt',celda:function(f,th){return'<td data-th="'+esc(th)+'" class="txt">'+esc(f.bu)+'</td>'}},
+        {k:'producto',t:'Producto agotado',tipo:'txt',celda:function(f,th){return'<td data-th="'+esc(th)+'" class="txt yb-rojo">'+esc(f.producto)+'</td>'}},
+        ybColCom()]})}
   document.getElementById('ybHintTablaAgot').innerText=ybVistaAgot==='pdv'?
     FMT.format(porPdv.length)+' PDV con al menos un agotado · clic en una fila para filtrar por ese PDV':
     FMT.format(detalle.length)+' filas PDV × producto agotado'}
@@ -830,14 +918,191 @@ function ybCsvAgotados(){
       [{clave:'pdv',titulo:'PDV'},{clave:'cliente',titulo:'Cliente'},{clave:'depto',titulo:'Departamento'},
        {clave:'ciudad',titulo:'Ciudad'},{clave:'zona',titulo:'Zona'},{clave:'del',titulo:'Delegado'},
        {clave:'fecha',titulo:'Fecha'},{clave:'n',titulo:'Agotados'},{clave:'disp',titulo:'Disponibilidad'},
-       {clave:'productos',titulo:'Productos agotados'}],'yoobic_agotados_pdv_'+mtdCsvFecha()+'.csv');
+       {clave:'productos',titulo:'Productos agotados'},{clave:'com',titulo:'Comentarios'}],'yoobic_agotados_pdv_'+mtdCsvFecha()+'.csv');
   }else{
     mtdDescargarCsv(ybAgotVista.map(function(f){var o={};Object.keys(f).forEach(function(k){o[k]=f[k]});
       o.fecha=ybFechaTxt(f.fecha);return o}),
       [{clave:'fecha',titulo:'Fecha'},{clave:'depto',titulo:'Departamento'},{clave:'ciudad',titulo:'Ciudad'},
        {clave:'zona',titulo:'Zona'},{clave:'cliente',titulo:'Cliente'},{clave:'pdv',titulo:'PDV'},
-       {clave:'del',titulo:'Delegado'},{clave:'grupo',titulo:'Grupo'},{clave:'producto',titulo:'Producto agotado'}],
+       {clave:'del',titulo:'Delegado'},{clave:'grupo',titulo:'Grupo'},{clave:'bu',titulo:'BU'},{clave:'producto',titulo:'Producto agotado'},
+       {clave:'com',titulo:'Comentarios'}],
       'yoobic_agotados_detalle_'+mtdCsvFecha()+'.csv')}}
+
+/* ══════════ Detalle PDV ══════════
+   Una fila por PDV con su ÚLTIMA encuesta dentro de los filtros: bajadas (muebles), los 5
+   puntajes, disponibilidad, agotados, testers agotados, Sell Out e inventario del PDV y el
+   comentario. Arriba, cuántos PDV tienen 0, 1 o 2+ bajadas (clic = filtro Bajadas).
+   Sell Out e inventario: el cubo del ETL (s3_cubo, el de "Sell Out PDV") y s3_inv_pdv.json,
+   cruzados por POS_ID (el de la hoja Direcciones o el del PDV del maestro). Sell Out en pesos:
+   el año del último mes con Sell Out (ene → ese mes) y ese último mes; inventario en unidades,
+   la foto del último mes con inventario. Se cargan al abrir esta subpestaña. */
+var ybSoCache=null,ybDetVista=[];
+function ybPosTienda(t){return String((t.p&&t.p.posId)||t.pos||'').trim().toUpperCase()}
+function ybAlSellOut(){ybSoCache=null;
+  if(ybData&&typeof mtdVistaActiva!=='undefined'&&mtdVistaActiva==='yoobic'&&ybSub==='detalle')ybRender()}
+function ybSellOutPdv(){
+  var X=(typeof soD!=='undefined'&&soD)||(typeof vt3Cache!=='undefined'&&vt3Cache&&vt3Cache.so)||null;
+  if(!X){
+    var err=typeof soError!=='undefined'&&soError;
+    if(!err&&typeof soCargar==='function'&&typeof soCargando!=='undefined'&&!soCargando)soCargar(false);
+    return{est:err?'error':(typeof soCargar==='function'?'cargando':'sin'),err:err||'',mapa:null}}
+  var I=typeof invPdvD!=='undefined'?invPdvD:null;
+  if(!I&&typeof invPdvCargar==='function')invPdvCargar(ybAlSellOut);
+  if(ybSoCache&&ybSoCache.X===X&&ybSoCache.I===I)return ybSoCache.r;
+  var mapa={},ult=-1,meses=X.meses||[];
+  function o(c){var k=String(c==null?'':c).trim().toUpperCase();return mapa[k]||(mapa[k]={ytd:0,mes:0,inv:null})}
+  (X.pm||[]).forEach(function(r){if((r[3]||r[2])&&(ult<0||meses[r[1]]>meses[ult]))ult=r[1]});
+  var mesSo=meses[ult]||'',anio=mesSo.slice(0,4);
+  (X.pm||[]).forEach(function(r){var m=meses[r[1]],p=X.pdv[r[0]];if(!m||!p||m.slice(0,4)!==anio||m>mesSo)return;
+    var x=o(p.clave);x.ytd+=r[3]||0;if(m===mesSo)x.mes+=r[3]||0});
+  var mesInv='';
+  if(I){var iu=-1;(I.inv||[]).forEach(function(r){if(iu<0||I.meses[r[1]]>I.meses[iu])iu=r[1]});mesInv=I.meses[iu]||'';
+    (I.inv||[]).forEach(function(r){if(r[1]!==iu)return;var x=o(I.pdv[r[0]]);x.inv=(x.inv||0)+(r[2]||0)})}
+  var r={est:'ok',mapa:mapa,anio:anio,mesSo:mesSo,mesInv:mesInv,
+    invEst:I?'ok':((typeof invPdvError!=='undefined'&&invPdvError)?'error':'cargando')};
+  ybSoCache={X:X,I:I,r:r};return r}
+var YB_MES_CORTO=['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
+function ybMesTxt(m){return m?YB_MES_CORTO[Number(m.slice(5,7))-1]+' '+m.slice(0,4):''}
+function ybPesos(v){if(v==null||!isFinite(v))return'–';var a=Math.abs(v);
+  return'$ '+(a>=1e6?ybNum(v/1e6,1)+' M':a>=1e3?ybNum(v/1e3,0)+' mil':FMT.format(Math.round(v)))}
+/* Testers de una misión sobre los testers activos (filtro BU). sin = el PDV respondió que NO tiene testers. */
+function ybTestersMision(m,tps){
+  var si=0,no=0,ag=[];
+  tps.forEach(function(x){var c=m.tdisp.charAt(x.i);if(c==='1')si++;else if(c==='0'){no++;ag.push(x)}});
+  return{si:si,no:no,pct:(si+no)?si/(si+no):null,agotados:ag,sin:m.tf===0}}
+
+function ybRenderDetalle(lista){
+  var prods=ybProductosActivos(),tps=ybTestersActivos(),kP=ybPilar(),P=YB_PILARES;
+  var SO=ybSellOutPdv(),nEnc={};
+  lista.forEach(function(m){nEnc[m.t.id]=(nEnc[m.t.id]||0)+1});
+  var filas=ybUltimas(lista).map(function(m){var d=ybDispMision(m,prods),tt=ybTestersMision(m,tps),pos=ybPosTienda(m.t);
+    var so=SO.mapa&&pos?SO.mapa[pos]:null;
+    return{m:m,id:m.t.id,pdv:m.t.nombre,cliente:m.t.cliente,ciudad:m.t.ciudad,del:m.del,fecha:m.fecha,n:nEnc[m.t.id],
+      bj:m.bj,bajada:ybBajadaEtq(m),g:m.s[0],d:m.s[1],l:m.s[2],p:m.s[3],t:m.s[4],disp:d.pct,ag:d.no,
+      tag:tt.no,tsin:tt.sin,pos:pos,soYtd:so?so.ytd:null,soMes:so?so.mes:null,   // sin cruce por POS_ID = –
+      inv:so&&so.inv!=null?so.inv:null,com:m.com}});
+  ybDetVista=filas;
+
+  // Bajadas: PDV por cantidad (sin el propio filtro de Bajadas, para poder elegir otra)
+  var dist={},totB=0;
+  ybUltimas(ybFiltradas('bajada')).forEach(function(m){var b=ybBajadaEtq(m);dist[b]=(dist[b]||0)+1;totB++});
+  var etqs=ybBajadas.slice();if(dist['Sin dato'])etqs.push('Sin dato');
+  var cb=document.getElementById('ybDetBajadas');
+  if(cb)cb.innerHTML=etqs.map(function(b){var n=dist[b]||0,act=!!(ybFset.bajada&&ybFset.bajada[b]);
+    return'<button type="button" class="yb-bj'+(act?' activo':'')+(ybFset.bajada&&!act?' apagado':'')+'" onclick="ybAlternar(\'bajada\',\''+esc(b)+'\')"'+
+      ' title="'+esc(b)+': '+FMT.format(n)+' PDV · clic para filtrar"><span class="e">'+esc(b)+'</span><b>'+FMT.format(n)+'</b>'+
+      '<small>'+ybPctTxt(totB?n/totB:null)+' de los PDV</small></button>'}).join('');
+
+  var nomSo=SO.mesSo?'Sell Out '+SO.anio:'Sell Out',nomMes=SO.mesSo?'Sell Out '+ybMesTxt(SO.mesSo):'Sell Out mes',
+    nomInv=SO.mesInv?'Inv. '+ybMesTxt(SO.mesInv)+' (und)':'Inventario (und)';
+  function celSo(v,th){if(SO.est==='cargando')return'<td data-th="'+esc(th)+'"><span class="yb-nd">…</span></td>';
+    return'<td data-th="'+esc(th)+'">'+(v==null?'<span class="yb-nd">–</span>':ybPesos(v))+'</td>'}
+  mtdTabla({id:'ybTablaDet',filas:filas,orden:{k:YB_KEYS[kP],dir:'asc'},vacio:'Sin encuestas con los filtros actuales',
+    columnas:[
+      {k:'pdv',t:'PDV',tipo:'txt',celda:function(f,th){return'<td data-th="'+esc(th)+'" class="txt"><b>'+esc(f.pdv)+'</b><span class="sub">'+esc(f.cliente)+' · '+esc(f.ciudad)+'</span></td>'}},
+      {k:'del',t:'Delegado',tipo:'txt',celda:function(f,th){return'<td data-th="'+esc(th)+'" class="txt">'+esc(f.del)+'</td>'}},
+      {k:'fecha',t:'Última encuesta',tipo:'txt',celda:function(f,th){return'<td data-th="'+esc(th)+'">'+ybFechaTxt(f.fecha)+'</td>'}},
+      {k:'n',t:'Encuestas',celda:function(f,th){return'<td data-th="'+esc(th)+'">'+FMT.format(f.n)+'</td>'}},
+      {k:'bj',t:'Bajadas',v:function(f){return f.bj<0?null:f.bj},celda:function(f,th){
+        return'<td data-th="'+esc(th)+'"><span class="yb-bj-pill b'+(f.bj<0?'x':f.bj)+'">'+esc(f.bajada)+'</span></td>'}},
+      {k:'g',t:'Global',celda:function(f,th){return'<td data-th="'+esc(th)+'">'+ybCeldaPuntaje(f.g,P[0].max)+'</td>'}},
+      {k:'d',t:'Disponib.',celda:function(f,th){return'<td data-th="'+esc(th)+'">'+ybCeldaPuntaje(f.d,P[1].max)+'</td>'}},
+      {k:'l',t:'Lineal',celda:function(f,th){return'<td data-th="'+esc(th)+'">'+ybCeldaPuntaje(f.l,P[2].max)+'</td>'}},
+      {k:'p',t:'Vis. perm.',celda:function(f,th){return'<td data-th="'+esc(th)+'">'+ybCeldaPuntaje(f.p,P[3].max)+'</td>'}},
+      {k:'t',t:'Vis. campaña',celda:function(f,th){return'<td data-th="'+esc(th)+'">'+ybCeldaPuntaje(f.t,P[4].max)+'</td>'}},
+      {k:'disp',t:'% Stock',celda:function(f,th){return'<td data-th="'+esc(th)+'"><span style="color:'+ybColorTxt(f.disp)+'">'+ybPctTxt(f.disp)+'</span></td>'}},
+      {k:'ag',t:'Agotados',celda:function(f,th){return'<td data-th="'+esc(th)+'"'+(f.ag?' class="yb-rojo"':'')+'>'+FMT.format(f.ag)+'</td>'}},
+      {k:'tag',t:'Testers agot.',v:function(f){return f.tsin?999:f.tag},celda:function(f,th){
+        return'<td data-th="'+esc(th)+'"'+(f.tag||f.tsin?' class="yb-rojo"':'')+'>'+(f.tsin?'Sin testers':FMT.format(f.tag))+'</td>'}},
+      {k:'soYtd',t:nomSo,celda:function(f,th){return celSo(f.soYtd,th)}},
+      {k:'soMes',t:nomMes,celda:function(f,th){return celSo(f.soMes,th)}},
+      {k:'inv',t:nomInv,celda:function(f,th){
+        if(SO.est==='cargando'||SO.invEst==='cargando')return'<td data-th="'+esc(th)+'"><span class="yb-nd">…</span></td>';
+        return'<td data-th="'+esc(th)+'">'+(f.inv==null?'<span class="yb-nd">–</span>':FMT.format(Math.round(f.inv)))+'</td>'}},
+      ybColCom()],
+    clic:{valor:function(f){return f.id},activo:function(f){return!!(ybFset.tienda&&ybFset.tienda[f.id])},
+      haySel:function(){return!!ybFset.tienda},alClic:function(v){ybAlternar('tienda',v)},titulo:'Clic para filtrar por este PDV'}});
+  var conSo=filas.filter(function(f){return f.soYtd}).length;
+  var est=SO.est==='cargando'?' · cargando el Sell Out y el inventario del ETL…':
+    SO.est==='error'?' · no pude leer el Sell Out: '+SO.err:
+    SO.est==='ok'?' · Sell Out en pesos (ene–'+(SO.mesSo?YB_MES_CORTO[Number(SO.mesSo.slice(5,7))-1]:'')+' '+SO.anio+' y el último mes) e inventario del último mes, por POS_ID: '+
+      FMT.format(conSo)+' de '+FMT.format(filas.length)+' PDV con venta':'';
+  document.getElementById('ybHintDet').innerText=FMT.format(filas.length)+' PDV · última encuesta de cada uno dentro de los filtros · '+
+    'ordenado del peor al mejor '+(kP?ybPilarCorto(kP):'Global')+est+' · clic en una fila para filtrar por ese PDV'}
+
+function ybCsvDetalle(){
+  mtdDescargarCsv(ybDetVista.map(function(f){var o={};Object.keys(f).forEach(function(k){if(k!=='m')o[k]=f[k]});
+    o.fecha=ybFechaTxt(f.fecha);o.disp=f.disp==null?'':Math.round(f.disp*100)+'%';o.tag=f.tsin?'Sin testers':f.tag;
+    ['soYtd','soMes','inv'].forEach(function(k){o[k]=f[k]==null?'':Math.round(f[k])});return o}),
+    [{clave:'pdv',titulo:'PDV'},{clave:'pos',titulo:'POS_ID'},{clave:'cliente',titulo:'Cliente'},{clave:'ciudad',titulo:'Ciudad'},
+     {clave:'del',titulo:'Delegado'},{clave:'fecha',titulo:'Última encuesta'},{clave:'n',titulo:'Encuestas'},{clave:'bajada',titulo:'Bajadas'},
+     {clave:'g',titulo:'Global'},{clave:'d',titulo:'Disponibilidad'},{clave:'l',titulo:'Espacio lineal'},{clave:'p',titulo:'Vis. permanente'},
+     {clave:'t',titulo:'Vis. campaña'},{clave:'disp',titulo:'% Stock'},{clave:'ag',titulo:'Agotados'},{clave:'tag',titulo:'Testers agotados'},
+     {clave:'soYtd',titulo:'Sell Out año ($)'},{clave:'soMes',titulo:'Sell Out último mes ($)'},{clave:'inv',titulo:'Inventario último mes (und)'},
+     {clave:'com',titulo:'Comentarios'}],'yoobic_detalle_pdv_'+mtdCsvFecha()+'.csv')}
+
+/* ══════════ Testers ══════════
+   Columna "Testers" de la hoja (¿el PDV tiene testers?) y una columna por tester: NO = agotado.
+   El filtro BU elige qué testers cuentan; Grupo / Producto no aplican (son la lista de
+   disponibilidad). "Sin testers" = el PDV respondió que no tiene ninguno. */
+var ybTestVista='falt',ybTestFilas=[];
+function ybSetVistaTest(v){ybTestVista=v;
+  document.querySelectorAll('#ybTestChips .chip-periodo').forEach(function(b){b.classList.toggle('activo',b.getAttribute('data-v')===v)});
+  ybRender()}
+function ybRenderTesters(lista){
+  var c=document.getElementById('ybTestVacio');
+  if(!ybTesters.length){if(c){c.hidden=false;c.innerHTML='La hoja Yoobic no trae la columna "Testers" (ni sus testers a la derecha).'}
+    document.getElementById('ybTestKpis').innerHTML='';mtdVacio('ybTablaTest','Sin testers');
+    var bt=document.getElementById('ybBarTestProd');if(bt)bt.innerHTML='';return}
+  if(c)c.hidden=true;
+  var base=ybBase(lista),tps=ybTestersActivos(),porT={},si=0,no=0,pdvAg=0,pdvSin=0,filas=[];
+  base.forEach(function(m){var tt=ybTestersMision(m,tps);si+=tt.si;no+=tt.no;
+    if(tt.sin)pdvSin++;if(tt.no)pdvAg++;
+    tt.agotados.forEach(function(x){porT[x.i]=(porT[x.i]||0)+1});
+    if(ybTestVista==='todos'||tt.no||tt.sin)filas.push({m:m,id:m.t.id,pdv:m.t.nombre,cliente:m.t.cliente,ciudad:m.t.ciudad,
+      del:m.del,fecha:m.fecha,tiene:m.tf===1?'Sí':(m.tf===0?'No':'–'),n:tt.sin?null:tt.no,pct:tt.pct,lista:tt.agotados,sin:tt.sin,com:m.com})});
+  ybTestFilas=filas;
+  var pct=(si+no)?si/(si+no):null;
+  document.getElementById('ybTestKpis').innerHTML=
+    '<div class="bloque"><div class="etq">Testers agotados</div><div class="num yb-rojo">'+FMT.format(no)+'</div>'+
+      '<div class="det">PDV × tester con respuesta "NO"</div></div>'+
+    '<div class="bloque"><div class="etq">PDV con testers agotados</div><div class="num">'+FMT.format(pdvAg)+'</div>'+
+      '<div class="det">de '+FMT.format(base.length)+' '+(ybAlcance==='ultima'?'PDV evaluados':'encuestas')+'</div></div>'+
+    '<div class="bloque"><div class="etq">Disponibilidad de testers</div><div class="num" style="color:'+ybColorTxt(pct)+'">'+ybPctTxt(pct)+'</div>'+
+      '<div class="det">'+FMT.format(si)+' de '+FMT.format(si+no)+' testers presentes</div></div>'+
+    '<div class="bloque"><div class="etq">PDV sin testers</div><div class="num">'+FMT.format(pdvSin)+'</div>'+
+      '<div class="det">respondieron "No" en Testers</div></div>';
+  document.getElementById('ybHintTest').innerText=(ybAlcance==='ultima'?'Según la ÚLTIMA encuesta de cada PDV':'Según TODAS las encuestas')+
+    ' · '+FMT.format(tps.length)+' de '+FMT.format(ybTesters.length)+' testers (el filtro BU elige cuáles cuentan)';
+  pintarBarras('ybBarTestProd',Object.keys(porT).map(function(i){return{i:Number(i),n:porT[i]}}).sort(function(a,b){return b.n-a.n})
+    .map(function(d){var x=ybTesters[d.i];return{clave:x.nombre,n:d.n,etq:FMT.format(d.n)+' PDV',clase:'brecha',
+      tit:x.nombre+(ybBus[x.bu]?' ('+ybBus[x.bu]+')':'')+': agotado en '+d.n+' PDV'}}),{topN:15,vacio:'Sin testers agotados con los filtros actuales 🎉'});
+  mtdTabla({id:'ybTablaTest',filas:filas,orden:{k:'n',dir:'desc'},vacio:'Sin testers agotados con los filtros actuales',
+    columnas:[
+      {k:'pdv',t:'PDV',tipo:'txt',celda:function(f,th){return'<td data-th="'+esc(th)+'" class="txt"><b>'+esc(f.pdv)+'</b><span class="sub">'+esc(f.cliente)+' · '+esc(f.ciudad)+'</span></td>'}},
+      {k:'del',t:'Delegado',tipo:'txt',celda:function(f,th){return'<td data-th="'+esc(th)+'" class="txt">'+esc(f.del)+'</td>'}},
+      {k:'fecha',t:'Fecha',tipo:'txt',celda:function(f,th){return'<td data-th="'+esc(th)+'">'+ybFechaTxt(f.fecha)+'</td>'}},
+      {k:'tiene',t:'¿Tiene testers?',tipo:'txt',celda:function(f,th){return'<td data-th="'+esc(th)+'"'+(f.sin?' class="yb-rojo"':'')+'>'+esc(f.tiene)+'</td>'}},
+      {k:'n',t:'Testers agotados',v:function(f){return f.sin?999:f.n},celda:function(f,th){
+        return'<td data-th="'+esc(th)+'" class="yb-rojo"><b>'+(f.sin?'Sin testers':FMT.format(f.n))+'</b></td>'}},
+      {k:'pct',t:'Disponib.',celda:function(f,th){return'<td data-th="'+esc(th)+'"><span style="color:'+ybColorTxt(f.pct)+'">'+ybPctTxt(f.pct)+'</span></td>'}},
+      {k:'lista',t:'Testers agotados (lista)',tipo:'txt',v:function(f){return f.lista.length},celda:function(f){
+        var ps=f.lista.slice(0,8).map(function(x){return'<span class="yb-pill">'+esc(x.nombre)+'</span>'}).join('');
+        if(f.lista.length>8)ps+='<span class="yb-pill yb-pill-mas">+'+(f.lista.length-8)+'</span>';
+        return'<td class="txt yb-pills">'+ps+'</td>'}},
+      ybColCom()],
+    clic:{valor:function(f){return f.id},activo:function(f){return!!(ybFset.tienda&&ybFset.tienda[f.id])},
+      haySel:function(){return!!ybFset.tienda},alClic:function(v){ybAlternar('tienda',v)},titulo:'Clic para filtrar por este PDV'}});
+  document.getElementById('ybHintTablaTest').innerText=FMT.format(filas.length)+' PDV'+
+    (ybTestVista==='todos'?'':' con testers agotados o sin testers')+' · clic en una fila para filtrar por ese PDV'}
+function ybCsvTesters(){
+  mtdDescargarCsv(ybTestFilas.map(function(f){return{pdv:f.pdv,cliente:f.cliente,ciudad:f.ciudad,del:f.del,fecha:ybFechaTxt(f.fecha),
+      tiene:f.tiene,n:f.sin?'Sin testers':f.n,disp:f.pct==null?'':Math.round(f.pct*100)+'%',
+      lista:f.lista.map(function(x){return x.nombre}).join(', '),com:f.com}}),
+    [{clave:'pdv',titulo:'PDV'},{clave:'cliente',titulo:'Cliente'},{clave:'ciudad',titulo:'Ciudad'},{clave:'del',titulo:'Delegado'},
+     {clave:'fecha',titulo:'Fecha'},{clave:'tiene',titulo:'Tiene testers'},{clave:'n',titulo:'Testers agotados'},
+     {clave:'disp',titulo:'Disponibilidad testers'},{clave:'lista',titulo:'Testers agotados (lista)'},{clave:'com',titulo:'Comentarios'}],
+    'yoobic_testers_'+mtdCsvFecha()+'.csv')}
 
 /* ══════════ Fotos ══════════ */
 /* Payload de fotos → {clave: [{tipo, n, url}]} con la URL completa y el
@@ -1072,6 +1337,7 @@ function ybPopupHtml(p){
     h+='<div class="ps-fila"><span class="ps-nom" title="'+esc(pi.etiqueta)+'">'+esc(YB_POPUP[pi.k]||pi.etiqueta)+'</span>'+
       '<span class="ps-pista"><span style="width:'+(pct==null?0:Math.min(100,Math.round(pct*100)))+'%;background:'+ybColorPct(pct)+'"></span></span>'+
       '<b>'+ybNum(v)+'</b><span class="mini">/'+pi.max+'</span></div>'});
+  if(m.com)h+='<div class="ps-com">💬 '+esc(m.com)+'</div>';
   h+='<div class="ps-agot">'+(ag.no?'<b class="yb-rojo">'+ag.no+' producto'+(ag.no===1?'':'s')+' agotado'+(ag.no===1?'':'s')+'</b>':'Sin agotados')+
     (ag.pct!=null?' · disponibilidad '+ybPctTxt(ag.pct):'')+'</div>'+
     '<button class="btn-portafolio" onclick="ybAbrirFotos('+t.i+')">📷 Ver fotos (última encuesta)</button></div>';
@@ -1089,6 +1355,10 @@ function ybDatosDemo(){
     ['GERMISDIN FACIAL',5],['MICELLAR SOLUTION',5],['UREADIN 10',6],['NUTRADEICA',6],['ACNIBEN GEL',6],['SI-NAILS',6],
     ['UREADIN HAND REPAIR',7]];
   var dels=['SEBASTIAN GUTIERREZ','ANA PÉREZ','LUIS GÓMEZ','MARTA RUIZ','JORGE DÍAZ'];
+  var testers=[['FP FUSION WATER MAGIC SPF50 50ML',0],['FU ACTIVE UNIFY SPF50+ 50ML',0],['ISDINCEUTICS FLAVO-C 30ML',1],
+    ['ISDINCEUTICS K-OX EYES 15G',1],['ISDIN COVERAGE 1 PEARL SPF50+ 30ML',0],['FACIAL MIST SPF50 100ML',0]];
+  var coms=['No tienen tester de Fusion Water Magic porque se oxidó','Ya codificaron Coverage Bronze pero no tienen el tester',
+    'El PDV pidió glorificador HM','Mueble de Foto en reparación'];
   var tiendas=[],mis=[],hoy=new Date();
   for(var k=1;k<=360;k+=2){
     tiendas.push(['A'+k,'PDV '+k,'','','','',null,null,'',0]);
@@ -1099,12 +1369,14 @@ function ybDatosDemo(){
       var mej=nivel+(nm-1-j)*0.04;
       var s=[40,25,20,15].map(function(mx){return Math.round(Math.min(mx,Math.max(0,mx*(mej+(rnd()-.5)*.3)))*10)/10});
       var disp=nombres.map(function(){var r=rnd();return r<.1?'-':(r<.1+(1-mej)*.45?'0':'1')}).join('');
+      var tf=rnd()<.12?0:1,tdisp=tf?testers.map(function(){return rnd()<.25?'0':'1'}).join(''):'';
       mis.push([tiendas.length-1,f,Math.floor(rnd()*dels.length),Math.round((s[0]+s[1]+s[2]+s[3])*10)/10,
-        s[0],s[1],s[2],s[3],disp,0,'M'+k+'-'+j])}}
+        s[0],s[1],s[2],s[3],disp,0,'M'+k+'-'+j,Math.floor(rnd()*3),rnd()<.25?coms[Math.floor(rnd()*coms.length)]:'',tf,tdisp])}}
   return{v:1,pilares:[{k:'global',etiqueta:'Global Perfect Store',max:100},{k:'disp',etiqueta:'Disponibilidad de producto',max:40},
       {k:'lineal',etiqueta:'Espacio lineal',max:25},{k:'perm',etiqueta:'Visibilidad permanente',max:20},
       {k:'temp',etiqueta:'Visibilidad de campaña/temporal',max:15}],
     grupos:grupos,productos:nombres,tiposFoto:['Foto - Planograma ISDIN','Foto - Exhibición temporal'],
+    bus:['Foto','Isdinceutics','Derma'],gruposBu:[0,0,0,0,1,1,2,2],bajadas:['0 bajadas','1 bajada','2 o más bajadas'],testers:testers,
     delegados:dels,campanas:['Perfect Store'],tiendas:tiendas,misiones:mis,
     meta:{actualizadoEn:new Date().toISOString(),misiones:mis.length}}}
 
