@@ -25,7 +25,7 @@ Proyecto de datos geoespaciales: 4 archivos KML con polígonos de zonas ("bricks
 
 Ver [COLABORACION.md](COLABORACION.md) para el flujo completo. Resumen: **`main` solo cambia con el merge de un pull request**; cada tarea va en su rama (`tipo/descripcion-corta`), la revisa otra persona (**Sebas es el líder**: aprueba los PR de Cristian y decide cuándo se publica; Cristian revisa los de Sebas) y se publica a producción aparte, con `/publicar`.
 
-Comandos del equipo (`.claude/commands/`, scripts en `.claude/scripts/`): `/iniciar` → `/rama` → `/probar` → `/enviar` → (PR revisado y mergeado) → `/publicar`.
+Comandos del equipo (`.claude/commands/`, scripts en `.claude/scripts/`): `/iniciar` → `/rama` → `/probar` → `/enviar` → (PR revisado y mergeado) → `/publicar`. Aparte, para los datos: `/actualizar-sellout [todo | inv]` corre `etl_sellout.py` en el computador (sin argumento = Sell Out del paso 3 + inventario; `todo` suma el mapa; `inv` solo inventario) y deja los JSON en `_visor_json`; después, «Actualizar» en el visor o `limpiarCache()`.
 
 **Reglas para Claude en este repo:**
 - **Nunca** commitear ni hacer push en `main` (los hooks de `.githooks/` lo bloquean; `PERMITIR_MAIN=1` solo si el usuario lo pide explícitamente como emergencia). Si el usuario pide un cambio estando en `main`, propón una rama `tipo/descripcion-corta`, **pide confirmación del nombre** y créala con `/rama`.

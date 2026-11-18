@@ -35,27 +35,30 @@
 
 var soD=null,soCargando=false,soError='';
 var soE={anio:0,meses:[],trim:[],prom:[],unidad:'#',vista:'mensual',orden:{k:'ac',dir:'desc'},tope:60,q:'',abierto:null,
-  f:{cli:[],bu:[],sku:[],pdv:[],ciudad:[],canal:[],sub:[]}};
-var soFs={cli:null,bu:null,sku:null,pdv:null,ciudad:null,canal:null,sub:null};
+  f:{ccom:[],cli:[],bu:[],sku:[],pdv:[],ciudad:[],canal:[],sub:[]}};
+var soFs={ccom:null,cli:null,bu:null,sku:null,pdv:null,ciudad:null,canal:null,sub:null};
 var SO_VISTAS=[['mensual','Ventas Mensuales'],['ean','Crecimiento por EAN'],['cli','Top Clientes'],['pdv','Puntos de Venta']];
 var SO_CAMPOS=[
+  {dim:'ccom',  etq:'Canal'},                           // canal comercial del cliente (Cadenas, Tiendas de piel…)
   {dim:'cli',   etq:'Cliente',        tope:600},
   {dim:'bu',    etq:'BU'},
   {dim:'sku',   etq:'EAN description',tope:600},
   {dim:'pdv',   etq:'Punto de venta', tope:600},
   {dim:'ciudad',etq:'Ciudad cliente'},
-  {dim:'canal', etq:'Canal'},
+  {dim:'canal', etq:'Canal de venta'},                  // DIGITAL / TIENDA de la fila
   {dim:'sub',   etq:'Channel 2'},
   {dim:'mes',   etq:'Mes',            chips:'soMesChips'},
   {dim:'trim',  etq:'Trimestre',      chips:'soTrimChips'},
   {dim:'prom',  etq:'Promedio Selec', chips:'soPromChips'}];   // meses que entran al promedio (no filtra los datos)
 /* Cajas de chips (no son selectores): cuántos valores elegidos tiene cada una. */
 function soChipsN(dim){return dim==='mes'?soE.meses.length:(dim==='trim'?soE.trim.length:soE.prom.length)}
-var SO_DIM_ETQ={cli:'Cliente',bu:'BU',sku:'EAN',pdv:'PDV',ciudad:'Ciudad',canal:'Canal',sub:'Channel 2'};
+var SO_DIM_ETQ={ccom:'Canal',cli:'Cliente',bu:'BU',sku:'EAN',pdv:'PDV',ciudad:'Ciudad',canal:'Canal de venta',sub:'Channel 2'};
 var SO_MAX_PDV_DET=400;    // con más PDV filtrados, el detalle por EAN pesaría demasiado
 var SO_COLORES=['#2b2830','#e41f33','#6b6670','#f29aa3','#a8a4ad','#d9d7dc','#8f1220','#f9d2d6'];
-var SO_SEL={},soVisibles={cli:true,bu:true,sku:true};
-try{var _sv=JSON.parse(localStorage.getItem('visor.soFiltros')||'null');if(_sv){soVisibles={};_sv.forEach(function(d){soVisibles[d]=true})}}catch(e){}
+var SO_SEL={},soVisibles={ccom:true,cli:true,bu:true,sku:true};
+try{var _sv=JSON.parse(localStorage.getItem('visor.soFiltros')||'null');if(_sv){soVisibles={};_sv.forEach(function(d){soVisibles[d]=true})}
+  // El filtro Canal (2026-11-17) aparece una vez en la barra aunque haya filtros guardados de antes.
+  if(!localStorage.getItem('visor.soCcom')){soVisibles.ccom=true;localStorage.setItem('visor.soCcom','1')}}catch(e){}
 try{var _sp=JSON.parse(localStorage.getItem('visor.so')||'null');if(_sp){if(_sp.unidad)soE.unidad=_sp.unidad;if(_sp.vista)soE.vista=_sp.vista}}catch(e){}
 function soGuardar(){try{localStorage.setItem('visor.so',JSON.stringify({unidad:soE.unidad,vista:soE.vista}));
   localStorage.setItem('visor.soFiltros',JSON.stringify(Object.keys(soVisibles)))}catch(e){}}
@@ -79,8 +82,12 @@ function soCargar(forzar){
     .withFailureHandler(function(e){soFallo(me(e))})
     .getVentas3Json(forzar===true)}
 function soFallo(m){soCargando=false;soError=m;soPintarEstado()}
+var soReleido=false;
 function soRecibir(d){
   soCargando=false;
+  // Cubo de la caché de antes del canal por fila (2026-11-12, sin "canales"): se relee de Drive
+  // una sola vez, para que la torta por canal no dependa de pulsar «Actualizar».
+  if(esGas()&&!d.canales&&!soReleido){soReleido=true;soCargar(true);return}
   var X=vt3Preparar(d);X.src='so';
   if(typeof vt3Cache!=='undefined'&&!vt3Cache.so)vt3Cache.so=X;
   soUsar(X)}
@@ -92,6 +99,7 @@ function soUsar(X){
   soConstruirCampos();
   soRender();
   cargarLib('choices',function(){soCrearSelectores()});
+  if(typeof ybAlSellOut==='function')ybAlSellOut();   // Detalle PDV de Perfect Store usa este cubo
   // SI vs SO (la subpestaña vecina) se pide cuando el Sell Out ya está en pantalla, para no competir con él.
   if(typeof sivsoData!=='undefined'&&sivsoData===null&&!sivsoCargando&&typeof cargarSIvsSO==='function')cargarSIvsSO()}
 function soPintarEstado(){
@@ -226,25 +234,62 @@ function soPrepararFiltros(){
   D.clientes.forEach(function(c,i){ok.cli[i]=1});
   D.skus.forEach(function(s,i){ok.sku[i]=1;ok.bu[s.bu]=1});
   D.pdv.forEach(function(p,i){ok.pdv[i]=1;ok.ciudad[soCiudad(p)]=1;ok.canal[soCanal(p)]=1;ok.sub[soSub(p)]=1});
-  Object.keys(soE.f).forEach(function(d){soSetFiltro(d,soE.f[d].filter(function(v){return ok[d][v]}))})}
+  (D.canales||[]).forEach(function(c){ok.canal[c.canal||'SIN CANAL']=1;ok.sub[c.subcanal||'SIN CHANNEL 2']=1});
+  Object.keys(soE.f).forEach(function(d){if(d==='ccom')return;soSetFiltro(d,soE.f[d].filter(function(v){return ok[d][v]}))})}
+/* Canal comercial del cliente (Cadenas, Tiendas de piel…; 2026-11-17), por SAP ID: el de Ventas
+   MTD (hoja de cumplimiento + histórico) y, si no está, el de SI vs SO (Carga Looker). Ambas
+   cargas llegan en segundo plano; mientras tanto el cliente queda "SIN CANAL". */
+var soCcMapa=null;
+function soMapaCanalCli(){
+  var a=typeof mtdU!=='undefined'?mtdU:null,s=typeof sivsoData!=='undefined'?sivsoData:null;
+  if(soCcMapa&&soCcMapa.a===a&&soCcMapa.s===s)return soCcMapa.m;
+  var m={};
+  if(s&&s.filas)s.filas.forEach(function(f){if(f.sapId&&f.channel)m[String(f.sapId)]=String(f.channel).toUpperCase()});
+  if(a)Object.keys(a).forEach(function(k){var c=a[k].canal;if(c&&c!=='SIN CANAL')m[k]=String(c).toUpperCase()});
+  soCcMapa={a:a,s:s,m:m};return m}
+function soCanalCli(i){var c=soD&&soD.clientes[i];return(c&&soMapaCanalCli()[String(c.id)])||'SIN CANAL'}
+/* Ventas MTD o SI vs SO terminaron de cargar: refresca las opciones y, si hay filtro, la vista. */
+function soAlCanalCli(){if(!soD)return;
+  if(SO_SEL.ccom)SO_SEL.ccom.refrescar(false);
+  if(soFs.ccom)soRender()}
 function soCiudad(p){return p.ciudad||'SIN CIUDAD'}
 function soCanal(p){return p.canal||'SIN CANAL'}
 function soSub(p){return p.subcanal||'SIN CHANNEL 2'}
+/* Canal / Channel 2 de UNA FILA (pm r[4], pb y ps r[5] = índice en D.canales; 2026-11-12): un
+   mismo PDV vende por TIENDA y por DIGITAL, así que el canal es de la venta, no del PDV. Sin
+   índice (cubo de antes de ese día) se usa el canal del PDV (el de su mes más reciente). */
+function soCanalDe(p,iC){var c=iC!=null&&soD.canales?soD.canales[iC]:null;return c?(c.canal||'SIN CANAL'):soCanal(p)}
+function soSubDe(p,iC){var c=iC!=null&&soD.canales?soD.canales[iC]:null;return c?(c.subcanal||'SIN CHANNEL 2'):soSub(p)}
+/* Canales con venta de cada PDV (de pm), para filtrar el PDV entero cuando la fila no trae
+   canal (inventario, lista de PDV del detalle): pasa si vende en alguno de los elegidos. */
+function soPdvCanales(i){var D=soD;
+  if(!D._cc){D._cc={};D.pm.forEach(function(r){if(r[4]==null)return;(D._cc[r[0]]||(D._cc[r[0]]={}))[r[4]]=1})}
+  return D._cc[i]||null}
+function soPasaCanal(p,i,ig,iC){
+  var fc=ig!=='canal'&&soFs.canal,fs=ig!=='sub'&&soFs.sub;if(!fc&&!fs)return true;
+  function ok(k){return(!fc||!!fc[soCanalDe(p,k)])&&(!fs||!!fs[soSubDe(p,k)])}
+  if(iC!=null)return ok(iC);
+  var m=soPdvCanales(i);
+  return m?Object.keys(m).some(function(k){return ok(Number(k))}):ok(null)}
 function soBus(){var D=soD;if(D.bus&&D.bus.length)return D.bus;var o={};D.skus.forEach(function(s){o[s.bu]=1});return Object.keys(o).sort()}
 
 function soOpciones(dim){
   var D=soD;if(!D)return[];
+  if(dim==='ccom'){var oc={};D.clientes.forEach(function(c,i){oc[soCanalCli(i)]=1});
+    return Object.keys(oc).sort().map(function(v){return{valor:v,etiqueta:v}})}
   if(dim==='cli')return D.clientes.map(function(c,i){return{valor:String(i),etiqueta:c.nombre}})
+    .filter(function(o){return!soFs.ccom||soFs.ccom[soCanalCli(Number(o.valor))]})
     .sort(function(a,b){return a.etiqueta.localeCompare(b.etiqueta,'es')});
   if(dim==='bu')return soBus().map(function(b){return{valor:b,etiqueta:b}});
   if(dim==='sku')return D.skus.map(function(s,i){return{valor:String(i),etiqueta:s.nombre+' · '+s.ean}})
     .filter(function(o){return!soFs.bu||soFs.bu[D.skus[Number(o.valor)].bu]})
     .sort(function(a,b){return a.etiqueta.localeCompare(b.etiqueta,'es')});
   if(dim==='pdv')return D.pdv.map(function(p,i){return{valor:String(i),etiqueta:p.nombre+(p.ciudad?' · '+p.ciudad:'')}})
-    .filter(function(o){var p=D.pdv[Number(o.valor)];return!soFs.cli||soFs.cli[p.cli]})
+    .filter(function(o){var p=D.pdv[Number(o.valor)];return(!soFs.cli||soFs.cli[p.cli])&&(!soFs.ccom||soFs.ccom[soCanalCli(p.cli)])})
     .sort(function(a,b){return a.etiqueta.localeCompare(b.etiqueta,'es')});
   var f=dim==='ciudad'?soCiudad:(dim==='canal'?soCanal:soSub),o={};
   D.pdv.forEach(function(p){o[f(p)]=1});
+  if(dim!=='ciudad')(D.canales||[]).forEach(function(c){o[dim==='canal'?(c.canal||'SIN CANAL'):(c.subcanal||'SIN CHANNEL 2')]=1});
   return Object.keys(o).sort().map(function(v){return{valor:v,etiqueta:v}})}
 function soConstruirCampos(){
   var cont=document.getElementById('soCampos');if(!cont||(cont.dataset&&cont.dataset.listo))return;
@@ -329,16 +374,18 @@ function soSelProm(){
   if(!soE.prom.length)return soSel();
   var out=[];soD.meses.forEach(function(m,i){if(Number(m.slice(0,4))===soE.anio&&soE.prom.indexOf(Number(m.slice(5,7)))!==-1)out.push(i)});
   return out}
-function soPasaCli(i,ig){return ig==='cli'||!soFs.cli||!!soFs.cli[i]}
+function soPasaCli(i,ig){
+  if(ig!=='cli'&&soFs.cli&&!soFs.cli[i])return false;
+  if(ig!=='ccom'&&soFs.ccom&&!soFs.ccom[soCanalCli(i)])return false;
+  return true}
 function soPasaSku(i,ig){var s=soD.skus[i];
   if(ig!=='sku'&&soFs.sku&&!soFs.sku[i])return false;
   if(ig!=='bu'&&soFs.bu&&!(s&&soFs.bu[s.bu]))return false;
   return true}
-function soPasaPdv(i,ig){var p=soD.pdv[i];if(!p)return false;
+function soPasaPdv(i,ig,iC){var p=soD.pdv[i];if(!p)return false;
   if(ig!=='pdv'&&soFs.pdv&&!soFs.pdv[i])return false;
   if(ig!=='ciudad'&&soFs.ciudad&&!soFs.ciudad[soCiudad(p)])return false;
-  if(ig!=='canal'&&soFs.canal&&!soFs.canal[soCanal(p)])return false;
-  if(ig!=='sub'&&soFs.sub&&!soFs.sub[soSub(p)])return false;
+  if(!soPasaCanal(p,i,ig,iC))return false;
   return soPasaCli(p.cli,ig)}
 function soVal(u,a){return soE.unidad==='#'?u:a}
 
@@ -366,7 +413,7 @@ function soPb(bus){
   bus.forEach(function(bu){
     if(vt3Pb[bu]){Array.prototype.push.apply(filas,vt3Pb[bu]);return}
     falta=true;var k='pb:'+bu;if(soPend[k])return;soPend[k]=1;
-    function listo(pb){delete soPend[k];vt3Pb[bu]=pb.map(function(r){return[r[0],bu,r[1],r[2],r[3]]});soPintarTodo()}
+    function listo(pb){delete soPend[k];vt3Pb[bu]=pb.map(function(r){return[r[0],bu,r[1],r[2],r[3],r[4]]});soPintarTodo()}
     if(!esGas()){setTimeout(function(){var g={};
       (D.demoPs||[]).forEach(function(r){if(D.skus[r[1]].bu!==bu)return;var kk=r[0]+'|'+r[2];
         var x=g[kk]||(g[kk]=[r[0],r[2],0,0]);x[2]+=r[3];x[3]+=r[4]});
@@ -388,7 +435,7 @@ function soAgregar(dim){
   var skuF=!!f.sku&&ig!=='sku',buF=!!f.bu&&ig!=='bu';
   function sum(k,iM,u,a){var s=g[k]||(g[k]=new Float64Array(n));s[iM]+=soVal(u,a)}
   function deSku(iS){return dim==='bu'?D.skus[iS].bu:iS}
-  function dePdv(iP){var p=D.pdv[iP];return dim==='tot'?'T':(dim==='cli'?p.cli:(dim==='canal'?soCanal(p):iP))}
+  function dePdv(iP,iC){var p=D.pdv[iP];return dim==='tot'?'T':(dim==='cli'?p.cli:(dim==='canal'?soCanalDe(p,iC):iP))}
   if(!(pdvF||dim==='pdv'||dim==='canal')){
     D.cs.forEach(function(r){if(!soPasaCli(r[0],ig)||!soPasaSku(r[1],ig))return;
       sum(dim==='tot'?'T':(dim==='cli'?r[0]:deSku(r[1])),r[2],r[3],r[4])});
@@ -402,15 +449,15 @@ function soAgregar(dim){
       'elige menos puntos de venta o un EAN.'};
     if(req.pdv&&!req.pdv.length)return{g:g};
     var ps=soDetalle(req);if(!ps)return null;
-    ps.forEach(function(r){if(!soPasaPdv(r[0],ig)||!soPasaSku(r[1],ig))return;
-      sum(dim==='sku'||dim==='bu'?deSku(r[1]):dePdv(r[0]),r[2],r[3],r[4])});
+    ps.forEach(function(r){if(!soPasaPdv(r[0],ig,r[5])||!soPasaSku(r[1],ig))return;
+      sum(dim==='sku'||dim==='bu'?deSku(r[1]):dePdv(r[0],r[5]),r[2],r[3],r[4])});
     return{g:g}}
   if(dim==='bu'||buF){
     var pb=soPb(dim==='bu'?soBus():Object.keys(f.bu));if(!pb)return null;
-    pb.forEach(function(r){if(!soPasaPdv(r[0],ig))return;if(buF&&!f.bu[r[1]])return;
-      sum(dim==='bu'?r[1]:dePdv(r[0]),r[2],r[3],r[4])});
+    pb.forEach(function(r){if(!soPasaPdv(r[0],ig,r[5]))return;if(buF&&!f.bu[r[1]])return;
+      sum(dim==='bu'?r[1]:dePdv(r[0],r[5]),r[2],r[3],r[4])});
     return{g:g}}
-  D.pm.forEach(function(r){if(!soPasaPdv(r[0],ig))return;sum(dePdv(r[0]),r[1],r[2],r[3])});
+  D.pm.forEach(function(r){if(!soPasaPdv(r[0],ig,r[4]))return;sum(dePdv(r[0],r[4]),r[1],r[2],r[3])});
   return{g:g}}
 
 function soMedidas(s,sel,selP){
@@ -644,7 +691,7 @@ function soHijosPdv(iPdv,fila){
   var ps=soDetalle({pdv:[iPdv]});
   if(!ps)return'<div class="vt3-fila so-hijo"><span class="nom"><span class="mtd-spinner"></span>Cargando sus EAN…</span></div>';
   var D=soD,n=D.meses.length,g={},sel=soSel(),selP=soSelProm();
-  ps.forEach(function(r){if(r[0]!==iPdv||!soPasaSku(r[1]))return;var s=g[r[1]]||(g[r[1]]=new Float64Array(n));s[r[2]]+=soVal(r[3],r[4])});
+  ps.forEach(function(r){if(r[0]!==iPdv||!soPasaSku(r[1])||!soPasaCanal(D.pdv[iPdv],iPdv,null,r[5]))return;var s=g[r[1]]||(g[r[1]]=new Float64Array(n));s[r[2]]+=soVal(r[3],r[4])});
   var l=Object.keys(g).map(function(k){var m=soMedidas(g[k],sel,selP),s=D.skus[k];m.key=Number(k);m.nombre=s?s.nombre:k;m.sub=s?s.bu:'';return m})
     .filter(function(m){return m.ac||m.py}).sort(function(a,b){return b.ac-a.ac});
   if(!l.length)return'<div class="vt3-fila so-hijo"><span class="nom">Sin EAN con venta en la selección</span></div>';
@@ -674,7 +721,7 @@ function soDonut(g,sel,dim){
   soCsvDonut[dim]=items.map(function(x){return{nombre:x.k,valor:Math.round(x.v),pct:total>0?Math.round(x.v/total*1000)/10:0}});
   if(total<=0)return'<div class="mtd-vacio">Sin datos</div>';
   var fs=soFs[dim],ac=0,partes=[];
-  items.forEach(function(x,i){var c=SO_COLORES[i%SO_COLORES.length],gr=360*x.v/total;x.c=c;x.p=x.v/total;x.sel=!!(fs&&fs[x.k]);
+  items.forEach(function(x,i){var c=SO_COLORES[i%SO_COLORES.length];if(typeof colorTema==='function')c=colorTema(c);var gr=360*x.v/total;x.c=c;x.p=x.v/total;x.sel=!!(fs&&fs[x.k]);
     partes.push((fs&&!x.sel?c+'40':c)+' '+ac.toFixed(2)+'deg '+(ac+gr).toFixed(2)+'deg');ac+=gr});
   return'<div class="sivso-donut-wrap so-donut-wrap"><div class="sivso-donut" style="background:conic-gradient('+partes.join(',')+')">'+
     '<div class="sivso-donut-hueco"><span>'+soNum(total)+'</span><span class="et">Sell Out</span></div></div>'+

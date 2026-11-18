@@ -365,6 +365,7 @@ function onVentasMtdCargado(data){
   ventasMtdData=data||{clientes:[],productos:[],prod:[],hist:[],histClientes:{},meta:{}};
   var meta=ventasMtdData.meta||{};
   mtdPrepararDatos();
+  if(typeof soAlCanalCli==='function')soAlCanalCli();   // filtro Canal de Sell Out PDV
   mtdRotularPeriodo(meta);
   document.getElementById('mtdActualizado').innerText=
     meta.actualizadoEn?('Datos leídos de la hoja: '+new Date(meta.actualizadoEn).toLocaleString('es-CO')):'';
@@ -401,7 +402,7 @@ function mtdAvisosPayload(meta){
   if(v.length>1){var mx=Math.max.apply(null,v),mn=Math.min.apply(null,v);
     if(mx&&(mx-mn)/Math.abs(mx)>0.005)msgs.push('Las hojas no concilian en el mes de corte (CUMPLIMIENTO '+
       mtdMoneda(c.cumplimiento)+' · PLANTILLA '+mtdMoneda(c.plantilla)+' · Histórico '+mtdMoneda(c.historico)+
-      '). Revisa el Diagnóstico.')}
+      ').')}
   var el=document.getElementById('mtdAvisos');
   el.hidden=!msgs.length;
   el.innerHTML=msgs.map(function(m){return'<div class="aviso grave">'+esc(m)+'</div>'}).join('')}

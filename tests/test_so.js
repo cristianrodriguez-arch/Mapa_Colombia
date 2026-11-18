@@ -180,4 +180,38 @@ t('CSV: cada visual de Sell Out PDV se descarga con lo que muestra', () => {
   assert.strictEqual(bajadas[3].filas.length, 2); assert.strictEqual(bajadas[4].filas.length, 2);
 });
 
+t('Canal de la FILA: un PDV que vende por TIENDA y DIGITAL reparte su venta en la torta y en el filtro', () => {
+  const X = JSON.parse(JSON.stringify(CUBO));
+  // PDV 1 vende en 2026-03 3 de sus 7 unidades por DIGITAL / WEB (el resto por TIENDA).
+  X.canales = [['TIENDA', 'TIENDA'], ['DIGITAL', 'WEB'], ['DIGITAL', 'DIGITAL']];
+  X.pm = X.pm.flatMap(r => {
+    if (r[0] === 0 && r[1] === 5) return [[0, 5, 4, 40, 0], [0, 5, 3, 30, 1]];
+    return [r.concat([r[0] === 2 ? 2 : 0])];
+  });
+  const c = cargar(); c.soRecibir(X); c.soE.unidad = '#'; c.soE.anio = 2026; c.soE.meses = []; c.soE.trim = [];
+  c.soSetFiltro('pdv', ['0']);
+  const g = c.soAgregar('canal').g, sel = c.soSel();
+  const ac = k => c.soMedidas(g[k], sel).ac;
+  assert.strictEqual(ac('TIENDA'), 30); assert.strictEqual(ac('DIGITAL'), 3);
+  c.soSetFiltro('pdv', []); c.soSetFiltro('canal', ['DIGITAL']);
+  assert.strictEqual(tot(c).ac, 3 + 45, 'DIGITAL = lo digital del PDV 1 + todo el PDV 3');
+  c.soSetFiltro('canal', []); c.soSetFiltro('sub', ['WEB']);
+  assert.strictEqual(tot(c).ac, 3);
+  assert.ok(c.soOpciones('sub').some(o => o.valor === 'WEB'), 'Channel 2 ofrece WEB aunque ningun PDV lo tenga como canal propio');
+});
+
+t('Filtro Canal (canal comercial del cliente, de Ventas MTD): Cadenas / Tiendas de piel', () => {
+  const c = cargar(); c.soRecibir(JSON.parse(JSON.stringify(CUBO))); c.soE.unidad = '#'; c.soE.anio = 2026; c.soE.meses = []; c.soE.trim = [];
+  c.mtdU = { '11026707': { canal: 'Cadenas' }, '11026712': { canal: 'Tiendas de piel' } };
+  assert.deepStrictEqual(plano(c.soOpciones('ccom')).map(o => o.valor), ['CADENAS', 'TIENDAS DE PIEL']);
+  c.soSetFiltro('ccom', ['CADENAS']);
+  assert.strictEqual(tot(c).ac, 33 + 20, 'Cadenas = PDV 1 + PDV 2 (Cruz Verde)');
+  assert.deepStrictEqual(plano(c.soOpciones('cli')).map(o => o.valor), ['0'], 'Cliente solo ofrece los de ese canal');
+  assert.deepStrictEqual(plano(c.soOpciones('pdv')).map(o => o.valor).sort(), ['0', '1']);
+  c.soSetFiltro('ccom', ['TIENDAS DE PIEL']);
+  assert.strictEqual(tot(c).ac, 45);
+  const g = c.soAgregar('cli').g;
+  assert.ok(!g[0] && g[1], 'Top Clientes solo muestra Medipiel');
+});
+
 console.log('\n' + ok + ' pruebas OK' + (process.exitCode ? ' · HAY FALLAS' : ''));

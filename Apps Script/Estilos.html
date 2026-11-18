@@ -1,5 +1,5 @@
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@300;400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@300;400;500;600;700&family=Quicksand:wght@500;600;700&display=swap');
 /* ══════════════════════════════════════════════════════════════════════
    Visor PDV + Bricks · hoja de estilos
    Lenguaje visual: lienzo gris claro + tarjetas blancas (Power BI) con la
@@ -36,6 +36,8 @@
      Montserrat, con cifras tabulares (mismo ancho por dígito) para que los números alineen. */
   --font-dense:var(--font);
   --rojo-marca:#e41f33;   /* barra central del logo ISDIN */
+  --sobre-ink:#ffffff;    /* texto sobre fondo --ink (chips activos, botón principal) */
+  --carbon-serie:#2b2830; /* serie principal de las gráficas (Sell In, año actual) */
 }
 
 *{box-sizing:border-box}
@@ -200,7 +202,7 @@ body.redimensionando #map{pointer-events:none}
   background:var(--surface);color:var(--ink-2);font-size:12px;font-family:inherit;
   cursor:pointer;white-space:nowrap}
 .btn:hover{background:var(--accent-suave);border-color:var(--foco);color:var(--accent)}
-.btn-primario{background:var(--ink);border-color:var(--ink);color:#fff;font-weight:600}
+.btn-primario{background:var(--ink);border-color:var(--ink);color:var(--sobre-ink);font-weight:600}
 .btn-primario:hover{background:var(--ink-fuerte);border-color:var(--ink-fuerte);color:#fff}
 .contador-filtros{display:inline-block;min-width:15px;padding:0 4px;margin-left:4px;
   border-radius:9px;background:var(--accent);color:#fff;font-size:10px;font-weight:700}
@@ -411,10 +413,10 @@ body.redimensionando #map{pointer-events:none}
 .popup-sellout.prod{border-color:var(--producto);background:#f4f3fe}
 .popup-sellout .grande{font-size:15px;font-weight:700}
 .badge-pot{display:inline-block;padding:1px 7px;border-radius:999px;background:var(--ink);
-  color:#fff;font-size:10.5px;font-weight:700;vertical-align:middle;margin-left:4px}
+  color:var(--sobre-ink);font-size:10.5px;font-weight:700;vertical-align:middle;margin-left:4px}
 .badge-agente{display:inline-block;font-size:11px;vertical-align:middle;margin-left:3px;cursor:default}
 .tag-tipo{display:inline-block;padding:0 5px;border-radius:4px;background:var(--ink);
-  color:#fff;font-size:9.5px;font-weight:700;vertical-align:middle;margin-left:3px;letter-spacing:.02em}
+  color:var(--sobre-ink);font-size:9.5px;font-weight:700;vertical-align:middle;margin-left:3px;letter-spacing:.02em}
 .tag-tipo.lam{background:var(--ink-2)}
 .popup-brick ol{margin:5px 0 0;padding-left:18px}
 .popup-brick li{margin-bottom:3px}
@@ -516,7 +518,7 @@ body.redimensionando #map{pointer-events:none}
 .mtd-filtros .campo-ancho{flex:2 1 300px}
 .mtd-filtros .acciones{display:flex;gap:8px}
 .mtd-btn{padding:8px 14px;border:1px solid var(--ink);border-radius:6px;
-  background:var(--ink);color:#fff;font-size:12.5px;font-weight:600;cursor:pointer}
+  background:var(--ink);color:var(--sobre-ink);font-size:12.5px;font-weight:600;cursor:pointer}
 .mtd-btn:hover{background:var(--accent-2);border-color:var(--accent-2)}
 
 .mtd-estado{padding:26px 14px;text-align:center;color:var(--ink-2);font-size:13px}
@@ -626,7 +628,7 @@ body.redimensionando #map{pointer-events:none}
   color:var(--ink-2);background:var(--surface);border:1px solid var(--borde-2);
   cursor:pointer;white-space:nowrap;font-family:inherit}
 .chip-periodo:hover{border-color:var(--ink)}
-.chip-periodo.activo{background:var(--ink);color:#fff;border-color:var(--ink)}
+.chip-periodo.activo{background:var(--ink);color:var(--sobre-ink);border-color:var(--ink)}
 
 /* ── Filtros activos (filtrado cruzado): mismo chip oscuro que .chip-periodo.activo
    con una × para quitarlo; "Quitar todos" es texto plano. ── */
@@ -634,7 +636,7 @@ body.redimensionando #map{pointer-events:none}
 .chips-activos[hidden]{display:none}
 .chips-activos-etq{font-size:9.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--muted);margin-right:2px}
 .chip-filtro{display:inline-flex;align-items:center;gap:6px;padding:4px 6px 4px 11px;border-radius:999px;
-  font-size:12px;font-weight:600;font-family:inherit;color:#fff;background:var(--ink);
+  font-size:12px;font-weight:600;font-family:inherit;color:var(--sobre-ink);background:var(--ink);
   border:1px solid var(--ink);cursor:pointer;max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .chip-filtro .x{font-size:14px;line-height:1;opacity:.7;padding:0 3px}
 .chip-filtro:hover .x{opacity:1}
@@ -714,7 +716,7 @@ body.redimensionando #map{pointer-events:none}
 .kc-barras{display:flex;flex-direction:column;gap:3px}
 .kc-b{position:relative;height:17px;display:flex;align-items:center}
 .kc-b i{position:absolute;left:0;top:0;bottom:0;border-radius:0 4px 4px 0}
-.kc-b i.si{background:#2b2830}.kc-b i.so{background:#e41f33}
+.kc-b i.si{background:var(--carbon-serie)}.kc-b i.so{background:#e41f33}
 .kc-b i.si-py{background:#cfcdd2}.kc-b i.so-py{background:#f29aa3}
 .kc-b span{position:relative;font-size:11px;color:#fff;padding-left:8px;white-space:nowrap;
   text-shadow:0 0 3px rgba(0,0,0,.35)}
@@ -762,7 +764,7 @@ body.redimensionando #map{pointer-events:none}
   border-radius:999px;padding:4px 10px;font:inherit;font-size:11.5px;color:var(--ink-2);cursor:pointer}
 .sivso-punto i{width:7px;height:7px;border-radius:50%;background:var(--borde-2)}
 .sivso-punto:hover{border-color:var(--ink-2)}
-.sivso-punto.activo{background:var(--ink);border-color:var(--ink);color:#fff;font-weight:600}
+.sivso-punto.activo{background:var(--ink);border-color:var(--ink);color:var(--sobre-ink);font-weight:600}
 .sivso-punto.activo i{background:var(--durazno)}
 .sivso-graf-cuerpo{position:relative;padding:0 34px}
 .sivso-flecha{position:absolute;top:50%;transform:translateY(-50%);width:30px;height:64px;border:1px solid var(--borde);
@@ -790,7 +792,7 @@ body.redimensionando #map{pointer-events:none}
 .sivso-svg .sv-lineas{pointer-events:none}
 .sivso-ley{justify-content:center;margin-top:6px}
 .sivso-ley .sw{display:inline-block;width:18px;height:10px;border-radius:2px;margin-right:6px;vertical-align:-1px}
-.sw-ac{background:#2b2830}.sw-py{background:#cfcdd2}.sw-pyl{background:#8a8a8a;height:3px!important}
+.sw-ac{background:var(--carbon-serie)}.sw-py{background:#cfcdd2}.sw-pyl{background:#8a8a8a;height:3px!important}
 .sw-so{background:#e41f33;height:3px!important}
 .sw-sopy{height:3px!important;background:repeating-linear-gradient(90deg,#e41f33 0 6px,transparent 6px 9px)}
 .sw-pos{background:#086124}.sw-neg{background:#b71c1c}
@@ -869,7 +871,7 @@ body.redimensionando #map{pointer-events:none}
 .lz-res b{font-size:20px;font-weight:700;color:var(--ink-fuerte);line-height:1.2}
 .lz-res small{font-size:11px;color:var(--muted)}
 .lz-sw{display:inline-block;width:12px;height:8px;border-radius:2px}
-.lz-sw.si{background:#2b2830}.lz-sw.so{background:#e41f33}
+.lz-sw.si{background:var(--carbon-serie)}.lz-sw.so{background:#e41f33}
 .lz-cab,.lz-fila{display:grid;grid-template-columns:minmax(150px,1.1fr) minmax(0,2.4fr) 150px;gap:14px;align-items:center}
 .lz-cab{font-size:10.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--ink-2);
   padding:0 8px 6px;border-bottom:1px solid var(--borde-2)}
@@ -885,7 +887,7 @@ body.redimensionando #map{pointer-events:none}
 .lz-barras{display:flex;flex-direction:column;gap:3px;min-width:0}
 .lz-b{display:flex;align-items:center;gap:6px;height:13px}
 .lz-b i{display:block;height:100%;border-radius:0 3px 3px 0;min-width:2px;flex:0 0 auto;max-width:calc(100% - 70px)}
-.lz-b i.si{background:#2b2830}.lz-b i.so{background:#e41f33}
+.lz-b i.si{background:var(--carbon-serie)}.lz-b i.so{background:#e41f33}
 .lz-b em{font-style:normal;font-size:11px;color:var(--ink-2);white-space:nowrap}
 .lz-abs{display:flex;align-items:center;justify-content:flex-end;gap:10px}
 .lz-p{font-weight:700;font-size:13px;padding:2px 8px;border-radius:999px;background:var(--lienzo);color:var(--ink-2);white-space:nowrap}
@@ -1046,7 +1048,9 @@ body.redimensionando #map{pointer-events:none}
   background:var(--surface);color:var(--ink);font-size:12.5px;font-family:inherit}
 .yb-fecha-fila select{flex:1 1 150px}
 .yb-fecha-fila input[hidden]{display:none}
-.yb-pop{left:auto;right:0}
+/* "+ Añadir filtro" de Perfect Store: se abre hacia la derecha del botón (antes right:0 lo
+   abría hacia la izquierda, debajo del riel); ybUbicarPop lo corre si no cabe en la ventana. */
+.yb-pop{left:0;right:auto;width:min(260px,calc(100vw - 24px));max-height:min(60vh,420px);overflow-y:auto;z-index:4000}
 
 /* Sub-pestañas + alcance (última encuesta / todas). */
 .yb-subbarra{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;flex-wrap:wrap;
@@ -1185,7 +1189,7 @@ body:not(.vista-mapa) .btn-centrar{display:none}
 .vt-switch{display:inline-flex;padding:2px;border:1px solid var(--borde-2);border-radius:999px;background:var(--surface)}
 .vt-switch button{border:none;background:none;padding:5px 12px;border-radius:999px;font:inherit;font-size:12px;
   font-weight:600;color:var(--ink-2);cursor:pointer;white-space:nowrap}
-.vt-switch button.activo{background:var(--ink);color:#fff}
+.vt-switch button.activo{background:var(--ink);color:var(--sobre-ink)}
 .vt-switch button:disabled{cursor:default;opacity:.4}
 .vt-switch.chico button{padding:4px 9px;font-size:11.5px}
 
@@ -1393,7 +1397,7 @@ body:not(.vista-mapa) .btn-centrar{display:none}
   .vt3-lista-meses::-webkit-scrollbar{display:none}
   .vt3-mes{flex-shrink:0;border:1px solid var(--borde-2);border-radius:999px;padding:3px 10px}
   .vt3-mes input{display:none}
-  .vt3-mes.on{background:var(--ink);color:#fff;border-color:var(--ink)}
+  .vt3-mes.on{background:var(--ink);color:var(--sobre-ink);border-color:var(--ink)}
   #vt3Kpis{display:grid;grid-template-columns:1fr 1fr}
 }
 @media(max-width:700px){
@@ -1524,4 +1528,120 @@ body.yb-panel-abierto{overflow:hidden}
   #vistaYoobic .yb-alcance{flex-wrap:wrap}
   #vistaYoobic .yb-cols{height:150px}
 }
+/* ══════════ Perfect Store con la identidad de Yoobic (2026-11-10) ══════════
+   Como la app de Yoobic: letra redondeada (Quicksand), lienzo gris claro, tarjetas blancas muy
+   redondeadas sin borde, controles en carbón (#46464e) con la píldora activa rellena y botones
+   con contorno. El semáforo (verde / rojos) y los agotados conservan su color con significado. */
+#vistaYoobic{--font:'Quicksand','Montserrat',system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;--font-dense:var(--font);
+  --yb-carbon:#46464e;--yb-tinta:#2f2f35;--accent:#46464e;--accent-2:#2f2f35;--accent-suave:#ececf0;--foco:#46464e;
+  --durazno:#e4e4ea;--surface-2:#f6f6f9;--borde:#e6e6ec;--borde-2:#d6d6de;--ink-fuerte:#2f2f35;
+  font-family:var(--font);color:var(--yb-tinta);background:#f3f3f6;border-radius:24px;padding:14px 16px}
+#vistaYoobic .mtd-head h2{font-family:var(--font);font-size:30px;font-weight:700;letter-spacing:0;text-transform:none;color:var(--yb-tinta)}
+#vistaYoobic h3{font-family:var(--font);font-weight:700;text-transform:none;letter-spacing:0;font-size:16px}
+#vistaYoobic .card{border:none;border-radius:22px;box-shadow:0 1px 3px rgba(30,30,40,.06)}
+#vistaYoobic .btn,#vistaYoobic .mtd-btn-csv{border-radius:10px;border:1px solid var(--borde-2);background:var(--surface);color:var(--yb-tinta);font-family:var(--font);font-weight:600}
+#vistaYoobic .btn:hover,#vistaYoobic .mtd-btn-csv:hover{background:var(--accent-suave);border-color:var(--yb-carbon)}
+#vistaYoobic .btn-nuevo{color:var(--yb-tinta);border-color:var(--borde-2);background:var(--surface)}
+#vistaYoobic .chip-periodo{border-radius:999px;font-family:var(--font);font-weight:600}
+#vistaYoobic .chip-periodo.activo{background:var(--yb-carbon);border-color:var(--yb-carbon);color:#fff}
+#vistaYoobic .yb-subtabs .tab{font-family:var(--font);font-weight:600;font-size:15px}
+#vistaYoobic .yb-subtabs .tab.activa{color:var(--yb-tinta);border-bottom:3px solid var(--yb-carbon)}
+#vistaYoobic .mtd-tabla th{font-family:var(--font);font-weight:700;color:var(--yb-tinta)}
+#vistaYoobic .mtd-tabla td{font-family:var(--font)}
+#vistaYoobic .choices__inner,#vistaYoobic select,#vistaYoobic input[type=date],#vistaYoobic input[type=search]{border-radius:10px;font-family:var(--font)}
+#vistaYoobic .yb-kpi .etq,#vistaYoobic .mtd-kpi .etq{font-family:var(--font);font-weight:700;letter-spacing:.02em}
+#vistaYoobic .yb-kpi .num,#vistaYoobic .mtd-kpi .num{font-family:var(--font);font-weight:700}
+#vistaYoobic .yb-kpi-sel{box-shadow:inset 0 0 0 2px var(--yb-carbon);border-radius:16px}
+#vistaYoobic .pop-op:hover{background:var(--accent-suave);color:var(--yb-tinta)}
+#vistaYoobic .barra-relleno{border-radius:999px}
+@media(max-width:600px){#vistaYoobic{border-radius:0;padding:8px}#vistaYoobic .mtd-head h2{font-size:22px}#vistaYoobic .card{border-radius:16px}}
+
+/* Comentarios (columna "Comentarios" de Yoobic) en las tablas y el panel de cobertura */
+.yb-com{max-width:280px;white-space:normal;font-size:12px;color:var(--ink-2);line-height:1.35}
+.yb-cob-item .c{font-size:11.5px;color:var(--ink-2);margin-top:2px}
+.popup-ps .ps-com{font-size:11.5px;color:var(--ink-2);margin:4px 0;max-width:260px;white-space:normal}
+
+/* Agotados: 3 tarjetas (BU, productos, ciudad · zona) */
+@media(min-width:1101px){.yb-grid3{grid-template-columns:repeat(3,minmax(0,1fr))}}
+
+/* Detalle PDV: tarjetas de bajadas (clic = filtro Bajadas) y píldora de la tabla */
+.yb-bajadas{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-top:8px}
+.yb-bj{display:flex;flex-direction:column;align-items:flex-start;gap:2px;padding:12px 14px;border-radius:16px;
+  border:1px solid var(--borde);background:var(--surface-2);cursor:pointer;font-family:inherit;color:inherit;text-align:left}
+.yb-bj .e{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.03em;color:var(--ink-2)}
+.yb-bj b{font-size:24px;line-height:1.15}
+.yb-bj small{font-size:11.5px;color:var(--muted)}
+.yb-bj:hover{border-color:var(--accent)}
+.yb-bj.activo{background:var(--accent);border-color:var(--accent);color:#fff}
+.yb-bj.activo .e,.yb-bj.activo small{color:#fff}
+.yb-bj.apagado{opacity:.5}
+.yb-bj-pill{display:inline-block;padding:2px 9px;border-radius:999px;font-size:11.5px;font-weight:700;white-space:nowrap;background:#ececf0;color:#46464e}
+.yb-bj-pill.b0{background:#fbe9e9;color:#8f1220}
+.yb-bj-pill.b2{background:#e6f1e9;color:#086124}
+.yb-sel-simple{width:100%;height:36px;padding:0 10px;border:1px solid var(--borde-2);border-radius:10px;background:var(--surface);font-family:inherit;font-size:13px;color:inherit}
+.sivso-tend-up{color:#086124;font-weight:600}.sivso-tend-down{color:#b71c1c;font-weight:600}.sivso-tend-0{color:var(--muted)}
+/* SI vs SO: la cabecera y la barra de filtros quedan fijas arriba al bajar (el scroll es el de
+   #vistaSIvsSO). En el celular no, para no comerse la pantalla. */
+@media(min-width:601px){.sivso-fijo{position:sticky;top:-2px;z-index:40;background:var(--lienzo);padding-top:2px;
+  box-shadow:0 6px 8px -8px rgba(30,30,40,.25)}.sivso-fijo .mtd-filtros{margin-bottom:8px}}
+/* ══════════ SI vs SO · filtro Meses, torta SI/SO, tabla Cliente › BU › Producto, DDI (2026-11-17) ══════════ */
+.sivso-rango-sel{display:flex;align-items:center;gap:6px}
+.sivso-rango-sel select{width:auto;min-width:76px;height:34px}
+.sivso-rango-sel span{font-size:12px;color:var(--muted)}
+.sivso-donut-cab{flex-wrap:wrap;padding-right:34px}
+.sivso-donut-cab .chips-periodo{margin:0}
+.sw-ddi{background:#e41f33;height:3px!important;border-radius:2px}
+.sivso-svg .sv-ddi-v{font-size:11px;font-weight:700;fill:#e41f33;paint-order:stroke;stroke:var(--surface);stroke-width:3px;stroke-linejoin:round}
+.sivso-svg .sv-eje-ddi{fill:#e41f33}
+.sivso-arbol .arb-tg{display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;margin-right:6px;padding:0;
+  border:1px solid var(--borde-2);border-radius:4px;background:var(--surface);color:var(--ink);font:700 13px/1 var(--font);cursor:pointer;vertical-align:-3px}
+.sivso-arbol .arb-tg:hover{border-color:var(--ink)}
+.sivso-arbol .arb-tg.vacio{border-color:transparent;background:none;cursor:default}
+.sivso-arbol .arb-nom{cursor:pointer}
+.sivso-arbol .arb-nom:hover{text-decoration:underline}
+.sivso-arbol th.arb-th{white-space:nowrap}
+.sivso-arbol th:nth-child(-n+3),.sivso-arbol td:nth-child(-n+3){text-align:left}
+.sivso-arbol tr.arb-n1>td.arb-c{padding-left:6px}
+.sivso-arbol td.arb-c{white-space:nowrap;max-width:280px;overflow:hidden;text-overflow:ellipsis}
+.sivso-arbol tr.arb-n0>td{font-weight:600}
+.sivso-arbol tr.arb-n1>td{background:var(--surface-2)}
+.sivso-arbol tr.arb-n2>td{font-size:12px;color:var(--ink-2)}
+@media(max-width:600px){.sivso-arbol td.arb-v{display:none}.sivso-arbol td.arb-c{max-width:none;white-space:normal}}
+
+/* ══════════ Modo oscuro (botón al pie del riel; alternarTema en JsNucleo) ══════════
+   Mismo manual de identidad: el carbón pasa a ser el fondo y el rojo ISDIN se conserva como
+   acento. Todo el visor usa los tokens de :root, así que basta con redefinirlos; aquí van además
+   los pocos colores fijos (series en carbón dibujadas en JS, Choices, el bloque de Perfect Store). */
+.rail-pie{margin-top:auto;padding-top:10px;border-top:1px solid var(--borde)}
+:root[data-tema="oscuro"]{color-scheme:dark;
+  --lienzo:#131115;--surface:#1e1b21;--surface-2:#27242b;
+  --ink:#eeebf0;--ink-2:#c9c5cd;--muted:#9a96a0;--ink-fuerte:#ffffff;
+  --borde:#36323b;--borde-2:#4a4550;
+  --accent:#ff4d5e;--accent-2:#ff7a87;--accent-suave:#3a1d23;--foco:#ff4d5e;--serie:#ff4d5e;--durazno:#4a2a31;
+  --desel:#4a4550;--sem-sin:#6b7280;
+  --sombra:0 1px 2px rgba(0,0,0,.45),0 1px 3px rgba(0,0,0,.35);
+  --sobre-ink:#18161a;--carbon-serie:#e6e3e9}
+:root[data-tema="oscuro"] #vistaYoobic{--yb-carbon:#d6d4dc;--yb-tinta:#eeebf0;--accent:#d6d4dc;--accent-2:#eeebf0;--accent-suave:#2e2b33;
+  --foco:#d6d4dc;--durazno:#3a3740;--surface-2:#27242b;--borde:#36323b;--borde-2:#4a4550;--ink-fuerte:#ffffff;background:#18161b}
+:root[data-tema="oscuro"] #vistaYoobic .chip-periodo.activo{color:#18161a}
+:root[data-tema="oscuro"] #vistaYoobic .card{box-shadow:0 1px 3px rgba(0,0,0,.4)}
+:root[data-tema="oscuro"] svg [fill="#2b2830"]{fill:#e6e3e9}
+:root[data-tema="oscuro"] svg [stroke="#2b2830"]{stroke:#e6e3e9}
+:root[data-tema="oscuro"] svg [stroke="#ece9e3"]{stroke:#2f2b33}
+:root[data-tema="oscuro"] svg [fill="#cfcdd2"]{fill:#5a5560}
+:root[data-tema="oscuro"] [style*="background:#2b2830"]{background:#e6e3e9!important}
+:root[data-tema="oscuro"] [style*="color:#2b2830"]{color:#e6e3e9!important}
+:root[data-tema="oscuro"] .sw-py{background:#5a5560}
+:root[data-tema="oscuro"] .choices__list--dropdown,:root[data-tema="oscuro"] .choices__list[aria-expanded]{background:var(--surface);border-color:var(--borde-2);color:var(--ink)}
+:root[data-tema="oscuro"] .choices__list--dropdown .choices__item--selectable.is-highlighted{background:var(--surface-2)}
+:root[data-tema="oscuro"] .choices__input{background:transparent;color:var(--ink)}
+:root[data-tema="oscuro"] input,:root[data-tema="oscuro"] select,:root[data-tema="oscuro"] textarea{background-color:var(--surface-2);color:var(--ink);border-color:var(--borde-2)}
+:root[data-tema="oscuro"] .leaflet-container{background:#1b191e}
+:root[data-tema="oscuro"] .leaflet-tile-pane{filter:brightness(.72) contrast(1.1) saturate(.8)}
+:root[data-tema="oscuro"] .leaflet-popup-content-wrapper,:root[data-tema="oscuro"] .leaflet-popup-tip,
+:root[data-tema="oscuro"] .leaflet-tooltip{background:var(--surface);color:var(--ink)}
+:root[data-tema="oscuro"] .lz-p.med{background:#3a3740;color:#eeebf0}
+:root[data-tema="oscuro"] .kc-fila:not(.ant) .kc-b:first-child span{color:#18161a;text-shadow:none}
+:root[data-tema="oscuro"] .kc-b i.si-py{background:#5a5560}
+:root[data-tema="oscuro"] .kc-b i.so-py{background:#9e3a47}
 </style>

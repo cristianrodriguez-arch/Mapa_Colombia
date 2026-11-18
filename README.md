@@ -173,7 +173,8 @@ El cruce PDV ↔ ventas se hace por `POS_ID` = `Nº Oficina Farmacia`, con la mi
 - **Filtros de PDV:** grupo de compras, canal, región, población y potencial. Los gráficos de canal, grupo y región también funcionan como filtros al hacer clic.
 - **KPIs generales:** PDV con Sell Out, Sell Out del período, promedio mensual y unidades.
 - **Paneles:** Top 10 PDV y portafolio Top 12 productos. Al hacer clic en un PDV o en un brick se abre su portafolio.
-- **Diagnóstico:** botón que muestra los archivos de Drive, el manifiesto del ETL y el porcentaje de PDV que cruzan con ventas.
+- **Diagnóstico:** el botón se quitó de la cabecera el 2026-11-17; el modal sigue disponible para soporte con `abrirDiag()` desde la consola del navegador.
+- **Modo claro / oscuro:** botón al pie del menú de la izquierda; se recuerda en el navegador.
 
 ### Despliegue
 
@@ -281,7 +282,7 @@ Compara lo que facturamos (sell-in) con lo que el cliente le vendió al consumid
 1. **Venta y plan (vs plan).** En *Ventas - YTD › SI_Appscript*, filtra los meses marcados y suma `Real (LOCAL)` (solo `Type` = SI); en *PPTO_Appscript*, suma `Plan` de esos meses. Deben dar lo mismo que el resumen y que las tarjetas de la izquierda.
 2. **Venta -1 (vs plan).** Lo mismo en `SI_Appscript`, con los mismos meses del año anterior.
 3. **Modo vs sell-out.** En *Carga Looker › Data*, suma `Real (LOCAL)` por `Type` (SI / SO) de los meses de la ventana.
-4. Si algo no cuadra, presiona **Actualizar**, porque la caché puede tener hasta 30 minutos. El botón **Diagnóstico** muestra qué devolvió cada hoja.
+4. Si algo no cuadra, presiona **Actualizar**, porque la caché puede tener hasta 30 minutos. Para ver qué devolvió cada hoja, corre `abrirDiag()` en la consola del navegador (el botón Diagnóstico se quitó el 2026-11-17).
 
 Las definiciones completas de todos los KPI del visor están en [`Apps Script/DOCUMENTACION_KPIS.md`](Apps%20Script/DOCUMENTACION_KPIS.md) (§3.3 este resumen, §3.4 el gráfico de crecimiento de abajo).
 

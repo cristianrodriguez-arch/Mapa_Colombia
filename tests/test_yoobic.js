@@ -138,13 +138,31 @@ t('la clave de misión une los dos endpoints (mission_id o tienda|fecha|delegado
   assert.ok(D.misiones[1][10].indexOf('ID0000000000002BBB|') === 0);
 });
 t('queda en caché y limpiarCacheYoobic() la borra', () => {
-  assert.ok(S.__cache.has('meta::yoobic_v1'));
+  assert.ok(S.__cache.has('meta::yoobic_v2'));
   S.limpiarCacheYoobic();
-  assert.ok(!S.__cache.has('meta::yoobic_v1'));
+  assert.ok(!S.__cache.has('meta::yoobic_v2'));
 });
 t('sin hoja Yoobic: error claro con las hojas disponibles', () => {
   const S2 = contextoServidor({ Otra: hoja([['x']]) });
   assert.throws(() => S2.getYoobicJson(true), /No se encontr.* 'Yoobic'.*Otra/);
+});
+
+t('bajadas, comentarios, testers y BU: se leen por encabezado (Bajadas ( Muebles ), Testers + sus columnas, Comentarios)', () => {
+  const enc = fila({ C: 'store_client_id', I: 'date', L: 'user_full_name', N: 'G', O: 'D', P: 'L', Q: 'P', R: 'T', T: 'FP FUSION WATER',
+    BX: 'Bajadas ( Muebles )', CH: 'Bajadas Compartidas', CV: 'Testers' });
+  enc[col('CW')] = 'FP FUSION WATER MAGIC SPF50 50ML'; enc[col('CX')] = 'ISDINCEUTICS FLAVO-C 30ML';
+  enc[col('CY')] = 'Permanent Visibility Score'; enc[col('GF')] = 'Comentarios';
+  const r1 = fila({ C: 'ID0000000000001AAA', I: '2026-10-01T10:00:00Z', L: 'ANA', N: 50, T: 'Sí', BX: '2 o más bajadas', CH: '1', CV: 'Si' });
+  r1[col('CW')] = 'SI'; r1[col('CX')] = 'NO'; r1[col('GF')] = '<span>Falta   tester</span>';
+  const r2 = fila({ C: 'ID0000000000002BBB', I: '2026-10-02T10:00:00Z', L: 'ANA', N: 40, T: 'No', BX: '0 Bajadas', CV: 'No' });
+  const S3 = contextoServidor({ Yoobic: hoja([enc, r1, r2]), 'Direcciones con sus cuentas CO (Appsheets)': hoja(direcciones) });
+  const X = JSON.parse(S3.getYoobicJson(true));
+  eq(X.testers, [['FP FUSION WATER MAGIC SPF50 50ML', 0], ['ISDINCEUTICS FLAVO-C 30ML', 1]]);
+  eq(X.bus, ['Foto', 'Isdinceutics', 'Derma']);
+  assert.strictEqual(X.gruposBu.length, X.grupos.length);
+  eq(X.misiones[0].slice(11), [2, 'Falta tester', 1, '10']);
+  eq(X.misiones[1].slice(11), [0, '', 0, '--']);
+  assert.strictEqual(D.misiones[0][11], -1);           // hoja sin esas columnas: sin dato
 });
 
 /* ══════════════════════════ CLIENTE ══════════════════════════ */
@@ -357,6 +375,56 @@ t('rol del delegado (Team de Asignacion): en las encuestas y filtrando los asign
   assert.strictEqual(C4.ybCobFilasPanel().length, 0);
   C4.ybCobDetalle('T', 1);
   eq(C4.ybCobFilasPanel().map(r => r.nombre), ['PDV UNO']);
+});
+
+t('Perfect Store: filtros Pilar / BU / Bajadas, Detalle PDV con Sell Out e inventario, Testers y Comentarios', () => {
+  const k = contextoCliente();
+  const P2 = JSON.parse(JSON.stringify(PAYLOAD));
+  P2.bus = ['Foto', 'Isdinceutics', 'Derma']; P2.gruposBu = [0, 2];
+  P2.bajadas = ['0 bajadas', '1 bajada', '2 o más bajadas'];
+  P2.testers = [['T FOTO', 0], ['T IC', 1]];
+  P2.tiendas[0][8] = 'p1';                                       // POS_ID (Direcciones), cruza con el Sell Out
+  P2.misiones[0].push(1, 'vieja', 1, '11');
+  P2.misiones[1].push(2, 'Falta tester IC', 1, '10');
+  P2.misiones[2].push(0, '', 0, '');
+  k.soD = { meses: ['2026-08', '2026-09'], pdv: [{ clave: 'P1' }], pm: [[0, 0, 1, 100], [0, 1, 2, 300]] };
+  k.invPdvD = { meses: ['2026-08', '2026-09'], pdv: ['P1'], inv: [[0, 0, 3, 30], [0, 1, 7, 70]] };
+  k.ybRecibir(P2);
+  // Pilar: por defecto Global; elegir Espacio lineal ordena las tablas por ese pilar
+  assert.strictEqual(k.ybPilar(), 0);
+  k.ybCambiarFiltro('pilar', ['2']);
+  assert.strictEqual(k.ybPilar(), 2);
+  k.ybRender();
+  assert.strictEqual(k.__tablas.ybTablaPdv.orden.k, 'l');
+  assert.ok(k.__tablas.ybTablaPdv.columnas.some(c => c.k === 'com'), 'Comentarios en el ranking');
+  k.ybCambiarFiltro('pilar', ['0']);
+  assert.strictEqual(k.ybFiltros.pilar.length, 0);              // Global = sin filtro
+  // BU: limita productos (Derma = UREADIN) y testers (Isdinceutics = T IC)
+  k.ybCambiarFiltro('bu', ['2']);
+  eq(k.ybProductosActivos().map(p => p.nombre), ['UREADIN']);
+  eq(k.ybTestersActivos().map(x => x.nombre), []);
+  k.ybCambiarFiltro('bu', []);
+  // Detalle PDV: una fila por PDV, bajadas, comentario, Sell Out (año del último mes) e inventario del último mes
+  k.ybVerSub('detalle');
+  const det = k.__tablas.ybTablaDet.filas;
+  assert.strictEqual(det.length, 2);
+  const f0 = det.find(f => f.id === P2.tiendas[0][0]);
+  assert.strictEqual(f0.bajada, '2 o más bajadas');
+  assert.strictEqual(f0.n, 2);                                   // 2 encuestas de esa tienda
+  assert.strictEqual(f0.com, 'Falta tester IC');
+  assert.strictEqual(f0.soYtd, 400); assert.strictEqual(f0.soMes, 300); assert.strictEqual(f0.inv, 7);
+  assert.ok(/2 o más bajadas/.test(k.document.getElementById('ybDetBajadas').innerHTML));
+  // Bajadas filtra TODAS las visuales (es dimensión de misión)
+  k.ybCambiarFiltro('bajada', ['0 bajadas']);
+  assert.strictEqual(k.ybFiltradas(null).length, 1);
+  k.ybCambiarFiltro('bajada', []);
+  // Testers: KPIs y tabla (la tienda 1 respondió que no tiene testers)
+  k.ybVerSub('testers');
+  const kp = k.document.getElementById('ybTestKpis').innerHTML;
+  assert.ok(/Testers agotados/.test(kp) && /PDV sin testers/.test(kp));
+  const ft = k.__tablas.ybTablaTest.filas;
+  assert.strictEqual(ft.length, 2);
+  assert.ok(ft.some(f => f.sin) && ft.some(f => f.n === 1 && f.lista[0].nombre === 'T IC'));
 });
 
 console.log('\n' + ok + ' pruebas OK');

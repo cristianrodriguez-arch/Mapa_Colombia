@@ -115,9 +115,38 @@ function alternarRail(){
   var sh=document.getElementById('shell');if(!sh)return;
   fijarRail(!sh.classList.contains('rail-expandido'),true)}
 function cerrarRailModal(){if(railModal())fijarRail(false,false)}
+
+/* ── Modo claro / oscuro (2026-11-17) ──
+   El tema es el atributo data-tema="oscuro" en <html>: Estilos.html redefine ahí los tokens de
+   color (mismo manual de identidad: carbón y rojo ISDIN, sobre fondo oscuro). Se aplica antes de
+   pintar con el script corto al inicio del <body> y se recuerda en localStorage (visor.tema).
+   Los gráficos que fijan colores en JS (SVG y tortas) se repintan al cambiar. */
+var TEMA_CLAVE='visor.tema';
+function temaOscuro(){return document.documentElement.getAttribute('data-tema')==='oscuro'}
+/* Color de "serie principal" (carbón en claro, casi blanco en oscuro) para lo que se pinta en JS. */
+function colorTinta(){return temaOscuro()?'#e6e3e9':'#2b2830'}
+/* El carbón de marca (#2b2830) como color de serie no se ve sobre fondo oscuro: se aclara. */
+function colorTema(c){return temaOscuro()&&String(c).toLowerCase()==='#2b2830'?'#e6e3e9':c}
+function pintarBotonTema(){
+  var o=temaOscuro(),b=document.getElementById('btnTema'),l=document.getElementById('lblTema'),ic=document.getElementById('icoTema');
+  if(b){b.setAttribute('aria-pressed',o?'true':'false');b.title=o?'Cambiar a modo claro':'Cambiar a modo oscuro'}
+  if(l)l.textContent=o?'Modo claro':'Modo oscuro';
+  if(ic)ic.innerHTML=o?'<path d="M12 7a5 5 0 1 0 0 10 5 5 0 0 0 0-10zM11 1h2v3h-2zm0 19h2v3h-2zM3.5 4.9l1.4-1.4 2.1 2.1-1.4 1.4zm12.6 12.6 1.4-1.4 2.1 2.1-1.4 1.4zM1 11h3v2H1zm19 0h3v2h-3zM3.5 19.1l2.1-2.1 1.4 1.4-2.1 2.1zM16.1 5.6l2.1-2.1 1.4 1.4-2.1 2.1z"/>':
+    '<path d="M12 3a9 9 0 1 0 9 9c0-.46-.04-.92-.1-1.36a5.39 5.39 0 0 1-4.4 2.26 5.4 5.4 0 0 1-3.14-9.8c-.44-.06-.9-.1-1.36-.1z"/>'}
+function aplicarTema(t){
+  if(t==='oscuro')document.documentElement.setAttribute('data-tema','oscuro');
+  else document.documentElement.removeAttribute('data-tema');
+  try{localStorage.setItem(TEMA_CLAVE,t)}catch(e){}
+  pintarBotonTema()}
+function alternarTema(){
+  aplicarTema(temaOscuro()?'claro':'oscuro');
+  // Repinta lo que lleva colores calculados en JS (cada función ignora la llamada si su pestaña no tiene datos).
+  [['renderSIvsSO','sivsoData'],['soRender','soD'],['ybRender','ybData']].forEach(function(x){
+    try{if(typeof window[x[0]]==='function'&&window[x[1]])window[x[0]]()}catch(e){}})}
 function iniciarRail(){
   var exp=false;try{exp=!railModal()&&localStorage.getItem(RAIL_CLAVE)==='exp'}catch(e){}
   fijarRail(exp,false);
+  pintarBotonTema();
   var sh=document.getElementById('shell');
   // Clic en el velo (fuera del cajón) o Escape cierran el riel modal.
   if(sh)sh.addEventListener('click',function(ev){
@@ -249,7 +278,7 @@ function recPuntos(p){
       'Filas leídas: '+(st.filas||0)+' · con coordenada: '+(st.conCoordenada||0)+
       ' · con Nº Oficina Farmacia (POS_ID): '+(st.conPosId||0)+
       ' · columna POS_ID detectada: '+(st.columnaPosIdDetectada||'(no encontrada)')+
-      '. Sin POS_ID no se puede cruzar con el Sell Out. Revisa "Diagnóstico".'+
+      '. Sin POS_ID no se puede cruzar con el Sell Out.'+
       (st.motivosSinCoordenada?' Coordenadas descartadas: '+JSON.stringify(st.motivosSinCoordenada)+
         (st.muestraSinCoordenada&&st.muestraSinCoordenada.length?' · ejemplo: '+JSON.stringify(st.muestraSinCoordenada[0]):''):''),true)}
   puntosG.forEach(function(x){x.poblacion=normGeo(x.poblacion);x.region=normGeo(x.region)});
@@ -258,7 +287,7 @@ function recBricks(p){bricksG=p.bricks||[];
   var st=p.stats||{};
   if(!bricksG.length||!st.conGeometria)
     avisar('Bricks: la hoja "Bricks" devolvió '+bricksG.length+' bricks y '+(st.conGeometria||0)+
-      ' con geometría; el mapa no puede dibujar los polígonos ni asignar zona. Revisa "Diagnóstico".',true);
+      ' con geometría; el mapa no puede dibujar los polígonos ni asignar zona.',true);
   listo.bricks=true;boot()}
 function recVentas(p){
   mesesD=p.meses||[];var pdv=p.pdv||{};ventasG={};var bs={};

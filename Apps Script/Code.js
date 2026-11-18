@@ -407,8 +407,11 @@ function getVentas3DetalleJson(reqJson) {
     }
     porFrag[f].forEach(function(i) {
       (datos.filas[i] || []).forEach(function(t) {
-        // fragmento por PDV: [iSku, iMes, und, imp] · por producto: [iPdv, iMes, und, imp]
-        ps.push(porPdv ? [i, t[0], t[1], t[2], t[3]] : [t[0], i, t[1], t[2], t[3]]);
+        // fragmento por PDV: [iSku, iMes, und, imp, iCanal] · por producto: [iPdv, iMes, und, imp, iCanal]
+        // (iCanal = índice en cubo.canales; los fragmentos de antes del 2026-11-12 no lo traen)
+        var r = porPdv ? [i, t[0], t[1], t[2], t[3]] : [t[0], i, t[1], t[2], t[3]];
+        if (t.length > 4) r.push(t[4]);
+        ps.push(r);
       });
     });
   }
@@ -1896,7 +1899,7 @@ function limpiarCacheSIvsSO() {
  * (o por nombre); el inventario, por EAN. Caché 6 h (limpiarCache() / forzar la renueva).
  */
 var HOJA_PRODUCTOS_LANZ = 'Products 2026';
-var CACHE_LANZ_CLAVE    = 'lanzamientos_v1';
+var CACHE_LANZ_CLAVE    = 'lanzamientos_v2';   // v2: + catálogo completo (2026-11-17)
 function getLanzamientosJson(forzar) {
   return conCache_(CACHE_LANZ_CLAVE, CACHE_SEGUNDOS, function() {
     var hoja = abrirHoja_().getSheetByName(HOJA_PRODUCTOS_LANZ);
@@ -1914,13 +1917,17 @@ function getLanzamientosJson(forzar) {
       innov:  mtdColEx_(h, ['innovacion'], [[['innov'], []]])
     };
     mtdExigir_(col, ['innov'], HOJA_PRODUCTOS_LANZ, v[0] || []);
-    var productos = [];
+    // catalogo = TODOS los productos de la hoja [Product ID, EAN, nombre]: SI vs SO lo usa para
+    // filtrar el inventario (que viene por EAN) con los filtros de Producto, Marca y markets.
+    var productos = [], catalogo = [];
     for (var i = 1; i < v.length; i++) {
+      var eanC = mtdTexto_(v[i], col.ean), pidC = mtdTexto_(v[i], col.pid), nomC = mtdTexto_(v[i], col.nombre);
+      if (eanC || pidC) catalogo.push([pidC, eanC, nomC]);
       if (mtdNorm_(v[i][col.innov]).indexOf('innovacion') === -1) continue;
       productos.push([mtdTexto_(v[i], col.pid), mtdTexto_(v[i], col.ean), mtdTexto_(v[i], col.nombre),
                       mtdTexto_(v[i], col.bu)]);
     }
-    return { texto: jsonAscii_({ v: 1, productos: productos,
+    return { texto: jsonAscii_({ v: 2, productos: productos, catalogo: catalogo,
                                  meta: { hoja: HOJA_PRODUCTOS_LANZ, filas: v.length - 1, actualizadoEn: new Date().toISOString() } }),
              cachear: true };
   }, forzar === true);
@@ -1971,7 +1978,7 @@ function verSIvsSO() {
 var NOMBRE_HOJA_YOOBIC      = 'Yoobic';
 var NOMBRE_HOJA_DIRECCIONES = 'Direcciones con sus cuentas CO (Appsheets)';
 
-var CACHE_YOOBIC_CLAVE       = 'yoobic_v1';
+var CACHE_YOOBIC_CLAVE       = 'yoobic_v2';   // v2: bajadas, comentarios, testers y BU
 var CACHE_YOOBIC_FOTOS_CLAVE = 'yoobic_fotos_v1';
 var CACHE_YOOBIC_SEGUNDOS    = 1800;   // 30 min
 
@@ -1984,20 +1991,29 @@ var YOOBIC_PILARES = [
   { k: 'temp',   etiqueta: 'Visibilidad de campaña/temporal', col: 'R', max: 15 }
 ];
 
-/* Disponibilidad de producto por grupo (una columna = un producto, Sí/No). */
+/* Disponibilidad de producto por grupo (una columna = un producto, Sí/No). `bu` = la BU
+   ISDIN del grupo (filtro BU de Perfect Store: "¿qué BU está más agotada?"). */
 var YOOBIC_DISPONIBILIDAD = [
-  { grupo: 'Producto BU Foto',              rango: 'T:AB' },
-  { grupo: 'Segmento reaplicación (Foto)',  rango: 'AE:AG' },
-  { grupo: 'Segmento Pediatrics',           rango: 'AI:AL' },
-  { grupo: 'Coverage',                      rango: 'AN:AS' },
-  { grupo: 'Producto Isdinceutics',         rango: 'AV:AZ' },
-  { grupo: 'Limpiadores',                   rango: 'BC:BF' },
-  { grupo: 'Producto Derma',                rango: 'BH:BR' },
-  { grupo: 'Lanzamientos Derma',            rango: 'BU:BU' }
+  { grupo: 'Producto BU Foto',              rango: 'T:AB',  bu: 'Foto' },
+  { grupo: 'Segmento reaplicación (Foto)',  rango: 'AE:AG', bu: 'Foto' },
+  { grupo: 'Segmento Pediatrics',           rango: 'AI:AL', bu: 'Foto' },
+  { grupo: 'Coverage',                      rango: 'AN:AS', bu: 'Foto' },
+  { grupo: 'Producto Isdinceutics',         rango: 'AV:AZ', bu: 'Isdinceutics' },
+  { grupo: 'Limpiadores',                   rango: 'BC:BF', bu: 'Isdinceutics' },
+  { grupo: 'Producto Derma',                rango: 'BH:BR', bu: 'Derma' },
+  { grupo: 'Lanzamientos Derma',            rango: 'BU:BU', bu: 'Derma' }
 ];
+var YOOBIC_BUS = ['Foto', 'Isdinceutics', 'Derma'];
+
+/* Bajadas (muebles ISDIN en el PDV): "0 Bajadas" · "1 Bajada" · "2 o más bajadas" → 0 · 1 · 2. */
+var YOOBIC_BAJADAS = ['0 bajadas', '1 bajada', '2 o más bajadas'];
 
 /* Respaldo por letra de las columnas que se buscan por encabezado. */
 var YOOBIC_COL_RESPALDO = { fecha: 'I', delegado: 'L' };
+
+/* Testers: la columna "Testers" (¿el PDV tiene testers? Sí/No) y, a su derecha, una columna
+   por tester (SI = está · NO = agotado) hasta la primera de puntaje / visibilidad. */
+var YOOBIC_TESTERS_MAX = 40;
 
 /* Prefijo común de las fotos: se quita en el servidor y el cliente lo repone
    (cada URL pesa ~110 caracteres y hay varias por misión). */
@@ -2098,7 +2114,10 @@ function yoobicResolverColumnas_(headersRaw) {
     delegado: yoobicCol_(h, ['user_full_name', 'user full name'], ['user_full_name']),
     mision:   yoobicCol_(h, ['mission_id', '_id'], ['mission_id']),
     nombre:   yoobicCol_(h, ['store_title', 'store_name', 'store', 'site'], ['store_title', 'store_name']),
-    campana:  yoobicCol_(h, ['campaign_title', 'campaign'], ['campaign_title'])
+    campana:  yoobicCol_(h, ['campaign_title', 'campaign'], ['campaign_title']),
+    bajadas:  yoobicCol_(h, ['bajadas ( muebles )', 'bajadas (muebles)', 'bajadas'], ['bajadas ( muebles', 'bajadas (muebles']),
+    comentario: yoobicCol_(h, ['comentarios', 'comentario'], []),
+    testers:  yoobicCol_(h, ['testers', 'tester'], [])
   };
   if (col.fecha === null)    col.fecha    = yoobicColIdx_(YOOBIC_COL_RESPALDO.fecha);
   if (col.delegado === null) col.delegado = yoobicColIdx_(YOOBIC_COL_RESPALDO.delegado);
@@ -2134,7 +2153,29 @@ function yoobicResolverColumnas_(headersRaw) {
     fotos.push({ idx: i, tipo: tipoIdx[nom] });
   });
 
-  return { col: col, pilares: pilares, productos: productos, fotos: fotos, tiposFoto: tipos };
+  var testers = [];
+  if (col.testers !== null) {
+    for (var ti = col.testers + 1; ti < h.length && testers.length < YOOBIC_TESTERS_MAX; ti++) {
+      if (!h[ti] || /score|puntuacion|visibilidad|scoring/.test(h[ti])) break;
+      var tn = String(headersRaw[ti]).trim();
+      testers.push({ idx: ti, nombre: tn, bu: /isdinceutics/i.test(tn) ? 1 : (/derma|ureadin|labial|nutra/i.test(tn) ? 2 : 0) });
+    }
+  }
+
+  return { col: col, pilares: pilares, productos: productos, fotos: fotos, tiposFoto: tipos, testers: testers };
+}
+
+/** "1 Bajada" → 1 · "2 o más bajadas" → 2 · "0 Bajadas" → 0 · vacío / "-" → -1. */
+function yoobicBajada_(v) {
+  var m = /^(\d+)/.exec(mtdNorm_(v));
+  return m ? Math.min(2, Number(m[1])) : -1;
+}
+
+/** Comentario de la misión: texto plano (Yoobic a veces manda <span>…</span>), máx. 500 caracteres. */
+function yoobicComentario_(v) {
+  var s = String(v == null ? '' : v).replace(/<[^>]*>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim();
+  if (s === '-') return '';
+  return s.length > 500 ? s.slice(0, 497) + '…' : s;
 }
 
 /** Clave estable de una misión para unir puntajes y fotos (dos endpoints, dos cachés). */
@@ -2216,11 +2257,17 @@ function getYoobicJson(forzar) {
       if (pts[0] !== null && pts[1] !== null && pts[2] !== null && pts[3] !== null && pts[4] !== null &&
           Math.abs(pts[0] - (pts[1] + pts[2] + pts[3] + pts[4])) > 1) descuadres++;
       var disp = cols.productos.map(function(p) { return yoobicDisp_(r[p.idx]); }).join('');
+      var tf = col.testers !== null ? yoobicDisp_(r[col.testers]) : '-';
+      var tdisp = cols.testers.map(function(x) { return yoobicDisp_(r[x.idx]); }).join('');
       misiones.push([
         tIdx[tid], fecha, idx(delegados, dIdx, mtdTexto_(r, col.delegado) || 'Sin delegado'),
         pts[0], pts[1], pts[2], pts[3], pts[4], disp,
         col.campana !== null ? idx(campanas, cIdx, mtdTexto_(r, col.campana) || 'Perfect Store') : 0,
-        yoobicClave_(r, col, tid, r[col.fecha])
+        yoobicClave_(r, col, tid, r[col.fecha]),
+        col.bajadas !== null ? yoobicBajada_(r[col.bajadas]) : -1,
+        col.comentario !== null ? yoobicComentario_(r[col.comentario]) : '',
+        tf === '1' ? 1 : (tf === '0' ? 0 : -1),
+        tdisp
       ]);
     });
 
@@ -2241,6 +2288,10 @@ function getYoobicJson(forzar) {
         return { k: p.k, etiqueta: p.etiqueta, max: p.max, encabezado: cols.pilares[i].encabezado };
       }),
       grupos: YOOBIC_DISPONIBILIDAD.map(function(g) { return g.grupo; }),
+      bus: YOOBIC_BUS,
+      gruposBu: YOOBIC_DISPONIBILIDAD.map(function(g) { return Math.max(0, YOOBIC_BUS.indexOf(g.bu)); }),
+      bajadas: YOOBIC_BAJADAS,
+      testers: cols.testers.map(function(x) { return [x.nombre, x.bu]; }),
       productos: cols.productos.map(function(p) { return [p.nombre, p.grupo]; }),
       tiposFoto: cols.tiposFoto,
       delegados: delegados,
