@@ -136,6 +136,8 @@ def main():
         t("PDV × mes", sorted(r[1:4] for r in cubo["pm"] if r[0] == ip) == [[0, 10, 1000], [1, 5, 500.5], [2, 12, 1200]])
         t("BU del producto sale de DIM Productos (en mayúsculas)",
           sorted(s[2] for s in cubo["skus"]) == ["DERMA", "FOTO"] and cubo["bus"] == ["DERMA", "FOTO"])
+        t("BU DC (skus[5]): sin la pestaña Hoja2 configurada, es la misma BU",
+          all(len(s) == 6 and s[5] == s[2] for s in cubo["skus"]))
         pb = json.loads((salida / "s3_pb_01.json").read_text(encoding="utf-8"))
         t("un archivo PDV × mes por BU", pb["bu"] == "FOTO" and sorted(r[:4] for r in pb["pb"]) == sorted(
             [[ip, 0, 10, 1000], [ip, 1, 5, 500.5], [ip, 2, 12, 1200]]))
@@ -225,6 +227,42 @@ def main():
         t("mapa: el manifiesto lista los dos libros y cómo salió el POS_ID",
           [o["pos_id"] for o in man["origen"]] == ["columna", "deducido"]
           and man["pdv_pos_id"]["sf_id_en_otro_anio"] == 2)
+        # ---- BU oficial de Isdin Core (DIM_Isdin_Core, encabezados en la fila 2) ----
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "DIM_Isdin_Core"
+        ws.append([None, None, None, None, None])
+        ws.append([None, "SUB FAMILIA", "NUEVA REF.", "ANTERIOR REF.", "ISDIN EAN"])
+        ws.append([None, "PLAT. WATER", "FP FUSION WATER", None, 8429420248977])
+        ws.append([None, "Derma", "UREADIN", None, 8470001901200])
+        ruta_dim = salida / "Dim_productos.xlsx"
+        wb.save(ruta_dim)
+        cfg.DIM_ISDIN_CORE = {"ruta": str(ruta_dim), "hoja": "DIM_Isdin_Core", "fila_encabezados": 2,
+                              "clave": ["isdin ean", "ean"], "campos": {"bu": ["sub familia"]}}
+        etl._DIM_CORE.clear()
+        prods = {"8429420248977": {"bu": "FOTO"}, "8888": {"bu": "OTRO"}}
+        etl.aplicar_dim_isdin_core(cfg, prods)
+        t("BU de Isdin Core: manda sobre la del Affiliate Master y se normaliza en mayúsculas",
+          prods["8429420248977"]["bu"] == "PLAT. WATER" and prods["8470001901200"]["bu"] == "DERMA")
+        t("BU de Isdin Core: un EAN que no está conserva su BU", prods["8888"]["bu"] == "OTRO")
+        etl._DIM_CORE.clear()
+        cfg.DIM_ISDIN_CORE = None
+        # ---- BU DC: pestaña Hoja2 del mismo libro, sin tocar la BU ----
+        wb2 = Workbook()
+        ws2 = wb2.active
+        ws2.title = "Hoja2"
+        ws2.append([None, None, None, None, None])
+        ws2.append([None, "SUB FAMILIA", "NUEVA REF.", "ANTERIOR REF.", "ISDIN EAN"])
+        ws2.append([None, "OTRO", "LABIAL", None, 8470001901200])
+        ruta_dc = salida / "Dim_dc.xlsx"
+        wb2.save(ruta_dc)
+        cfg.DIM_BU_DC = {"ruta": str(ruta_dc), "hoja": "Hoja2", "fila_encabezados": 2,
+                         "clave": ["isdin ean", "ean"], "campos": {"bu": ["sub familia"]}}
+        etl._DIM_CORE.clear()
+        dc = etl.cargar_dim_bu_dc(cfg)[0]
+        t("BU DC: lee la pestaña Hoja2 por ISDIN EAN", dc.get("8470001901200", {}).get("bu") == "OTRO")
+        etl._DIM_CORE.clear()
+        cfg.DIM_BU_DC = None
     print(f"\n{ok} pruebas OK")
 
 

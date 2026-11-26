@@ -43,6 +43,8 @@
 *{box-sizing:border-box}
 html,body{margin:0;padding:0;height:100%;background:var(--lienzo);color:var(--ink);
   font-family:var(--font);font-size:14px;font-variant-numeric:tabular-nums lining-nums}
+body{background:radial-gradient(700px 520px at 0% 0%,rgba(255,180,143,.16),transparent 65%),
+  radial-gradient(600px 600px at 0% 100%,rgba(184,161,134,.12),transparent 65%) fixed,var(--lienzo)}
 /* Misma letra y mismos números en tablas, gráficas SVG, tooltips y el mapa. */
 table,svg,svg text,.leaflet-container,.leaflet-tooltip,.leaflet-popup-content{
   font-family:var(--font-dense);font-variant-numeric:tabular-nums lining-nums}
@@ -54,52 +56,220 @@ table,svg,svg text,.leaflet-container,.leaflet-tooltip,.leaflet-popup-content{
 .shell.rail-expandido{grid-template-columns:var(--rail-exp) minmax(0,1fr)}
 .app{display:grid;grid-template-rows:auto minmax(0,1fr);gap:10px;height:100vh;padding:10px 10px 10px 0;min-width:0}
 
-/* ══════════ Riel de navegación · Material 3 Expressive ══════════
-   COLAPSADO: 96 px, cada destino = indicador en píldora (56×32) con el icono y la
-   etiqueta debajo. EXPANDIDO: 240 px, logo completo y el indicador ocupa toda la
-   fila (icono + etiqueta). Activo = indicador rojo claro; hover = capa de estado. */
-.nav-rail{display:flex;flex-direction:column;gap:4px;min-width:0;overflow:hidden auto;
-  background:var(--lienzo);padding:12px 12px 16px;font-family:var(--font)}
-.rail-cab{display:flex;flex-direction:column;align-items:center;gap:6px;margin-bottom:14px}
-.rail-menu{width:56px;height:40px;border:none;border-radius:var(--radio-pill);background:transparent;
-  color:var(--ink);cursor:pointer;display:flex;align-items:center;justify-content:center}
-.rail-menu:hover{background:rgba(65,65,65,.08)}
-.rail-menu svg,.rail-ind svg{width:24px;height:24px;fill:currentColor;flex-shrink:0}
-.rail-logo{color:var(--ink);display:flex;align-items:center;height:28px}
-.rail-logo .logo-emblema{height:22px;width:auto}
-.rail-logo .logo-completo{display:none;height:40px;width:auto}
-/* Logo ISDIN según el manual: barras y letras en el gris de marca, barra central roja
-   y el lema "LOVE YOUR SKIN" en Montserrat ligera, del ancho del logotipo. */
-.rail-logo .logo-rojo{fill:var(--rojo-marca)}
-.rail-logo .logo-lema{font-family:var(--font);font-weight:300;font-size:15px;fill:currentColor;letter-spacing:.02em}
-.rail-items{display:flex;flex-direction:column;gap:6px}
-.rail-item{display:flex;flex-direction:column;align-items:center;gap:4px;width:100%;padding:4px 0;
-  border:none;background:none;color:var(--ink-2);font:inherit;font-size:12px;font-weight:500;
-  cursor:pointer;text-align:center}
-.rail-ind{display:flex;align-items:center;justify-content:center;width:56px;height:32px;
-  border-radius:var(--radio-pill);transition:background .15s ease,width .2s cubic-bezier(.2,0,0,1)}
-.rail-item:hover .rail-ind{background:rgba(65,65,65,.08)}
-.rail-item.activo{color:var(--ink-fuerte);font-weight:700}
-.rail-item.activo .rail-ind{background:var(--durazno);color:var(--accent-2)}
-.rail-item:focus-visible{outline:none}
-.rail-item:focus-visible .rail-ind{box-shadow:0 0 0 2px var(--foco)}
-.rail-lbl{line-height:1.2;max-width:84px}
-.rail-item.clasico{color:var(--muted)}
-.rail-sep{height:1px;background:var(--borde);margin:10px 12px}
-.rail-sep span{display:none}
-/* Expandido */
-.rail-expandido .rail-cab{flex-direction:row;align-items:center;gap:8px}
-.rail-expandido .rail-logo .logo-emblema{display:none}
-.rail-expandido .rail-logo .logo-completo{display:block}
-.rail-expandido .rail-item{flex-direction:row;padding:0}
-.rail-expandido .rail-ind{width:100%;height:56px;justify-content:flex-start;gap:12px;padding:0 16px}
-.rail-expandido .rail-ind .rail-lbl-dup{display:none}
-.rail-expandido .rail-item{position:relative}
-.rail-expandido .rail-lbl{position:absolute;left:52px;top:50%;transform:translateY(-50%);
-  max-width:none;white-space:nowrap;font-size:14px}
-.rail-expandido .rail-sep{height:auto;background:none;margin:14px 16px 4px}
-.rail-expandido .rail-sep span{display:block;font-size:11px;font-weight:600;color:var(--muted);
-  text-transform:uppercase;letter-spacing:.04em}
+/* ══════════ Riel de navegación "vidrio" (2026-11-22) · ver DISENO_RIEL_VIDRIO.md ══════════
+   Réplica de la experiencia "Glassy Sidebar V10" con identidad ISDIN. Panel flotante de vidrio con
+   dos columnas: menú (.rail-main) + franja de acciones (.rail-franja) a la que se "conecta" el destino
+   activo con esquinas cóncavas. Colapsado = píldora de 76 px con botones circulares y tooltips.
+   Tokens --rail-* (claro aquí, oscuro en el bloque :root[data-tema="oscuro"] de abajo). */
+:root{
+  --color-brand-ink:#2b2830; --color-brand-primary:#e41f33;
+  --rail-col:92px; --rail-exp:260px; --rail-w-col:76px; --rail-w-exp:244px;
+  --rail-glass-bg:rgba(255,255,255,.80);
+  --rail-glass-blur:24px;
+  --rail-glass-border:rgba(43,40,48,.08);
+  --rail-glass-highlight:inset 0 1px 0 rgba(255,255,255,.9);
+  --rail-glass-shadow:0 12px 32px rgba(43,40,48,.10),0 2px 6px rgba(43,40,48,.05);
+  --rail-pill-bg:rgba(43,40,48,.04); --rail-pill-hover:rgba(43,40,48,.08); --rail-pill-borde:rgba(43,40,48,.06);
+  --rail-active-bg:#2b2830; --rail-active-fg:#ffffff;
+  --rail-text:#2b2830; --rail-text-2:#414141; --rail-muted:#6d6d6d;
+  --rail-focus:#a1725a; --rail-badge-bg:#ffb48f; --rail-badge-fg:#2b2830;
+  --motion-fast:150ms; --motion-base:250ms; --motion-slow:400ms;
+  --ease-std:cubic-bezier(.2,0,0,1); --ease-emph:cubic-bezier(.3,0,0,1);
+}
+.nav-rail{position:relative;z-index:20;display:flex;min-width:0;width:var(--rail-w-col);margin:10px 8px;
+  border-radius:26px;overflow:hidden;font-family:var(--font);color:var(--rail-text);
+  background:var(--rail-glass-bg);border:1px solid var(--rail-glass-border);
+  box-shadow:var(--rail-glass-highlight),var(--rail-glass-shadow);
+  -webkit-backdrop-filter:blur(var(--rail-glass-blur)) saturate(160%);backdrop-filter:blur(var(--rail-glass-blur)) saturate(160%);
+  transition:width var(--motion-base) var(--ease-std)}
+.rail-expandido .nav-rail{width:var(--rail-w-exp)}
+.rail-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:8px;padding:14px 0 12px 12px;
+  overflow:hidden auto;scrollbar-width:none}
+.rail-main::-webkit-scrollbar{display:none}
+.rail-main>*{margin-right:12px}
+/* Lo que solo existe en uno de los dos estados */
+.shell:not(.rail-expandido) .rail-solo-exp{display:none!important}
+.rail-expandido .rail-solo-col{display:none!important}
+.rail-txt{min-width:0;opacity:0;transform:translateX(-6px);transition:opacity var(--motion-fast) var(--ease-std),transform var(--motion-base) var(--ease-std)}
+.rail-expandido .rail-txt{opacity:1;transform:none;transition-delay:60ms}
+.nav-rail svg{fill:currentColor;flex-shrink:0}
+.nav-rail button{font:inherit;color:inherit}
+.nav-rail :focus-visible{outline:2px solid var(--rail-focus);outline-offset:2px}
+/* Cabecera: insignia de marca + nombre + botón ‹ */
+.rail-cab{display:flex;align-items:center;gap:10px;min-height:44px}
+.rail-marca{width:44px;height:44px;flex-shrink:0;border-radius:50%;border:1px solid var(--rail-pill-borde);
+  background:var(--rail-pill-bg);display:flex;align-items:center;justify-content:center;cursor:pointer;padding:0;
+  color:var(--rail-text);transition:transform var(--motion-fast) var(--ease-std),background var(--motion-fast) ease}
+.rail-marca:hover{background:var(--rail-pill-hover);transform:scale(1.04)}
+.rail-marca:active{transform:scale(.96)}
+.rail-marca svg{width:24px;height:auto}
+.rail-marca .logo-rojo{fill:var(--color-brand-primary)}
+.rail-marca-txt{flex:1;line-height:1.15}
+.rail-marca-txt b{display:block;font-size:15px;font-weight:700;letter-spacing:-.01em;color:var(--rail-text)}
+.rail-marca-txt small{display:block;font-size:11px;color:var(--rail-muted);margin-top:2px;white-space:nowrap}
+.rail-menu{width:30px;height:30px;flex-shrink:0;border-radius:50%;border:1px solid var(--rail-pill-borde);background:var(--rail-pill-bg);
+  display:flex;align-items:center;justify-content:center;padding:0;cursor:pointer;color:var(--rail-text-2);
+  transition:background var(--motion-fast) ease,transform var(--motion-fast) var(--ease-std)}
+.rail-menu:hover{background:var(--rail-pill-hover)}
+.rail-menu:active{transform:scale(.92)}
+.rail-menu svg{width:18px;height:18px}
+.shell:not(.rail-expandido) .nav-rail .rail-cab{justify-content:center}
+.rail-expandido .rail-cab{justify-content:flex-start}
+/* Buscador (Ctrl / ⌘ K) */
+.rail-buscar{position:relative}
+.rail-buscar-caja{display:flex;align-items:center;gap:8px;height:40px;padding:0 8px 0 12px;border-radius:12px;
+  background:var(--rail-pill-bg);border:1px solid var(--rail-pill-borde);color:var(--rail-muted);
+  transition:background var(--motion-fast) ease,border-color var(--motion-fast) ease}
+.rail-buscar-caja:focus-within{background:var(--rail-pill-hover);border-color:var(--rail-focus)}
+.rail-buscar-caja svg{width:16px;height:16px}
+.rail-buscar-caja input{flex:1;min-width:0;height:auto;margin:0;padding:0;border:0!important;background:none!important;box-shadow:none!important;outline:none;font:inherit;font-size:13px;color:var(--rail-text);-webkit-appearance:none;appearance:none}
+.rail-buscar-caja input::-webkit-search-cancel-button{display:none}
+.rail-buscar-caja input::placeholder{color:var(--rail-muted)}
+.rail-buscar-caja input:focus-visible{outline:none}
+.rail-buscar-caja kbd{font:inherit;font-size:10px;font-weight:700;padding:2px 6px;border-radius:6px;
+  background:var(--rail-pill-hover);color:var(--rail-text-2);white-space:nowrap}
+/* Botones circulares del colapsado (buscar, destinos, tema) */
+.rail-circ{width:48px;height:48px;margin:0 auto;border-radius:50%;border:1px solid var(--rail-pill-borde);background:var(--rail-pill-bg);
+  display:flex;align-items:center;justify-content:center;cursor:pointer;padding:0;color:var(--rail-text-2);
+  transition:background var(--motion-fast) ease,transform var(--motion-fast) var(--ease-std)}
+.rail-circ:hover{background:var(--rail-pill-hover);transform:scale(1.04)}
+.rail-circ svg{width:20px;height:20px}
+.shell:not(.rail-expandido) .nav-rail .rail-buscar{display:flex;justify-content:center}
+/* Destinos */
+.rail-items{display:flex;flex-direction:column;gap:8px;margin-right:0!important;margin-top:4px}
+.rail-item{position:relative;display:flex;align-items:center;justify-content:center;gap:10px;
+  width:48px;height:48px;margin:0 auto;padding:0;border-radius:50%;cursor:pointer;
+  border:1px solid var(--rail-pill-borde);background:var(--rail-pill-bg);color:var(--rail-text-2);
+  font-size:13.5px;font-weight:500;text-align:left;
+  transition:background var(--motion-fast) ease,color var(--motion-fast) ease,transform var(--motion-fast) var(--ease-std),
+    border-radius var(--motion-base) var(--ease-std),width var(--motion-base) var(--ease-std)}
+.rail-item:hover{background:var(--rail-pill-hover);color:var(--rail-text)}
+.rail-item:active{transform:scale(.97)}
+.rail-ind{display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.rail-ind svg{width:20px;height:20px}
+.rail-item .rail-lbl{display:none}
+.rail-item.activo{background:var(--rail-active-bg);color:var(--rail-active-fg);border-color:transparent;font-weight:700;
+  width:52px;height:52px;box-shadow:0 6px 16px rgba(43,40,48,.18)}
+/* Indicador del activo en el colapsado: punto a la izquierda */
+.rail-item.activo::after{content:'';position:absolute;left:-10px;top:50%;width:5px;height:5px;margin-top:-2.5px;
+  border-radius:50%;background:var(--rail-active-bg)}
+/* Expandido: píldoras a todo el ancho; el activo se conecta con la franja */
+.rail-expandido .rail-item{width:auto;height:44px;margin:0 12px 0 0;padding:0 12px;justify-content:flex-start;border-radius:14px}
+.rail-expandido .rail-item .rail-lbl{display:block;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rail-expandido .rail-item.activo{margin-right:0;padding-right:12px;height:46px;border-radius:14px 0 0 14px;box-shadow:none}
+.rail-expandido .rail-item.activo::after{display:none}
+.rail-expandido .rail-item.activo::before,.rail-expandido .rail-item.activo .rail-conc{content:'';position:absolute;right:0;width:14px;height:14px;pointer-events:none}
+.rail-expandido .rail-item.activo::before{top:-14px;background:radial-gradient(circle at 0 0,transparent 13.5px,var(--rail-active-bg) 14px)}
+.rail-expandido .rail-item.activo .rail-conc{bottom:-14px;background:radial-gradient(circle at 0 100%,transparent 13.5px,var(--rail-active-bg) 14px)}
+.rail-conc{display:none}
+.rail-expandido .rail-item.activo .rail-conc{display:block}
+.rail-grupo{position:relative;display:flex;flex-direction:column}
+.rail-expand{position:absolute;right:20px;top:11px;width:24px;height:24px;border:0;border-radius:8px;background:none;
+  display:flex;align-items:center;justify-content:center;padding:0;cursor:pointer;color:inherit;z-index:1}
+.rail-expand svg{width:18px;height:18px;transition:transform var(--motion-base) var(--ease-std)}
+.rail-expand[aria-expanded="true"] svg{transform:rotate(180deg)}
+.rail-expand:hover{background:var(--rail-pill-hover)}
+.rail-item.activo~.rail-expand{color:var(--rail-active-fg);right:30px}
+.rail-item.activo~.rail-expand:hover{background:rgba(255,255,255,.14)}
+/* Informes de Ventas (se abren con el chevron) */
+.rail-sub{display:grid;grid-template-rows:0fr;transition:grid-template-rows var(--motion-base) var(--ease-std)}
+.rail-sub.abierto{grid-template-rows:1fr}
+.rail-sub>div{overflow:hidden;display:flex;flex-direction:column;gap:2px;padding-left:18px;margin-right:12px}
+.rail-sub.abierto>div{padding-top:6px}
+.rail-subitem{display:flex;align-items:center;gap:10px;height:34px;padding:0 10px;border:0;border-radius:10px;background:none;
+  cursor:pointer;color:var(--rail-text-2);font-size:13px;font-weight:500;text-align:left;
+  transition:background var(--motion-fast) ease,color var(--motion-fast) ease}
+.rail-subitem:hover{background:var(--rail-pill-bg);color:var(--rail-text)}
+.rail-subitem.activo{background:var(--rail-pill-hover);color:var(--rail-text);font-weight:700}
+.rail-punto{width:8px;height:8px;border-radius:3px;flex-shrink:0}
+.rail-subitem.activo .rail-punto{box-shadow:0 0 0 2px var(--rail-glass-bg),0 0 0 3.5px currentColor}
+/* Sección "Filtros activos" */
+.rail-sec{display:flex;align-items:center;justify-content:space-between;margin-top:10px;padding:0 4px;
+  font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--rail-muted)}
+.rail-filtros{display:flex;flex-direction:column;gap:4px}
+.rail-filtro{display:flex;align-items:center;gap:10px;height:38px;padding:0 10px;border:1px solid transparent;border-radius:12px;
+  background:none;cursor:pointer;color:var(--rail-text-2);font-size:13px;text-align:left;
+  transition:background var(--motion-fast) ease,border-color var(--motion-fast) ease}
+.rail-filtro:hover{background:var(--rail-pill-bg)}
+.rail-filtro.actual{background:var(--rail-pill-bg);border-color:var(--rail-pill-borde);color:var(--rail-text)}
+.rail-filtro .rail-lbl{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rail-cnt{min-width:22px;height:20px;padding:0 6px;border-radius:999px;background:var(--rail-pill-hover);color:var(--rail-text-2);
+  font-size:11px;font-weight:700;display:inline-flex;align-items:center;justify-content:center}
+.rail-vacio{padding:4px 10px;font-size:12px;color:var(--rail-muted)}
+.shell:not(.rail-expandido) .nav-rail .rail-filtros{align-items:center;gap:10px;margin-top:6px}
+.rail-filtro-col{width:28px;height:28px;border:0;border-radius:9px;background:none;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0}
+.rail-filtro-col:hover{background:var(--rail-pill-bg)}
+.rail-filtro-col .rail-punto{width:9px;height:9px;border-radius:50%}
+/* Pie: tarjeta de tema + usuario */
+.rail-pie{margin-top:auto;display:flex;flex-direction:column;gap:10px;padding-top:12px}
+.rail-tema{display:flex;align-items:center;gap:10px;width:100%;padding:10px;border-radius:16px;cursor:pointer;text-align:left;
+  border:1px solid var(--rail-pill-borde);background:var(--rail-pill-bg);transition:background var(--motion-fast) ease}
+.rail-tema:hover{background:var(--rail-pill-hover)}
+.rail-anillo{width:36px;height:36px;flex-shrink:0;border-radius:50%;display:flex;align-items:center;justify-content:center;
+  background:conic-gradient(var(--rail-badge-bg) 0 72%,var(--rail-pill-hover) 72% 100%);position:relative;color:var(--rail-text)}
+.rail-anillo::before{content:'';position:absolute;inset:3px;border-radius:50%;background:var(--rail-glass-solido,#fff)}
+.rail-anillo svg{position:relative;width:16px;height:16px}
+.rail-tema .rail-txt{flex:1;line-height:1.2;white-space:nowrap;overflow:hidden}
+.rail-tema .rail-txt b,.rail-tema .rail-txt small{overflow:hidden;text-overflow:ellipsis}
+.rail-tema b{display:block;font-size:13px;color:var(--rail-text)}
+.rail-tema small{display:block;font-size:11px;color:var(--rail-muted)}
+.rail-switch{position:relative;flex-shrink:0;width:38px;height:22px;border-radius:999px;background:var(--rail-pill-hover);
+  transition:background var(--motion-base) var(--ease-std)}
+.rail-switch i{position:absolute;top:3px;left:3px;width:16px;height:16px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.25);
+  transition:transform var(--motion-base) var(--ease-emph)}
+.rail-tema[aria-pressed="true"] .rail-switch{background:var(--rail-badge-bg)}
+.rail-tema[aria-pressed="true"] .rail-switch i{transform:translateX(16px)}
+.shell:not(.rail-expandido) .nav-rail .rail-tema{width:48px;height:48px;padding:0;margin:0 auto;justify-content:center;border-radius:50%}
+.rail-usuario{display:flex;align-items:center;gap:10px;padding:10px 4px 2px;border-top:1px solid var(--rail-pill-borde)}
+.rail-avatar{position:relative;width:38px;height:38px;flex-shrink:0;border-radius:50%;display:flex;align-items:center;justify-content:center;
+  background:linear-gradient(135deg,#ffc7ab,#d09375);color:#2b2830;font-size:13px;font-weight:700;letter-spacing:.02em}
+.rail-avatar::after{content:'';position:absolute;right:-1px;bottom:-1px;width:10px;height:10px;border-radius:50%;
+  background:#2f9e55;border:2px solid var(--rail-glass-solido,#fff)}
+.rail-usuario .rail-txt{flex:1;line-height:1.2}
+.rail-usuario b{display:block;font-size:13px;color:var(--rail-text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rail-usuario small{display:block;font-size:11px;color:var(--rail-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rail-mas{width:32px;height:32px;border:0;border-radius:10px;background:none;cursor:pointer;color:var(--rail-muted);padding:0;
+  display:flex;align-items:center;justify-content:center}
+.rail-mas:hover{background:var(--rail-pill-bg);color:var(--rail-text)}
+.rail-mas svg{width:18px;height:18px}
+.shell:not(.rail-expandido) .nav-rail .rail-usuario{justify-content:center;border-top:0;padding:4px 0 0}
+/* Línea fina (solo expandido) a la que se conecta el destino activo; las acciones viven en la cabecera de cada pestaña */
+.rail-franja{display:block;width:3px;flex-shrink:0;margin:18px 9px 18px 0;border-radius:3px;background:var(--rail-active-bg);opacity:.9;
+  animation:railFranja var(--motion-slow) var(--ease-emph)}
+@keyframes railFranja{from{opacity:0;transform:scaleY(.6)}to{opacity:.9;transform:none}}
+@keyframes railGiro{to{transform:rotate(360deg)}}
+/* Botones de icono de la cabecera de cada pestaña: Actualizar (durazno) y Quitar filtros */
+.acc-iconos{display:inline-flex;align-items:center;gap:6px}
+.btn-ico{width:34px;height:34px;padding:0;border-radius:10px;border:1px solid var(--borde-2);background:var(--surface);color:var(--ink-2);
+  display:inline-flex;align-items:center;justify-content:center;cursor:pointer;
+  transition:background var(--motion-fast) ease,color var(--motion-fast) ease,transform var(--motion-fast) var(--ease-std)}
+.btn-ico:hover{background:var(--surface-2);color:var(--ink-fuerte)}
+.btn-ico:active{transform:scale(.92)}
+.btn-ico:focus-visible{outline:2px solid var(--rail-focus);outline-offset:2px}
+.btn-ico svg{width:18px;height:18px;fill:currentColor}
+.btn-ico.prim{background:#ffb48f;border-color:transparent;color:#2b2830}
+.btn-ico.prim:hover{background:#ffc7ab;color:#2b2830}
+.btn-ico.girando svg{animation:railGiro .8s linear infinite}
+/* Tooltips del colapsado y resultados del buscador (fuera del riel: position fixed) */
+.rail-tip{position:fixed;z-index:3100;pointer-events:none;padding:6px 10px;border-radius:8px;font-family:var(--font);font-size:12px;font-weight:600;
+  background:var(--rail-active-bg);color:var(--rail-active-fg);box-shadow:0 6px 18px rgba(0,0,0,.18);
+  opacity:0;transform:translateX(-4px);transition:opacity var(--motion-fast) ease,transform var(--motion-fast) var(--ease-std)}
+.rail-tip.ver{opacity:1;transform:none}
+.rail-res{position:fixed;z-index:3100;width:260px;max-height:340px;overflow:auto;padding:6px;border-radius:14px;font-family:var(--font);
+  background:var(--rail-glass-solido,#fff);border:1px solid var(--rail-glass-border);box-shadow:0 16px 40px rgba(43,40,48,.20);color:var(--rail-text)}
+.rail-res button{display:flex;align-items:center;gap:10px;width:100%;padding:9px 10px;border:0;border-radius:10px;background:none;
+  cursor:pointer;font:inherit;font-size:13px;color:inherit;text-align:left}
+.rail-res button small{margin-left:auto;font-size:11px;color:var(--rail-muted)}
+.rail-res button.sel,.rail-res button:hover{background:var(--rail-pill-hover)}
+.rail-res .rail-vacio{padding:10px}
+/* Respaldo sin vidrio y con menos transparencia o movimiento */
+@supports not ((backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px))){.nav-rail{background:var(--rail-glass-solido,#fff)}}
+@media(prefers-reduced-transparency:reduce){.nav-rail{background:var(--rail-glass-solido,#fff);-webkit-backdrop-filter:none;backdrop-filter:none}}
+@media(prefers-reduced-motion:reduce){
+  .nav-rail,.nav-rail *,.rail-tip,.shell{transition:none!important;animation:none!important}}
+/* Barra inferior del celular: conserva su estilo propio */
+.nav-barra .rail-ind{border-radius:var(--radio-pill);transition:background .15s ease}
+.nav-barra .rail-ind svg{width:24px;height:24px}
 .cuerpo{display:grid;grid-template-columns:minmax(0,1fr) 10px var(--ancho-rail,400px);
   grid-template-rows:minmax(0,1fr);gap:0;min-height:0}
 /* Divisor arrastrable entre mapa y panel (el hueco de 10 px que antes era gap). */
@@ -494,8 +664,8 @@ body.redimensionando #map{pointer-events:none}
    ══════════════════════════════════════════════════════════════════ */
 #vistaMapa{display:flex;flex-direction:column;gap:10px;min-height:0}
 #vistaMapa .cuerpo{flex:1 1 auto;min-height:0}
-#vistaVentasMtd,#vistaSIvsSO,#vistaYoobic,#vistaSO{min-height:0;overflow-y:auto;padding:2px}
-#vistaSO[hidden]{display:none}
+#vistaVentasMtd,#vistaSIvsSO,#vistaYoobic,#vistaSO,#vistaDigital{min-height:0;min-width:0;overflow-y:auto;padding:2px}
+#vistaSO[hidden],#vistaDigital[hidden]{display:none}
 /* El [hidden] del navegador es una regla del user-agent y pierde contra el
    display:flex de arriba, que va por ID: sin estas reglas la vista oculta
    se sigue pintando y se superpone con la activa en el grid de .app. */
@@ -679,7 +849,7 @@ body.redimensionando #map{pointer-events:none}
 .hist-legend .sw-plan{width:11px;height:3px;border-radius:2px;background:var(--accent)}
 
 /* ══════════ SI vs SO ══════════
-   Reutiliza .mtd-*/.card/.chips-periodo tal cual; solo lo específico de esta
+   Reutiliza .mtd-…, .card y .chips-periodo tal cual; solo lo específico de esta
    pestaña vive aquí: el detalle ΔSI%/ΔSO% de las tarjetas KPI, el gráfico de
    barras agrupadas SI/SO por mes y el donut de %Participación por BU. ────── */
 .sivso-pos{color:var(--sem-alto);font-weight:600}
@@ -704,11 +874,39 @@ body.redimensionando #map{pointer-events:none}
 /* KPIs de SI vs SO: 3 cifras en columnas iguales con divisor y, debajo, Sell In contra
    Sell Out de este año y del anterior en barras de una sola escala (llena la tarjeta). */
 .sivso-top .sivso-kpis{flex-direction:column;align-items:stretch;justify-content:center;gap:12px;padding:12px 18px}
-.sivso-kpis .cifras{display:grid;grid-template-columns:minmax(0,1.25fr) minmax(0,1.25fr) minmax(0,.8fr);gap:0}
+.sivso-kpis .cifras{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:0}
 .sivso-kpis .bloque{min-width:0;padding:2px 18px;border-left:1px solid var(--borde)}
 .sivso-kpis .bloque:first-child{border-left:none;padding-left:0}
 .sivso-kpis .num{font-size:clamp(16px,1.3vw,25px);white-space:normal;overflow-wrap:anywhere}
 .sivso-kpis .num.pct{font-size:clamp(24px,2.4vw,32px)}
+/* Tarjeta de KPIs de SI vs SO · variaciones estilo Zebra (2026-11-23): por fila, barras horizontales del
+   año actual (oscuro) y del anterior (claro) y la variación con su pin. Verde = crece, rojo = cae. */
+.sivso-kv{display:flex;flex-direction:column;border-top:1px solid var(--borde);padding-top:6px}
+.kv-p{display:grid;grid-template-columns:120px minmax(0,1fr) 150px;gap:14px;align-items:center;padding:8px 0}
+.kv-p+.kv-p{border-top:1px dashed var(--borde)}
+.kv-cab b{display:block;font-size:12px;font-weight:700;color:var(--ink-fuerte);text-transform:uppercase;letter-spacing:.03em}
+.kv-cab small{display:block;font-size:10.5px;color:var(--muted);margin-top:1px}
+.kv-barras{display:flex;flex-direction:column;gap:4px;min-width:0}
+.kv-b{display:grid;grid-template-columns:38px minmax(0,1fr);align-items:center;gap:8px}
+.kv-a{font-size:10.5px;font-weight:700;color:var(--ink-2);text-align:right;font-variant-numeric:tabular-nums}
+.kv-b.py .kv-a{font-weight:500;color:var(--muted)}
+.kv-pista{display:flex;align-items:center;gap:6px;min-width:0;height:18px}
+.kv-pista i{display:block;height:100%;border-radius:0 3px 3px 0;flex-shrink:0;min-width:2px}
+.kv-b.ac .kv-pista i{background:var(--carbon-serie)}
+.kv-b.py .kv-pista i{background:#cfcdd2}
+.kv-pista b{font-size:11.5px;font-weight:700;color:var(--ink);white-space:nowrap;font-variant-numeric:tabular-nums}
+.kv-b.py .kv-pista b{font-weight:500;color:var(--muted)}
+.kv-var{display:flex;flex-direction:column;align-items:flex-end;gap:3px;font-variant-numeric:tabular-nums}
+.kv-var b{font-size:12.5px;font-weight:700}
+.kv-var small{font-size:11.5px;font-weight:700}
+.kv-var.pos b,.kv-var.pos small{color:var(--sem-alto)}.kv-var.neg b,.kv-var.neg small{color:var(--error)}
+.kv-pin{position:relative;width:100%;height:8px}
+.kv-pin::before{content:'';position:absolute;left:50%;top:-2px;bottom:-2px;width:1px;background:var(--ink-2)}
+.kv-pin i{position:absolute;top:2px;height:4px;border-radius:2px}
+.kv-pin i.pos{background:var(--sem-alto)}.kv-pin i.neg{background:var(--error)}
+.kv-sin{font-size:11px;color:var(--muted)}
+.kv-vacio{grid-column:2/-1;font-size:12px;color:var(--muted);padding:10px 0}
+@media(max-width:800px){.kv-p{grid-template-columns:1fr;gap:6px}.kv-var{align-items:flex-start}}
 .sivso-kpi-comp{display:flex;flex-direction:column;gap:8px;border-top:1px solid var(--borde);padding-top:10px}
 .kc-fila{display:grid;grid-template-columns:96px minmax(0,1fr) 64px;gap:12px;align-items:center}
 .kc-anio{font-size:12px;font-weight:700;color:var(--ink-fuerte)}
@@ -942,9 +1140,11 @@ body.redimensionando #map{pointer-events:none}
 .so-donut-wrap{justify-content:center}
 .so-compacto .vt3-fila{padding-top:3px;padding-bottom:3px}
 /* Columna Inventario (Crecimiento por EAN y Top Clientes) */
-.vt3-chart.con-inv .vt3-fila{grid-template-columns:minmax(150px,1.6fr) 64px minmax(130px,2.2fr) minmax(130px,2fr) minmax(120px,1.6fr) 74px 78px}
+.vt3-chart.con-inv .vt3-fila{grid-template-columns:minmax(140px,1.5fr) 60px minmax(110px,2fr) minmax(110px,1.7fr) minmax(100px,1.4fr) 70px 74px 62px}
+/* Días de cobertura (2026-11-23): al lado del inventario; las demás columnas se corren a la izquierda */
+.vt3-fila .cob{justify-content:flex-end;color:#6b6670;font-weight:600}
 .vt3-fila .inv{justify-content:flex-end;color:#6b6670;font-weight:600;border-left:1px solid var(--borde);padding-left:4px}
-.vt3-encab .inv,.so-th-inv{justify-content:flex-end}
+.vt3-encab .inv,.vt3-encab .cob,.so-th-inv{justify-content:flex-end}
 .vt3-encab .so-th-inv .vt3-th{color:#6b6670;font-weight:700}
 .so-abrir{border:none;background:none;cursor:pointer;color:var(--ink-2);font-size:15px;width:18px;padding:0;margin-right:4px;
   display:inline-block;transition:transform .15s ease}
@@ -1298,7 +1498,7 @@ body:not(.vista-mapa) .btn-centrar{display:none}
    desplazamiento horizontal. En el celular manda la regla de tarjetas de más abajo. */
 @media(max-width:1100px){
   .vt3-fila{grid-template-columns:minmax(104px,1.4fr) 54px minmax(84px,2fr) minmax(84px,1.6fr) minmax(80px,1.4fr) 58px}
-  .vt3-chart.con-inv .vt3-fila{grid-template-columns:minmax(104px,1.4fr) 54px minmax(84px,2fr) minmax(84px,1.6fr) minmax(80px,1.4fr) 58px 64px}
+  .vt3-chart.con-inv .vt3-fila{grid-template-columns:minmax(100px,1.3fr) 50px minmax(80px,2fr) minmax(80px,1.5fr) minmax(76px,1.3fr) 54px 60px 50px}
 }
 /* Barra de Ventas: el resumen del mes (vt-hero, motor en JsVentas.html) a la izquierda y los
    controles a la derecha. No es sticky: con el resumen adentro taparía media pantalla. */
@@ -1407,7 +1607,7 @@ body:not(.vista-mapa) .btn-centrar{display:none}
   .vt3-fila .nom{grid-area:nom;font-weight:600;white-space:normal}
   .vt3-fila .nom small{display:block;font-weight:400;color:var(--muted);font-size:10.5px}
   .vt3-fila .ac{grid-area:ac}.vt3-fila .p{grid-area:p}
-  .vt3-fila .py,.vt3-fila .d,.vt3-fila .vmp,.vt3-fila .pl,.vt3-fila .cump,.vt3-fila .inv,.vt3-fila .so-th-inv{display:none}
+  .vt3-fila .py,.vt3-fila .d,.vt3-fila .vmp,.vt3-fila .pl,.vt3-fila .cump,.vt3-fila .inv,.vt3-fila .cob,.vt3-fila .so-th-inv{display:none}
   .vt3-chart.con-inv .vt3-fila{grid-template-columns:minmax(0,1.3fr) minmax(0,1fr)}
   .vt3-chart.con-plan .vt3-fila{grid-template-columns:minmax(0,1.3fr) minmax(0,1fr)}
   .vt3-fila .mv{display:block;grid-area:mv;font-size:10.5px;color:var(--muted);white-space:normal;height:auto}
@@ -1420,10 +1620,9 @@ body:not(.vista-mapa) .btn-centrar{display:none}
 /* ── Riel en pantallas ≤ 1000 px: colapsado fijo (80 px) y el expandido se abre
    como cajón modal encima del contenido, con velo; se cierra al elegir destino. ── */
 @media(max-width:1000px){
-  .shell,.shell.rail-expandido{grid-template-columns:80px minmax(0,1fr)}
-  .nav-rail{padding:10px 6px}
-  .rail-expandido .nav-rail{position:fixed;z-index:3000;top:0;bottom:0;left:0;width:var(--rail-exp);
-    padding:12px;box-shadow:0 10px 28px rgba(46,46,43,.22)}
+  .shell,.shell.rail-expandido{grid-template-columns:var(--rail-col) minmax(0,1fr)}
+  .rail-expandido .nav-rail{position:fixed;z-index:3000;top:0;bottom:0;left:0;width:var(--rail-w-exp);max-width:calc(100vw - 24px);
+    background:var(--rail-glass-solido,#fff)}
   .rail-expandido::after{content:'';position:fixed;inset:0;z-index:2999;background:rgba(46,46,43,.32)}
 }
 /* ── Teléfono (≤ 600 px): como en Material 3, el riel se va y la navegación pasa a
@@ -1433,8 +1632,7 @@ body:not(.vista-mapa) .btn-centrar{display:none}
 @media(max-width:600px){
   .shell,.shell.rail-expandido{grid-template-columns:minmax(0,1fr)}
   .nav-rail{display:none}
-  .rail-expandido .nav-rail{display:flex;width:min(300px,86vw);border-radius:0 16px 16px 0;
-    background:var(--surface-2);padding:14px 12px calc(16px + env(safe-area-inset-bottom))}
+  .rail-expandido .nav-rail{display:flex;width:min(var(--rail-w-exp),88vw)}
   .app{height:100vh;height:100dvh;padding:8px 8px calc(80px + env(safe-area-inset-bottom))}
   .nav-barra{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));position:fixed;left:0;right:0;bottom:0;
     z-index:2500;height:calc(72px + env(safe-area-inset-bottom));padding:8px 4px env(safe-area-inset-bottom);
@@ -1533,7 +1731,8 @@ body.yb-panel-abierto{overflow:hidden}
    redondeadas sin borde, controles en carbón (#46464e) con la píldora activa rellena y botones
    con contorno. El semáforo (verde / rojos) y los agotados conservan su color con significado. */
 #vistaYoobic{--font:'Quicksand','Montserrat',system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;--font-dense:var(--font);
-  --yb-carbon:#46464e;--yb-tinta:#2f2f35;--accent:#46464e;--accent-2:#2f2f35;--accent-suave:#ececf0;--foco:#46464e;
+  --yb-carbon:#3f3f46;--yb-tinta:#2f2f35;--accent:#3f3f46;--accent-2:#2f2f35;--accent-suave:#ececf0;--foco:#3f3f46;
+  --yb-graf:#a6a6ac;--yb-graf-2:#5b5b61;--yb-negro:#18181b;--serie:var(--yb-graf);--carbon-serie:var(--yb-graf-2);
   --durazno:#e4e4ea;--surface-2:#f6f6f9;--borde:#e6e6ec;--borde-2:#d6d6de;--ink-fuerte:#2f2f35;
   font-family:var(--font);color:var(--yb-tinta);background:#f3f3f6;border-radius:24px;padding:14px 16px}
 #vistaYoobic .mtd-head h2{font-family:var(--font);font-size:30px;font-weight:700;letter-spacing:0;text-transform:none;color:var(--yb-tinta)}
@@ -1543,7 +1742,15 @@ body.yb-panel-abierto{overflow:hidden}
 #vistaYoobic .btn:hover,#vistaYoobic .mtd-btn-csv:hover{background:var(--accent-suave);border-color:var(--yb-carbon)}
 #vistaYoobic .btn-nuevo{color:var(--yb-tinta);border-color:var(--borde-2);background:var(--surface)}
 #vistaYoobic .chip-periodo{border-radius:999px;font-family:var(--font);font-weight:600}
-#vistaYoobic .chip-periodo.activo{background:var(--yb-carbon);border-color:var(--yb-carbon);color:#fff}
+#vistaYoobic .chip-periodo.activo{background:var(--yb-negro);border-color:var(--yb-negro);color:#fff}
+#vistaYoobic .barra-relleno,#vistaYoobic .yb-cob-fila .barra-relleno{background:var(--yb-graf)}
+#vistaYoobic .barra-fila:hover .barra-relleno,#vistaYoobic .yb-cob-fila:hover .barra-relleno{background:var(--yb-graf-2)}
+#vistaYoobic .barra-fila.apagada .barra-relleno{background:#dedee3}
+#vistaYoobic .yb-pista{background:#ececf0}
+#vistaYoobic .yb-col-val,#vistaYoobic .yb-col-etq,#vistaYoobic .yb-torta-etq{color:var(--yb-tinta);fill:var(--yb-tinta)}
+#vistaYoobic .yb-pill{background:#ececf0;border-color:#d6d6de;color:var(--yb-tinta)}
+#vistaYoobic .yb-rojo{color:var(--yb-tinta);font-weight:700}
+#vistaYoobic .hint,#vistaYoobic .mtd-panel-sub,#vistaYoobic .sub{color:#6b6b73}
 #vistaYoobic .yb-subtabs .tab{font-family:var(--font);font-weight:600;font-size:15px}
 #vistaYoobic .yb-subtabs .tab.activa{color:var(--yb-tinta);border-bottom:3px solid var(--yb-carbon)}
 #vistaYoobic .mtd-tabla th{font-family:var(--font);font-weight:700;color:var(--yb-tinta)}
@@ -1612,7 +1819,6 @@ body.yb-panel-abierto{overflow:hidden}
    Mismo manual de identidad: el carbón pasa a ser el fondo y el rojo ISDIN se conserva como
    acento. Todo el visor usa los tokens de :root, así que basta con redefinirlos; aquí van además
    los pocos colores fijos (series en carbón dibujadas en JS, Choices, el bloque de Perfect Store). */
-.rail-pie{margin-top:auto;padding-top:10px;border-top:1px solid var(--borde)}
 :root[data-tema="oscuro"]{color-scheme:dark;
   --lienzo:#131115;--surface:#1e1b21;--surface-2:#27242b;
   --ink:#eeebf0;--ink-2:#c9c5cd;--muted:#9a96a0;--ink-fuerte:#ffffff;
@@ -1621,9 +1827,13 @@ body.yb-panel-abierto{overflow:hidden}
   --desel:#4a4550;--sem-sin:#6b7280;
   --sombra:0 1px 2px rgba(0,0,0,.45),0 1px 3px rgba(0,0,0,.35);
   --sobre-ink:#18161a;--carbon-serie:#e6e3e9}
-:root[data-tema="oscuro"] #vistaYoobic{--yb-carbon:#d6d4dc;--yb-tinta:#eeebf0;--accent:#d6d4dc;--accent-2:#eeebf0;--accent-suave:#2e2b33;
+:root[data-tema="oscuro"] #vistaYoobic{--yb-carbon:#d6d4dc;--yb-tinta:#eeebf0;--yb-graf:#8a8a92;--yb-graf-2:#c4c4cc;--yb-negro:#eeebf0;--accent:#d6d4dc;--accent-2:#eeebf0;--accent-suave:#2e2b33;
   --foco:#d6d4dc;--durazno:#3a3740;--surface-2:#27242b;--borde:#36323b;--borde-2:#4a4550;--ink-fuerte:#ffffff;background:#18161b}
 :root[data-tema="oscuro"] #vistaYoobic .chip-periodo.activo{color:#18161a}
+:root[data-tema="oscuro"] #vistaYoobic .yb-pista{background:#2e2b33}
+:root[data-tema="oscuro"] #vistaYoobic .barra-fila.apagada .barra-relleno{background:#3a3740}
+:root[data-tema="oscuro"] #vistaYoobic .yb-pill{background:#2e2b33;border-color:#4a4550}
+:root[data-tema="oscuro"] #vistaYoobic .hint,:root[data-tema="oscuro"] #vistaYoobic .mtd-panel-sub{color:#a9a6ae}
 :root[data-tema="oscuro"] #vistaYoobic .card{box-shadow:0 1px 3px rgba(0,0,0,.4)}
 :root[data-tema="oscuro"] svg [fill="#2b2830"]{fill:#e6e3e9}
 :root[data-tema="oscuro"] svg [stroke="#2b2830"]{stroke:#e6e3e9}
@@ -1644,4 +1854,180 @@ body.yb-panel-abierto{overflow:hidden}
 :root[data-tema="oscuro"] .kc-fila:not(.ant) .kc-b:first-child span{color:#18161a;text-shadow:none}
 :root[data-tema="oscuro"] .kc-b i.si-py{background:#5a5560}
 :root[data-tema="oscuro"] .kc-b i.so-py{background:#9e3a47}
+/* ══════════ Ventas Digital (JsDigital, 2026-11-19): réplica del Looker "VENTAS DIGITAL" ══════════
+   Tienda en gris neutro y Digital en durazno (manual de marca); variaciones en verde / rojo de siempre. */
+#vistaDigital{--dg-tienda:#dcdadf;--dg-dig:#d09375;--dg-dig-txt:#2e2b28;--dg-pos:var(--sem-alto);--dg-neg:var(--error)}
+.dg-kpis{grid-template-columns:repeat(3,minmax(0,1fr));margin-bottom:14px}
+.dg-kpis .so-kpi .e{margin:0 0 2px}
+.dg-kpis-perf{grid-template-columns:repeat(4,minmax(0,1fr));margin:10px 0 12px}
+.dg-fila{display:grid;grid-template-columns:minmax(0,1.7fr) minmax(0,1fr);gap:14px;margin-bottom:14px}
+.dg-bloque{margin-bottom:14px}
+.dg-fecha label{display:block;font-size:11px;font-weight:700;color:var(--ink-2);margin-bottom:4px}
+.dg-rango{display:flex;align-items:center;gap:4px}
+.dg-rango select{padding:5px 6px;border:1px solid var(--borde-2);border-radius:8px;background:var(--surface);color:var(--ink);font:inherit;font-size:12px}
+/* 1. Barras al 100 % por mes */
+.dg-cols{display:grid;gap:6px;height:270px;margin-top:10px}
+.dg-col{display:flex;flex-direction:column;gap:4px;min-width:0;padding:0;border:0;background:none;font:inherit;color:inherit;cursor:pointer}
+.dg-barra{flex:1;display:flex;flex-direction:column;border-radius:6px;overflow:hidden;min-height:0}
+.dg-seg{display:flex;align-items:center;justify-content:center;min-height:0;overflow:hidden}
+.dg-seg.dig{background:var(--dg-dig);color:var(--dg-dig-txt)}
+.dg-seg.tienda{background:var(--dg-tienda);color:var(--ink)}
+.dg-seg b{font-size:11px;font-weight:700;font-variant-numeric:tabular-nums;white-space:nowrap}
+.dg-mes{font-size:11px;color:var(--muted);text-align:center}
+.dg-col.atenuada{opacity:.35}
+.dg-col:hover .dg-barra,.dg-col:focus-visible .dg-barra{box-shadow:0 0 0 2px var(--foco)}
+.dg-sw{display:inline-block;width:10px;height:10px;border-radius:3px}
+.dg-sw.tienda{background:var(--dg-tienda)}.dg-sw.dig{background:var(--dg-dig)}
+.dg-ley{justify-content:center;margin-top:8px}
+/* 2. Participación por subcanal: barras horizontales con nombre, % y cifra siempre visibles */
+.dg-sub{display:flex;flex-direction:column;gap:4px;margin-top:10px}
+.dg-sub-fila{display:grid;grid-template-columns:minmax(76px,1fr) minmax(40px,1.6fr) 52px minmax(70px,auto);align-items:center;gap:8px;
+  padding:5px 4px;border:0;border-radius:6px;background:none;font:inherit;color:inherit;text-align:left;cursor:pointer}
+.dg-sub-fila:hover{background:var(--surface-2)}
+.dg-sub-fila .nom{font-size:12px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dg-sub-fila .bar{height:14px;background:var(--surface-2);border-radius:4px;overflow:hidden}
+.dg-sub-fila .bar i{display:block;height:100%;background:var(--dg-dig);border-radius:4px}
+.dg-sub-fila .pct{font-size:12px;font-weight:700;text-align:right;font-variant-numeric:tabular-nums}
+.dg-sub-fila .val{font-size:11px;color:var(--muted);text-align:right;font-variant-numeric:tabular-nums}
+.dg-sub-fila.atenuada{opacity:.45}.dg-sub-fila.sel{background:var(--accent-suave)}
+/* Tablas */
+.dg-scroll{overflow:auto;max-height:560px;margin-top:8px}
+.dg-tabla{width:100%;border-collapse:separate;border-spacing:0;font-size:12px;font-variant-numeric:tabular-nums}
+.dg-tabla th,.dg-tabla td{padding:6px 8px;text-align:right;white-space:nowrap;border-bottom:1px solid var(--borde)}
+.dg-tabla th{position:sticky;top:0;z-index:2;background:var(--surface);font-size:11px;font-weight:700;color:var(--ink-2);text-transform:uppercase;letter-spacing:.02em}
+.dg-tabla .nom{text-align:left}
+.dg-tabla tfoot td{position:sticky;bottom:0;z-index:2;background:var(--surface);font-weight:700;border-top:2px solid var(--ink);border-bottom:0}
+.dg-tabla td.pos{color:var(--dg-pos);font-weight:600}.dg-tabla td.neg{color:var(--dg-neg);font-weight:600}
+.dg-th{padding:0;border:0;background:none;font:inherit;color:inherit;letter-spacing:inherit;text-transform:inherit;cursor:pointer}
+.dg-th.act{color:var(--ink-fuerte)}
+.dg-link{padding:0;border:0;background:none;font:inherit;color:inherit;text-align:left;cursor:pointer}
+.dg-link:hover{text-decoration:underline}
+.dg-mas{width:18px;height:18px;margin-right:6px;padding:0;border:1px solid var(--borde-2);border-radius:4px;background:var(--surface);
+  color:var(--ink);font:inherit;font-size:12px;line-height:15px;vertical-align:middle;cursor:pointer}
+.dg-mas.vacio{display:inline-block;border-color:transparent;background:none;cursor:default}
+.dg-mas-bu{width:auto;margin:0 0 0 10px;padding:0 6px;text-transform:none}
+/* Histórico */
+.dg-hist td.anio{vertical-align:top;font-weight:700;font-size:13px;border-bottom:2px solid var(--borde-2)}
+.dg-hist tr.pct td{border-bottom:2px solid var(--borde-2);color:var(--ink-2)}
+.dg-hist tr.dig td{font-weight:600}
+.dg-hist td.tot{font-weight:700}
+.dg-hist tr.actual td.anio .dg-link{color:var(--ink-fuerte);text-decoration:underline;text-decoration-color:var(--dg-dig);text-decoration-thickness:2px}
+.dg-pct{display:inline-block;padding:1px 6px;border-radius:999px;background:var(--accent-suave);font-weight:700;color:var(--ink)}
+/* Comparación YTD por niveles, con columnas al estilo Zebra BI */
+.dg-comp tr.niv0 td{font-weight:600}
+.dg-comp tr.niv1 td.nom{padding-left:30px}
+.dg-comp tr.niv2 td.nom{padding-left:54px;color:var(--ink-2);font-weight:400}
+.dg-comp tr.niv1 td,.dg-comp tr.niv2 td{font-size:11.5px}
+.dg-comp td.nom{max-width:340px;overflow:hidden;text-overflow:ellipsis}
+.dg-comp tr.sel td{background:var(--accent-suave)}
+.dg-zbar{position:relative;min-width:200px}
+.dg-zbar i{position:absolute;left:4px;top:6px;bottom:6px;background:var(--dg-tienda);border-radius:2px}
+.dg-zbar b{position:relative;font-weight:600}
+.dg-zpin{position:relative;min-width:180px}
+.dg-zpin .eje{position:absolute;left:50%;top:2px;bottom:2px;width:1px;background:var(--ink-2)}
+.dg-zpin i{position:absolute;top:50%;height:4px;margin-top:-2px}
+.dg-zpin i.pos,.dg-zpin em.pos{background:var(--dg-pos)}.dg-zpin i.neg,.dg-zpin em.neg{background:var(--dg-neg)}
+.dg-zpin em{position:absolute;top:50%;width:9px;height:9px;margin-top:-4.5px;border-radius:50%}
+.dg-zpin em.fuera{border-radius:0;transform:rotate(45deg)}
+.dg-zpin b{position:absolute;top:50%;transform:translateY(-50%);font-size:11px;font-weight:700}
+.dg-zpin b.pos{color:var(--dg-pos)}.dg-zpin b.neg{color:var(--dg-neg)}
+.dg-tabla tfoot td.pos{color:var(--dg-pos)}.dg-tabla tfoot td.neg{color:var(--dg-neg)}
+.dg-per{margin-left:10px;font-size:11px;font-weight:400;color:var(--muted);text-transform:none;letter-spacing:0}
+@media(max-width:900px){.dg-fila{grid-template-columns:1fr}}
+@media(max-width:600px){
+  .dg-kpis,.dg-kpis-perf{grid-template-columns:1fr 1fr}
+  .dg-cols{height:220px;gap:3px}
+  .dg-seg b{font-size:9px}
+  .dg-seg.tienda b{writing-mode:vertical-rl;transform:rotate(180deg)}
+  .dg-sub-fila{grid-template-columns:minmax(70px,1fr) minmax(30px,1fr) 46px}
+  .dg-sub-fila .val{display:none}
+}
+
+/* ══════════ Modo oscuro · "vidrio" cálido ISDIN (2026-11-19) ══════════
+   Identidad del manual (github williamcorrea-hash/manual-identidad-visual-ISDIN): la escala NEUTRA
+   (#2E2E2E · #414141 · #525151) en lugar del casi negro, con la luz DURAZNO (#D09375 / #FFB48F) y
+   ARENA (#B8A186) como acento y foco. Efecto vidrio como Instagram / iOS: el lienzo lleva un fondo
+   con luces cálidas fijas y las tarjetas, el menú, los encabezados fijos y los paneles son
+   translúcidos con desenfoque (backdrop-filter), así al hacer scroll se ve el contenido "detrás". */
+:root[data-tema="oscuro"]{
+  --lienzo:#2b2927;
+  --surface:rgba(78,74,71,.42);--surface-2:rgba(255,255,255,.075);
+  --ink:#f5f5f5;--ink-2:#e1e1e1;--muted:#b3aea8;--ink-fuerte:#ffffff;
+  --borde:rgba(255,255,255,.10);--borde-2:rgba(255,255,255,.20);
+  --accent:#ffb48f;--accent-2:#ffc7ab;--accent-suave:rgba(255,180,143,.16);--foco:#d09375;--serie:#ffb48f;
+  --durazno:rgba(255,180,143,.22);--desel:#5e5a56;--sobre-ink:#2e2b28;
+  --vidrio:rgba(52,49,46,.80);--vidrio-solido:rgba(46,44,42,.95);
+  --sombra:0 8px 24px rgba(0,0,0,.22),inset 0 1px 0 rgba(255,255,255,.06)}
+:root[data-tema="oscuro"] body{background:
+  radial-gradient(1100px 720px at 8% -8%,rgba(208,147,117,.34),transparent 62%),
+  radial-gradient(900px 640px at 96% 18%,rgba(184,161,134,.24),transparent 60%),
+  radial-gradient(1000px 760px at 55% 112%,rgba(228,31,51,.13),transparent 62%),
+  linear-gradient(160deg,#3a3532 0%,#2d2b29 48%,#252322 100%) fixed;background-color:#2b2927}
+/* Tarjetas de vidrio */
+:root[data-tema="oscuro"] .card,:root[data-tema="oscuro"] #kpis,:root[data-tema="oscuro"] .kpi,
+:root[data-tema="oscuro"] .ficha-kpi,:root[data-tema="oscuro"] .topbar{
+  -webkit-backdrop-filter:blur(22px) saturate(150%);backdrop-filter:blur(22px) saturate(150%);
+  border:1px solid rgba(255,255,255,.09);box-shadow:var(--sombra)}
+/* Encabezados y barras fijas: vidrio más denso (al hacer scroll las filas pasan desenfocadas por detrás) */
+:root[data-tema="oscuro"] .tab-datos th,:root[data-tema="oscuro"] .mtd-tabla th,
+:root[data-tema="oscuro"] .tab-datos tfoot tr.fila-total td,:root[data-tema="oscuro"] .vt-barra,
+:root[data-tema="oscuro"] .sivso-fijo{background:var(--vidrio);
+  -webkit-backdrop-filter:blur(16px) saturate(140%);backdrop-filter:blur(16px) saturate(140%)}
+/* Lo que flota sobre el contenido (menús, ventanas, globos): vidrio casi sólido para leer bien */
+:root[data-tema="oscuro"] .overlay .caja,:root[data-tema="oscuro"] .modal .caja,:root[data-tema="oscuro"] .sivso-tip,
+:root[data-tema="oscuro"] .vt3-tip,:root[data-tema="oscuro"] .yb-cob-panel-caja,
+:root[data-tema="oscuro"] .choices__list--dropdown,:root[data-tema="oscuro"] .choices__list[aria-expanded],
+:root[data-tema="oscuro"] .leaflet-popup-content-wrapper,:root[data-tema="oscuro"] .leaflet-popup-tip,
+:root[data-tema="oscuro"] .leaflet-tooltip,:root[data-tema="oscuro"] .pop,:root[data-tema="oscuro"] .info-pop{
+  background:var(--vidrio-solido);-webkit-backdrop-filter:blur(20px);backdrop-filter:blur(20px);
+  border-color:rgba(255,255,255,.14);color:var(--ink)}
+:root[data-tema="oscuro"] .sivso-donut-hueco{background:#3a3633}
+/* Variaciones en texto: verde y rojo aclarados para leerse sobre el vidrio oscuro (≥ 4.5:1) */
+:root[data-tema="oscuro"] .so-kpi .d.pos,:root[data-tema="oscuro"] .vt3-kpi-d.pos,:root[data-tema="oscuro"] .mtd-tabla .pos,
+:root[data-tema="oscuro"] .vt3-fila b.pos,:root[data-tema="oscuro"] .vt3-panel .pos,:root[data-tema="oscuro"] .vt3-total .d b.pos,
+:root[data-tema="oscuro"] .vt3-total .p b.pos,:root[data-tema="oscuro"] .sivso-tend-up{color:#8fd6a0}
+:root[data-tema="oscuro"] .so-kpi .d.neg,:root[data-tema="oscuro"] .vt3-kpi-d.neg,:root[data-tema="oscuro"] .mtd-tabla .neg,
+:root[data-tema="oscuro"] .vt3-fila b.neg,:root[data-tema="oscuro"] .vt3-panel .neg,:root[data-tema="oscuro"] .vt3-total .d b.neg,
+:root[data-tema="oscuro"] .vt3-total .p b.neg,:root[data-tema="oscuro"] .sivso-tend-down{color:#ff9e92}
+:root[data-tema="oscuro"] .vt3-fila .d b.pos,:root[data-tema="oscuro"] .vt3-fila .d b.neg,
+:root[data-tema="oscuro"] .vt3-fila .p b.pos,:root[data-tema="oscuro"] .vt3-fila .p b.neg{color:var(--ink)}
+:root[data-tema="oscuro"] select option{background:#34312e;color:var(--ink)}
+:root[data-tema="oscuro"] .leaflet-container{background:#2b2927}
+/* Perfect Store: el gris de Yoobic sobre el mismo vidrio */
+:root[data-tema="oscuro"] #vistaYoobic{background:rgba(255,255,255,.03);--accent-suave:rgba(255,255,255,.08);
+  --surface-2:rgba(255,255,255,.075);--borde:rgba(255,255,255,.10);--borde-2:rgba(255,255,255,.20)}
+:root[data-tema="oscuro"] #vistaYoobic .card{box-shadow:var(--sombra)}
+:root[data-tema="oscuro"] .nav-barra{background:rgba(82,78,74,.40);
+  -webkit-backdrop-filter:blur(24px) saturate(160%);backdrop-filter:blur(24px) saturate(160%);
+  border:1px solid rgba(255,255,255,.10);box-shadow:0 10px 30px rgba(0,0,0,.30),inset 0 1px 0 rgba(255,255,255,.08)}
+:root[data-tema="oscuro"] .barra-item{color:#e6e2dd}
+:root[data-tema="oscuro"] .barra-item.activo{color:#fff}
+:root[data-tema="oscuro"] .barra-item.activo .rail-ind{background:rgba(255,255,255,.18);color:#fff;box-shadow:inset 0 1px 0 rgba(255,255,255,.10)}
+/* Riel de vidrio en oscuro: superficies desde el negro ISDIN #2B2830, luz durazno arriba, activo blanco */
+:root[data-tema="oscuro"]{
+  --color-brand-primary:#ff5a6a;
+  --rail-glass-bg:linear-gradient(180deg,rgba(208,147,117,.24) 0%,rgba(66,60,64,.70) 34%,rgba(43,40,48,.88) 100%);
+  --rail-glass-solido:#35313a;
+  --rail-glass-border:rgba(255,255,255,.12);
+  --rail-glass-highlight:inset 0 1px 0 rgba(255,255,255,.10);
+  --rail-glass-shadow:0 18px 40px rgba(0,0,0,.40);
+  --rail-pill-bg:rgba(255,255,255,.06); --rail-pill-hover:rgba(255,255,255,.12); --rail-pill-borde:rgba(255,255,255,.09);
+  --rail-active-bg:#ffffff; --rail-active-fg:#2b2830;
+  --rail-text:#f5f5f5; --rail-text-2:#e1e1e1; --rail-muted:#b8b3ae; --rail-focus:#ffb48f}
+:root[data-tema="oscuro"] .rail-marca .logo-rojo{fill:var(--color-brand-primary)}
+:root[data-tema="oscuro"] .rail-item.activo{box-shadow:0 6px 18px rgba(0,0,0,.35)}
+@media(max-width:600px){
+  :root[data-tema="oscuro"] .nav-barra{left:12px;right:12px;bottom:calc(10px + env(safe-area-inset-bottom));
+    height:64px;padding:6px;border-radius:999px}
+  :root[data-tema="oscuro"] .app{padding-bottom:calc(86px + env(safe-area-inset-bottom))}
+}
+:root[data-tema="oscuro"] #vistaDigital{--dg-tienda:rgba(255,255,255,.18);--dg-dig:#ffb48f;--dg-pos:#8fd6a0;--dg-neg:#ff9e92}
+:root[data-tema="oscuro"] .dg-tabla th,:root[data-tema="oscuro"] .dg-tabla tfoot td{background:var(--vidrio);
+  -webkit-backdrop-filter:blur(16px) saturate(140%);backdrop-filter:blur(16px) saturate(140%)}
+:root[data-tema="oscuro"] .dg-rango select{background:var(--surface-2)}
+:root[data-tema="oscuro"] .vt3-fila .inv,:root[data-tema="oscuro"] .vt3-fila .cob,:root[data-tema="oscuro"] .vt3-encab .so-th-inv .vt3-th{color:var(--ink-2)}
+:root[data-tema="oscuro"] .kv-var.pos b,:root[data-tema="oscuro"] .kv-var.pos small,:root[data-tema="oscuro"] .sivso-pos{color:#8fd6a0}
+:root[data-tema="oscuro"] .kv-var.neg b,:root[data-tema="oscuro"] .kv-var.neg small,:root[data-tema="oscuro"] .sivso-neg{color:#ff9e92}
+:root[data-tema="oscuro"] .kv-pin i.pos{background:#8fd6a0}:root[data-tema="oscuro"] .kv-pin i.neg{background:#ff9e92}
+:root[data-tema="oscuro"] .kv-b.ac .kv-pista i{background:#e6e3e9}:root[data-tema="oscuro"] .kv-b.py .kv-pista i{background:rgba(255,255,255,.25)}
 </style>

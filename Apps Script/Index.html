@@ -17,7 +17,7 @@
 <?!= include('Estilos'); ?>
 </head>
 <body>
-<script>try{if(localStorage.getItem('visor.tema')==='oscuro')document.documentElement.setAttribute('data-tema','oscuro')}catch(e){}</script>
+<script>try{var _t=localStorage.getItem('visor.tema');if(_t==='oscuro'||(!_t&&window.matchMedia&&matchMedia('(prefers-color-scheme: dark)').matches))document.documentElement.setAttribute('data-tema','oscuro')}catch(e){}</script>
 
 <!-- ═══ Modales ═══════════════════════════════════════════════════════ -->
 
@@ -61,39 +61,60 @@
   <div class="caja caja-yb" id="ybModal"></div>
 </div>
 
-<!-- ═══ Riel de navegación (Material 3 Expressive · Navigation Rail) ═══════
-     Dos estados: COLAPSADO (96 px: icono con indicador en píldora + etiqueta
-     debajo) y EXPANDIDO (logo completo, icono y etiqueta en una fila). El botón
-     de menú alterna (alternarRail, JsNucleo) y se recuerda en localStorage.
-     Los ids btnVista* y la clase .activo son los de siempre: mostrarVistaSuperior
-     (JsVentasMtd) los sigue marcando. Identidad: manual-identidad-visual-ISDIN. -->
+<!-- ═══ Riel de navegación "vidrio" (2026-11-22; DISENO_RIEL_VIDRIO.md) ═══════
+     Colapsado (píldora de 76 px, botones circulares con tooltip) ↔ expandido (272 px: buscador,
+     destinos, informes de Ventas, filtros activos, tema, usuario y franja de acciones). Los ids
+     btnVista* y la clase .activo son los de siempre (mostrarVistaSuperior); railMarcar (JsNucleo)
+     marca los informes de Ventas, el rótulo y los filtros activos. -->
 <div class="shell" id="shell">
-  <nav class="nav-rail" id="navRail" aria-label="Secciones del visor">
-    <div class="rail-cab">
-      <button type="button" class="rail-menu" id="btnRail" onclick="alternarRail()"
-              aria-expanded="false" aria-controls="navRail" title="Expandir menú"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 18h18v-2H3v2zm0-5h18v-2H3v2zm0-7v2h18V6H3z"/></svg></button>
-      <span class="rail-logo" role="img" aria-label="ISDIN">
-<svg class="logo-emblema" viewBox="0 0 96 50" aria-hidden="true" fill="currentColor" fill-rule="evenodd"><rect class="logo-rojo" x="28" y="17.9" width="40" height="14"/><path d="M2.0,45.9 L94.0,45.9 L94.0,31.9 L2.0,31.9 L2.0,45.9 Z"/><path d="M2.0,17.9 L94.0,17.9 L94.0,3.9 L2.0,3.9 L2.0,17.9 Z"/></svg>
-<svg class="logo-completo" viewBox="0 0 240 66" aria-hidden="true" fill="currentColor" fill-rule="evenodd"><rect class="logo-rojo" x="28" y="17.9" width="40" height="14"/><path d="M2.0,45.9 L94.0,45.9 L94.0,31.9 L2.0,31.9 L2.0,45.9 Z"/><path d="M2.0,17.9 L94.0,17.9 L94.0,3.9 L2.0,3.9 L2.0,17.9 Z"/><path d="M106.0,45.9 L118.0,45.9 L118.0,3.9 L106.0,3.9 L106.0,45.9 Z"/><path d="M121.12,36.0 C123.63,43.05 129.45,46.94 136.7,46.94 C145.09,46.94 152.28,41.17 152.28,32.3 C152.28,18.75 132.98,20.14 132.98,14.01 C132.98,11.52 134.84,10.37 136.7,10.37 C139.81,10.37 141.43,12.61 142.57,15.17 L151.14,11.52 C149.28,6.11 143.89,1.98 136.7,1.98 C129.33,1.98 122.92,7.75 122.92,14.25 C122.92,30.96 141.85,26.1 141.85,34.91 C141.85,36.97 139.87,38.55 137.41,38.55 C133.28,38.55 131.6,36.0 130.05,32.36 L121.12,36.0 Z"/><path d="M166.23,10.49 L167.13,10.49 C174.26,10.49 174.98,18.38 174.98,23.37 C174.98,29.08 174.98,38.43 167.43,38.43 L166.23,38.43 L166.23,10.49 M155.44,46.09 L168.45,46.09 C181.51,46.09 186.6,36.12 186.6,23.79 C186.6,11.09 180.37,2.83 167.13,2.83 L155.44,2.83 L155.44,46.09 Z"/><path d="M190.02,46.09 L200.81,46.09 L200.81,2.83 L190.02,2.83 L190.02,46.09 Z"/><path d="M227.89,2.83 L227.89,26.1 L227.77,26.1 L215.48,2.83 L206.49,2.83 L206.49,46.09 L215.12,46.09 L215.12,21.97 L215.24,21.97 L227.89,46.09 L236.51,46.09 L236.51,2.83 L227.89,2.83 Z"/><text class="logo-lema" x="2" y="64" textLength="234" lengthAdjust="spacingAndGlyphs">LOVE YOUR SKIN</text></svg>
-      </span>
+  <nav class="nav-rail" id="navRail" aria-label="Navegación de Isdin Core">
+    <div class="rail-main">
+      <div class="rail-cab">
+        <button type="button" class="rail-marca" id="btnRailMarca" onclick="alternarRail()" aria-controls="navRail" aria-label="Expandir menú" data-tip="Expandir menú"><svg viewBox="0 0 96 50" aria-hidden="true" fill="currentColor" fill-rule="evenodd"><rect class="logo-rojo" x="28" y="17.9" width="40" height="14"/><path d="M2.0,45.9 L94.0,45.9 L94.0,31.9 L2.0,31.9 L2.0,45.9 Z"/><path d="M2.0,17.9 L94.0,17.9 L94.0,3.9 L2.0,3.9 L2.0,17.9 Z"/></svg></button>
+        <div class="rail-marca-txt rail-txt rail-solo-exp"><b>ISDIN Core</b><small>Colombia · Comercial</small></div>
+        <button type="button" class="rail-menu rail-solo-exp" id="btnRail" onclick="alternarRail()" aria-expanded="false" aria-controls="navRail" title="Contraer menú"><svg viewBox="0 0 24 24" aria-hidden="true" width="18" height="18"><path d="M15.4 7.4 14 6l-6 6 6 6 1.4-1.4-4.6-4.6z"/></svg></button>
+      </div>
+      <div class="rail-buscar">
+        <button type="button" class="rail-circ rail-solo-col" onclick="railAbrirBuscar()" aria-label="Buscar (Ctrl K)" data-tip="Buscar · Ctrl K"><svg viewBox="0 0 24 24" aria-hidden="true" width="20" height="20"><path d="M15.5 14h-.79l-.28-.27A6.47 6.47 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg></button>
+        <label class="rail-buscar-caja rail-solo-exp"><svg viewBox="0 0 24 24" aria-hidden="true" width="16" height="16"><path d="M15.5 14h-.79l-.28-.27A6.47 6.47 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg><input type="search" id="railQ" placeholder="Buscar…" autocomplete="off" aria-label="Buscar un informe" aria-controls="railRes" oninput="railBuscar(this.value)" onkeydown="railTeclaBuscar(event)" onfocus="railBuscar(this.value)" onblur="railCerrarBuscarLuego()"><kbd id="railKbd">Ctrl K</kbd></label>
+      </div>
+      <div class="rail-items" role="tablist" aria-orientation="vertical">
+        <div class="rail-grupo">
+          <button type="button" class="rail-item mtdtab-top activo" id="btnVistaVentas" role="tab" aria-selected="true"
+                  onclick="mostrarVistaSuperior(ventasSubActual())" data-tip="Ventas" aria-label="Ventas"><span class="rail-ind"><svg viewBox="0 0 24 24" aria-hidden="true" width="20" height="20"><path d="M5 9.2h3V19H5zM10.6 5h2.8v14h-2.8zm5.6 8H19v6h-2.8z"/></svg></span><span class="rail-lbl rail-txt">Ventas</span><span class="rail-conc"></span></button>
+          <button type="button" class="rail-expand rail-solo-exp" id="btnRailSub" onclick="railAlternarSub()" aria-expanded="true" aria-controls="railSubVentas" title="Ver u ocultar los informes de Ventas"><svg viewBox="0 0 24 24" aria-hidden="true" width="18" height="18"><path d="M7.4 8.6 12 13.2l4.6-4.6L18 10l-6 6-6-6z"/></svg></button>
+        </div>
+        <div class="rail-sub rail-solo-exp abierto" id="railSubVentas" role="group" aria-label="Informes de Ventas"><div>
+          <button type="button" class="rail-subitem" data-vista="so" onclick="mostrarVistaSuperior('so')"><span class="rail-punto" style="background:#d09375"></span>Sell Out PDV</button>
+          <button type="button" class="rail-subitem" data-vista="sivso" onclick="mostrarVistaSuperior('sivso')"><span class="rail-punto" style="background:#b8a186"></span>SI vs SO</button>
+          <button type="button" class="rail-subitem" data-vista="ventasmtd" onclick="mostrarVistaSuperior('ventasmtd')"><span class="rail-punto" style="background:#8a8a8a"></span>Ventas MTD</button>
+          <button type="button" class="rail-subitem" data-vista="dig" onclick="mostrarVistaSuperior('dig')"><span class="rail-punto" style="background:#ffb48f"></span>Digital</button>
+        </div></div>
+        <button type="button" class="rail-item mtdtab-top" id="btnVistaMapa" role="tab" aria-selected="false"
+                onclick="mostrarVistaSuperior('mapa')" data-tip="Mapa" aria-label="Mapa"><span class="rail-ind"><svg viewBox="0 0 24 24" aria-hidden="true" width="20" height="20"><path d="M20.5 3l-.16.03L15 5.1 9 3 3.36 4.9c-.21.07-.36.25-.36.48V20.5c0 .28.22.5.5.5l.16-.03L9 18.9l6 2.1 5.64-1.9c.21-.07.36-.25.36-.48V3.5c0-.28-.22-.5-.5-.5zM15 19l-6-2.11V5l6 2.11V19z"/></svg></span><span class="rail-lbl rail-txt">Mapa</span><span class="rail-conc"></span></button>
+        <button type="button" class="rail-item mtdtab-top" id="btnVistaYoobic" role="tab" aria-selected="false"
+                onclick="mostrarVistaSuperior('yoobic')" data-tip="Perfect Store" aria-label="Perfect Store"><span class="rail-ind"><svg viewBox="0 0 24 24" aria-hidden="true" width="20" height="20"><path d="M20 4H4v2h16V4zm1 10v-2l-1-5H4l-1 5v2h1v6h10v-6h4v6h2v-6h1zm-9 4H6v-4h6v4z"/></svg></span><span class="rail-lbl rail-txt">Perfect Store</span><span class="rail-conc"></span></button>
+      </div>
+      <!-- Informes con filtros puestos (railPintarFiltros, JsNucleo): lee los contadores de cada vista -->
+      <div class="rail-sec rail-solo-exp"><span>Filtros activos</span></div>
+      <div class="rail-filtros" id="railFiltros"></div>
+      <div class="rail-pie">
+        <!-- Modo claro / oscuro (alternarTema en JsNucleo; se recuerda en visor.tema) -->
+        <button type="button" class="rail-tema" id="btnTema" onclick="alternarTema()" aria-pressed="false" data-tip="Cambiar tema"
+                title="Cambiar a modo oscuro"><span class="rail-anillo"><svg viewBox="0 0 24 24" aria-hidden="true" id="icoTema"><path d="M12 3a9 9 0 1 0 9 9c0-.46-.04-.92-.1-1.36a5.39 5.39 0 0 1-4.4 2.26 5.4 5.4 0 0 1-3.14-9.8c-.44-.06-.9-.1-1.36-.1z"/></svg></span>
+          <span class="rail-txt rail-solo-exp"><b id="lblTema">Modo oscuro</b><small>Tema del visor</small></span><span class="rail-switch rail-solo-exp" aria-hidden="true"><i></i></span></button>
+        <div class="rail-usuario">
+          <span class="rail-avatar" id="railAvatar" data-tip="" aria-hidden="true">··</span>
+          <span class="rail-txt rail-solo-exp"><b id="railNombre">Usuario ISDIN</b><small id="railCorreo"></small></span>
+          <button type="button" class="rail-mas rail-solo-exp" onclick="abrirDiag()" aria-label="Diagnóstico del visor" title="Diagnóstico del visor"><svg viewBox="0 0 24 24" aria-hidden="true" width="18" height="18"><path d="M6 10a2 2 0 1 0 0 4 2 2 0 0 0 0-4zm12 0a2 2 0 1 0 0 4 2 2 0 0 0 0-4zm-6 0a2 2 0 1 0 0 4 2 2 0 0 0 0-4z"/></svg></button>
+        </div>
+      </div>
     </div>
-    <div class="rail-items" role="tablist" aria-orientation="vertical">
-      <button type="button" class="rail-item mtdtab-top activo" id="btnVistaVentas" role="tab" aria-selected="true"
-              onclick="mostrarVistaSuperior(ventasSubActual())" title="Sell Out, SI vs SO y Ventas MTD"><span class="rail-ind"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 9.2h3V19H5zM10.6 5h2.8v14h-2.8zm5.6 8H19v6h-2.8z"/></svg></span><span class="rail-lbl">Ventas</span></button>
-      <button type="button" class="rail-item mtdtab-top" id="btnVistaMapa" role="tab" aria-selected="false"
-              onclick="mostrarVistaSuperior('mapa')" title="PDV, bricks y Sell Out en el mapa"><span class="rail-ind"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.5 3l-.16.03L15 5.1 9 3 3.36 4.9c-.21.07-.36.25-.36.48V20.5c0 .28.22.5.5.5l.16-.03L9 18.9l6 2.1 5.64-1.9c.21-.07.36-.25.36-.48V3.5c0-.28-.22-.5-.5-.5zM15 19l-6-2.11V5l6 2.11V19z"/></svg></span><span class="rail-lbl">Mapa</span></button>
-      <button type="button" class="rail-item mtdtab-top" id="btnVistaYoobic" role="tab" aria-selected="false"
-              onclick="mostrarVistaSuperior('yoobic')" title="Yoobic · Perfect Store"><span class="rail-ind"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 4H4v2h16V4zm1 10v-2l-1-5H4l-1 5v2h1v6h10v-6h4v6h2v-6h1zm-9 4H6v-4h6v4z"/></svg></span><span class="rail-lbl">Perfect Store</span></button>
-      <div class="rail-sep"><span>Respaldo</span></div>
-      <button type="button" class="rail-item mtdtab-top clasico" id="btnVistaVentas3" role="tab" aria-selected="false"
-              onclick="mostrarVistaSuperior('ventas3')" title="Pestaña Ventas anterior (sell-in y sell-out por cliente, BU, producto y PDV)"><span class="rail-ind"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13 3a9 9 0 0 0-9 9H1l3.89 3.89.07.14L9 12H6c0-3.87 3.13-7 7-7s7 3.13 7 7-3.13 7-7 7c-1.93 0-3.68-.79-4.94-2.06l-1.42 1.42A8.954 8.954 0 0 0 13 21a9 9 0 0 0 0-18zm-1 5v5l4.28 2.54.72-1.21-3.5-2.08V8H12z"/></svg></span><span class="rail-lbl">Ventas Backup</span></button>
-    </div>
-    <!-- Modo claro / oscuro de todo el visor (alternarTema en JsNucleo; se recuerda en visor.tema) -->
-    <div class="rail-pie">
-      <button type="button" class="rail-item rail-tema" id="btnTema" onclick="alternarTema()" aria-pressed="false"
-              title="Cambiar a modo oscuro"><span class="rail-ind"><svg viewBox="0 0 24 24" aria-hidden="true" id="icoTema"><path d="M12 3a9 9 0 1 0 9 9c0-.46-.04-.92-.1-1.36a5.39 5.39 0 0 1-4.4 2.26 5.4 5.4 0 0 1-3.14-9.8c-.44-.06-.9-.1-1.36-.1z"/></svg></span><span class="rail-lbl" id="lblTema">Modo oscuro</span></button>
-    </div>
+    <!-- Línea fina a la que se conecta el destino activo (decorativa) -->
+    <span class="rail-franja rail-solo-exp" aria-hidden="true"></span>
   </nav>
+  <div class="rail-tip" id="railTip" role="tooltip"></div>
+  <div class="rail-res" id="railRes" role="listbox" aria-label="Resultados" hidden></div>
 
 <!-- ═══ Layout: cabecera · avisos · (mapa | panel derecho) ════════════ -->
 <div class="app">
@@ -116,6 +137,8 @@
               title="Sell In contra Sell Out por mes, cliente y producto">SI vs SO</button>
       <button type="button" class="subtab" id="btnVistaVentasMtd" role="tab" aria-selected="false" onclick="mostrarVistaSuperior('ventasmtd')"
               title="Ventas del mes en curso">Ventas MTD</button>
+      <button type="button" class="subtab" id="btnVistaDigital" role="tab" aria-selected="false" onclick="mostrarVistaSuperior('dig')"
+              title="Sell Out digital contra tienda, subcanales, comparación YTD y cumplimiento del budget digital">Digital</button>
     </div>
 
     <button type="button" class="btn btn-filtros-mv" id="btnFiltrosMovil"
@@ -172,20 +195,6 @@
     </div>
   </header>
 
-
-  <!-- ═══ Ventas (JsVentas3.html; antes "Ventas 3.0"): estilo Zebra BI. Sell-out = ETL (Affiliate Master);
-       sell-in + plan = hojas SI_Appscript y PPTO_Appscript del libro Ventas - YTD. ═══ -->
-  <div id="vistaVentas3" hidden>
-    <div class="card vt-barra vt3-barra">
-      <!-- Resumen del mes (vt3PintarResumen, motor en JsVentas.html). -->
-      <div class="vt3-res" id="vt3Resumen"></div>
-      <div class="vt-ctrl">
-        <label class="vt-campo"><span>KAM</span><select id="vt3Kam" onchange="vt3SetKam(this.value)"></select></label>
-        <button class="btn" onclick="vt3Actualizar()" title="Volver a leer los datos de la fuente elegida y del mes">Actualizar</button>
-      </div>
-    </div>
-    <div id="vt3Cuerpo"></div>
-  </div>
 
   <div id="vistaMapa" hidden>
     <div class="avisos" id="avisos"></div>
@@ -279,7 +288,7 @@
       <span class="sub" id="mtdSubtitulo"></span>
       <span class="acc">
         <span class="sub" id="mtdActualizado"></span>
-        <button class="btn" onclick="cargarVentasMtd(true)">Actualizar</button>
+        <span class="acc-iconos"><button type="button" class="btn-ico prim" onclick="btnGirar(this);cargarVentasMtd(true)" title="Actualizar información (vuelve a leer las hojas)" aria-label="Actualizar información"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17.65 6.35A7.96 7.96 0 0 0 12 4a8 8 0 1 0 7.75 10h-2.08A6 6 0 1 1 12 6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg></button><button type="button" class="btn-ico" onclick="mtdLimpiarFiltros()" title="Quitar todos los filtros aplicados" aria-label="Quitar todos los filtros"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14.76 20.83 17.6 18l-2.83-2.83 1.41-1.41L19 16.6l2.83-2.84 1.41 1.42L20.41 18l2.83 2.83-1.41 1.41L19 19.41l-2.83 2.83-1.41-1.41M12 12v7.88a1 1 0 0 1-.29.83 1 1 0 0 1-1.41 0L8.29 18.7a.99.99 0 0 1-.29-.83V12h-.03L2.21 4.62a1 1 0 0 1 .17-1.4A1.01 1.01 0 0 1 3 3h14a1 1 0 0 1 .62.22 1 1 0 0 1 .17 1.4L12.03 12H12z"/></svg></button></span>
       </span>
     </div>
 
@@ -418,7 +427,7 @@
       <span class="sub">Sell In vs. Sell Out</span>
       <span class="acc">
         <span class="sub" id="sivsoActualizado"></span>
-        <button class="btn" onclick="cargarSIvsSO(true)">Actualizar</button>
+        <span class="acc-iconos"><button type="button" class="btn-ico prim" onclick="btnGirar(this);cargarSIvsSO(true)" title="Actualizar información (vuelve a leer Carga Looker)" aria-label="Actualizar información"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17.65 6.35A7.96 7.96 0 0 0 12 4a8 8 0 1 0 7.75 10h-2.08A6 6 0 1 1 12 6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg></button><button type="button" class="btn-ico" onclick="sivsoLimpiarFiltros()" title="Quitar todos los filtros aplicados" aria-label="Quitar todos los filtros"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14.76 20.83 17.6 18l-2.83-2.83 1.41-1.41L19 16.6l2.83-2.84 1.41 1.42L20.41 18l2.83 2.83-1.41 1.41L19 19.41l-2.83 2.83-1.41-1.41M12 12v7.88a1 1 0 0 1-.29.83 1 1 0 0 1-1.41 0L8.29 18.7a.99.99 0 0 1-.29-.83V12h-.03L2.21 4.62a1 1 0 0 1 .17-1.4A1.01 1.01 0 0 1 3 3h14a1 1 0 0 1 .62.22 1 1 0 0 1 .17 1.4L12.03 12H12z"/></svg></button></span>
       </span>
     </div>
 
@@ -471,13 +480,13 @@
             <div class="det" id="sivsoKpiSoDet"></div>
           </div>
           <div class="bloque">
-            <div class="etq">% Sell Out / Sell In</div>
-            <div class="num pct" id="sivsoKpiRatio">–</div>
-            <div class="det" id="sivsoKpiRatioDet"></div>
+            <div class="etq">Inventario</div>
+            <div class="num" id="sivsoKpiInv">–</div>
+            <div class="det" id="sivsoKpiInvDet"></div>
           </div>
         </div>
-        <!-- Sell In contra Sell Out, año actual y anterior (sivsoRenderKpi) -->
-        <div class="sivso-kpi-comp" id="sivsoKpiComp"></div>
+        <!-- Variaciones estilo Zebra (2026-11-23): Sell In y Sell Out vs año anterior y DDI vs mes anterior (sivsoRenderKpiVar) -->
+        <div class="sivso-kv" id="sivsoKpiComp"></div>
       </div>
 
         <div class="card mtd-panel sivso-donut-card">
@@ -534,10 +543,10 @@
   <!-- ═══ SO · Sell Out (JsSO.html): réplica del Power BI de sell-out, ETL paso 3 (2025 y 2026) ═══ -->
   <div id="vistaSO">
     <div class="mtd-head">
-      <h2>SELL OUT PDV<span class="info" tabindex="0" role="button" aria-label="Qué muestra"><span class="info-i" aria-hidden="true">i</span><span class="hint info-pop">Fuente: 3. Affiliate_Master so 2025 y 2026 (ETL) · Mismos datos de Ventas Backup · Inventario: Consolidado inventarios por semestre, con EAN MASTER y PDV MASTER (último mes con dato)</span></span></h2>
+      <h2>SELL OUT PDV<span class="info" tabindex="0" role="button" aria-label="Qué muestra"><span class="info-i" aria-hidden="true">i</span><span class="hint info-pop">Fuente: 3. Affiliate_Master so 2025 y 2026 (ETL) · Inventario: Consolidado inventarios por semestre, con EAN MASTER y PDV MASTER (último mes con dato)</span></span></h2>
       <span class="acc">
         <span class="sub" id="soUnidadTxt"></span>
-        <button class="btn" onclick="soCargar(true)" title="Volver a leer los archivos del ETL">Actualizar</button>
+        <span class="acc-iconos"><button type="button" class="btn-ico prim" onclick="btnGirar(this);soCargar(true)" title="Actualizar información (vuelve a leer los archivos del ETL)" aria-label="Actualizar información"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17.65 6.35A7.96 7.96 0 0 0 12 4a8 8 0 1 0 7.75 10h-2.08A6 6 0 1 1 12 6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg></button><button type="button" class="btn-ico" onclick="soLimpiar()" title="Quitar todos los filtros aplicados" aria-label="Quitar todos los filtros"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14.76 20.83 17.6 18l-2.83-2.83 1.41-1.41L19 16.6l2.83-2.84 1.41 1.42L20.41 18l2.83 2.83-1.41 1.41L19 19.41l-2.83 2.83-1.41-1.41M12 12v7.88a1 1 0 0 1-.29.83 1 1 0 0 1-1.41 0L8.29 18.7a.99.99 0 0 1-.29-.83V12h-.03L2.21 4.62a1 1 0 0 1 .17-1.4A1.01 1.01 0 0 1 3 3h14a1 1 0 0 1 .62.22 1 1 0 0 1 .17 1.4L12.03 12H12z"/></svg></button></span>
       </span>
     </div>
     <!-- Barra compacta: Año y Vista fijos; Mes, Trimestre, Promedio Selec y dimensiones con "+ Añadir filtro" -->
@@ -577,13 +586,52 @@
     </div>
   </div>
 
+  <!-- ═══ Digital (JsDigital.html): réplica del Looker "VENTAS DIGITAL" — libro MAESTRA LOOKER (MAESTRA + BUDGET YTG) ═══ -->
+  <div id="vistaDigital" hidden>
+    <div class="mtd-head">
+      <h2>VENTAS DIGITAL<span class="info" tabindex="0" role="button" aria-label="Qué muestra"><span class="info-i" aria-hidden="true">i</span><span class="hint info-pop">Fuente: libro MAESTRA LOOKER (hoja MAESTRA = Sell Out por canal TIENDA / DIGITAL y sub canal; hoja BUDGET YTG = objetivo digital por cliente) · SO PDV = Sell Out de tienda · SO DIG = Sell Out digital · % SO DIG = SO DIG ÷ (SO PDV + SO DIG) · YTD = meses del filtro Fecha · YTD -1 = mismos meses del año anterior</span></span></h2>
+      <span class="acc">
+        <span class="sub" id="dgUnidadTxt"></span>
+        <span class="acc-iconos"><button type="button" class="btn-ico prim" onclick="btnGirar(this);dgCargar(true)" title="Actualizar información (vuelve a leer la hoja MAESTRA LOOKER)" aria-label="Actualizar información"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17.65 6.35A7.96 7.96 0 0 0 12 4a8 8 0 1 0 7.75 10h-2.08A6 6 0 1 1 12 6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg></button><button type="button" class="btn-ico" onclick="dgLimpiar()" title="Quitar todos los filtros aplicados" aria-label="Quitar todos los filtros"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14.76 20.83 17.6 18l-2.83-2.83 1.41-1.41L19 16.6l2.83-2.84 1.41 1.42L20.41 18l2.83 2.83-1.41 1.41L19 19.41l-2.83 2.83-1.41-1.41M12 12v7.88a1 1 0 0 1-.29.83 1 1 0 0 1-1.41 0L8.29 18.7a.99.99 0 0 1-.29-.83V12h-.03L2.21 4.62a1 1 0 0 1 .17-1.4A1.01 1.01 0 0 1 3 3h14a1 1 0 0 1 .62.22 1 1 0 0 1 .17 1.4L12.03 12H12z"/></svg></button></span>
+      </span>
+    </div>
+    <div class="card mtd-filtros yb-filtros so-filtros">
+      <div><div class="chips-etq" style="margin-top:0">Año</div><div class="chips-periodo" id="dgAnioChips"></div></div>
+      <div><div class="chips-etq" style="margin-top:0">Vista</div><div class="chips-periodo" id="dgUnidadChips"></div></div>
+      <div class="campo dg-fecha"><label>Fecha</label>
+        <div class="dg-rango"><select id="dgDesde" onchange="dgSetRango()" aria-label="Desde"></select><span>–</span><select id="dgHasta" onchange="dgSetRango()" aria-label="Hasta"></select></div></div>
+      <div class="yb-campos" id="dgCampos"></div>
+      <div class="acciones">
+        <div class="pop-anclaje">
+          <button type="button" class="btn btn-nuevo" onclick="dgAlternarPop(event)">+ Añadir filtro</button>
+          <div class="pop-filtros yb-pop" id="dgPop" hidden><div class="pop-lista" id="dgPopLista"></div></div>
+        </div>
+        <button class="btn" onclick="dgLimpiar()" title="Quitar todos los filtros">Limpiar<span
+          class="contador-filtros" id="dgContador" hidden>0</span></button>
+      </div>
+    </div>
+    <div id="dgChips" class="chips-activos" hidden></div>
+    <div id="dgEstado" class="mtd-estado"><span class="mtd-spinner"></span>Cargando…</div>
+    <div id="dgContenido" style="display:none">
+      <div class="so-kpis dg-kpis" id="dgKpis"></div>
+      <div class="dg-fila">
+        <div class="card mtd-panel"><div class="mtd-panel-cab"><h3>Venta mensual · Tienda vs Digital<span class="info" tabindex="0" role="button" aria-label="Qué muestra"><span class="info-i" aria-hidden="true">i</span><span class="hint info-pop">Participación de cada canal en el Sell Out del mes (100 % = tienda + digital) · Los meses fuera del filtro Fecha se atenúan · Clic en un mes: solo ese mes (otro clic vuelve al año)</span></span></h3></div><div id="dgMensual"></div></div>
+        <div class="card mtd-panel"><div class="mtd-panel-cab"><h3>Participación por subcanal<span class="info" tabindex="0" role="button" aria-label="Qué muestra"><span class="info-i" aria-hidden="true">i</span><span class="hint info-pop">Reparto del SO DIG de los meses elegidos por sub canal · Clic en uno para filtrar</span></span></h3><button type="button" class="mtd-btn-csv" onclick="dgCsv('sub')" title="Descargar CSV">⬇ CSV</button></div><div id="dgSub"></div></div>
+      </div>
+      <div class="card mtd-panel dg-bloque"><div class="mtd-panel-cab"><h3>Histórico de Sell Out por año<span class="info" tabindex="0" role="button" aria-label="Qué muestra"><span class="info-i" aria-hidden="true">i</span><span class="hint info-pop">Por año y mes: SO Total (tienda + digital), SO DIG y % DIG (participación de lo digital en el Sell Out) · Respeta los filtros salvo Año y Fecha · Clic en un año lo elige arriba</span></span></h3><button type="button" class="mtd-btn-csv" onclick="dgCsv('hist')" title="Descargar CSV">⬇ CSV</button></div><div id="dgHist"></div></div>
+      <div class="card mtd-panel dg-bloque"><div class="mtd-panel-cab"><h3>Comparación YTD<span class="info" tabindex="0" role="button" aria-label="Qué muestra"><span class="info-i" aria-hidden="true">i</span><span class="hint info-pop">Por cliente, con + para abrir sus BU y sus EAN · SO PDV YTD = tienda · SO DIG YTD = digital · YTD -1 = mismos meses del año anterior · ΔV-1 % = variación del SO DIG · % SO DIG = digital ÷ (tienda + digital) · Clic en un nombre: filtra · Clic en un encabezado: ordena</span></span></h3><button type="button" class="mtd-btn-csv" onclick="dgCsv('comp')" title="Descargar CSV">⬇ CSV</button></div><div id="dgComp"></div></div>
+      <div class="card mtd-panel dg-bloque"><div class="mtd-panel-cab"><h3>Performance Digital YTD<span class="info" tabindex="0" role="button" aria-label="Qué muestra"><span class="info-i" aria-hidden="true">i</span><span class="hint info-pop">Budget FY DIG = SO DIG YTD + Budget YTG (objetivo del año) · % Cumpl. YTD = SO DIG YTD ÷ Budget FY DIG · Budget YTG = objetivo de los meses que faltan (hoja BUDGET YTG) · SO DIG YTD en verde si supera el año anterior, en rojo si decrece · Siempre en pesos</span></span><span class="sub dg-per" id="dgPerfPer"></span></h3><button type="button" class="mtd-btn-csv" onclick="dgCsv('perf')" title="Descargar CSV">⬇ CSV</button></div>
+        <div class="so-kpis dg-kpis dg-kpis-perf" id="dgPerfKpis"></div><div id="dgPerf"></div></div>
+    </div>
+  </div>
+
   <div id="vistaYoobic" hidden>
     <div class="mtd-head">
       <h2>Perfect Store · Yoobic</h2>
       <span class="sub">Ejecución en punto de venta · Disponibilidad 40 · Lineal 25 · Vis. permanente 20 · Vis. campaña 15</span>
       <span class="acc">
         <span class="sub" id="ybActualizado"></span>
-        <button class="btn" onclick="ybActualizar()">Actualizar</button>
+        <span class="acc-iconos"><button type="button" class="btn-ico prim" onclick="btnGirar(this);ybActualizar()" title="Actualizar información (vuelve a leer Yoobic)" aria-label="Actualizar información"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17.65 6.35A7.96 7.96 0 0 0 12 4a8 8 0 1 0 7.75 10h-2.08A6 6 0 1 1 12 6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg></button><button type="button" class="btn-ico" onclick="ybLimpiarFiltros()" title="Quitar todos los filtros aplicados" aria-label="Quitar todos los filtros"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14.76 20.83 17.6 18l-2.83-2.83 1.41-1.41L19 16.6l2.83-2.84 1.41 1.42L20.41 18l2.83 2.83-1.41 1.41L19 19.41l-2.83 2.83-1.41-1.41M12 12v7.88a1 1 0 0 1-.29.83 1 1 0 0 1-1.41 0L8.29 18.7a.99.99 0 0 1-.29-.83V12h-.03L2.21 4.62a1 1 0 0 1 .17-1.4A1.01 1.01 0 0 1 3 3h14a1 1 0 0 1 .62.22 1 1 0 0 1 .17 1.4L12.03 12H12z"/></svg></button></span>
       </span>
     </div>
 
@@ -654,7 +702,7 @@
           <div class="yb-col-der">
           <div class="card mtd-panel">
             <h3 id="ybTitEvol">Global Perfect Store por mes</h3>
-            <div class="hint">Promedio de todas las encuestas de cada mes · color = nivel · pasa el cursor sobre una columna para ver los 4 pilares</div>
+            <div class="hint">Promedio de todas las encuestas de cada mes · pasa el cursor sobre una columna para ver los 4 pilares</div>
             <div id="ybEvol"></div>
             <div class="mtd-scroll yb-scroll-corto"><table class="mtd-tabla" id="ybTablaMes"></table></div>
           </div>
@@ -791,13 +839,12 @@
   </div>
 </div>
   <!-- Barra de navegación inferior (Material 3), solo en teléfonos (≤ 600 px): los 3
-       destinos principales + "Más", que abre el riel como cajón modal (con
-       Ventas Backup). Los botones se marcan desde mostrarVistaSuperior (data-vista). -->
+       destinos principales + "Más", que abre el riel como cajón modal (modo claro / oscuro). Los botones se marcan desde mostrarVistaSuperior (data-vista). -->
   <nav class="nav-barra" id="navBarra" aria-label="Secciones del visor">
-    <button type="button" class="barra-item activo" data-vista="so sivso ventasmtd" onclick="mostrarVistaSuperior(ventasSubActual())"><span class="rail-ind"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 9.2h3V19H5zM10.6 5h2.8v14h-2.8zm5.6 8H19v6h-2.8z"/></svg></span><span class="rail-lbl">Ventas</span></button>
+    <button type="button" class="barra-item activo" data-vista="so sivso ventasmtd dig" onclick="mostrarVistaSuperior(ventasSubActual())"><span class="rail-ind"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 9.2h3V19H5zM10.6 5h2.8v14h-2.8zm5.6 8H19v6h-2.8z"/></svg></span><span class="rail-lbl">Ventas</span></button>
     <button type="button" class="barra-item" data-vista="mapa" onclick="mostrarVistaSuperior('mapa')"><span class="rail-ind"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.5 3l-.16.03L15 5.1 9 3 3.36 4.9c-.21.07-.36.25-.36.48V20.5c0 .28.22.5.5.5l.16-.03L9 18.9l6 2.1 5.64-1.9c.21-.07.36-.25.36-.48V3.5c0-.28-.22-.5-.5-.5zM15 19l-6-2.11V5l6 2.11V19z"/></svg></span><span class="rail-lbl">Mapa</span></button>
     <button type="button" class="barra-item" data-vista="yoobic" onclick="mostrarVistaSuperior('yoobic')"><span class="rail-ind"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 4H4v2h16V4zm1 10v-2l-1-5H4l-1 5v2h1v6h10v-6h4v6h2v-6h1zm-9 4H6v-4h6v4z"/></svg></span><span class="rail-lbl">Perfect Store</span></button>
-    <button type="button" class="barra-item" data-vista="ventas3" id="btnBarraMas" onclick="alternarRail()" aria-label="Más secciones"><span class="rail-ind"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 18h18v-2H3v2zm0-5h18v-2H3v2zm0-7v2h18V6H3z"/></svg></span><span class="rail-lbl">Más</span></button>
+    <button type="button" class="barra-item" data-vista="" id="btnBarraMas" onclick="alternarRail()" aria-label="Más secciones"><span class="rail-ind"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 18h18v-2H3v2zm0-5h18v-2H3v2zm0-7v2h18V6H3z"/></svg></span><span class="rail-lbl">Más</span></button>
   </nav>
 </div><!-- /.shell -->
 
@@ -812,6 +859,7 @@
 <?!= include('JsVentas'); ?>
 <?!= include('JsVentas3'); ?>
 <?!= include('JsSO'); ?>
+<?!= include('JsDigital'); ?>
 <script>iniciarUIBasica();</script>
 </body>
 </html>

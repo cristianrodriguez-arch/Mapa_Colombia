@@ -38,6 +38,7 @@ import argparse
 import itertools
 import json
 import os
+import shutil
 import re
 import sys
 import time
@@ -409,10 +410,10 @@ def pasa_filtros(fila, filtros, cache):
     return True
 
 
-def cargar_dimension_productos(cfg, libro):
-    """Lee la tabla de DIMENSION_PRODUCTOS. Devuelve (productos, info), donde
-    productos es {sku: {campo: valor}}; ({}, None) si está desactivada."""
-    dim = getattr(cfg, "DIMENSION_PRODUCTOS", None)
+def cargar_dimension_productos(cfg, libro, dim=None):
+    """Lee la tabla de DIMENSION_PRODUCTOS (o la `dim` que se pase). Devuelve (productos, info),
+    donde productos es {sku: {campo: valor}}; ({}, None) si está desactivada."""
+    dim = dim or getattr(cfg, "DIMENSION_PRODUCTOS", None)
     if not dim:
         return {}, None
     sobran = set(dim["campos"]) - set(CAMPOS_DIMENSION)
@@ -577,7 +578,15 @@ def escribir_json(ruta, datos, intentos=5, ascii=False):
         json.dump(datos, f, ensure_ascii=ascii, separators=(",", ":"))
     for intento in range(intentos):
         try:
-            os.replace(temporal, ruta)
+            if ruta.exists():
+                # Se SOBRESCRIBE el archivo existente (mismo archivo en Drive) en lugar de reemplazarlo
+                # (2026-11-23). Con os.replace, Drive para escritorio, en la carpeta compartida del
+                # visor, subía cada corrida como un archivo NUEVO a "Mi unidad" y el que lee el visor
+                # se quedaba con la versión vieja (p. ej. la BU de DIM_Isdin_Core no aparecía).
+                shutil.copyfile(temporal, ruta)
+                temporal.unlink()
+            else:
+                os.replace(temporal, ruta)
             break
         except PermissionError:
             if intento == intentos - 1:
@@ -620,6 +629,7 @@ def ejecutar(cfg, limite):
     info_sku = defaultdict(dict)
     conteo = defaultdict(int)
     productos, info_dim = {}, None
+    core_bu = {s: c["bu"] for s, c in cargar_dim_isdin_core(cfg)[0].items() if c.get("bu")}
     sf_pos = defaultdict(lambda: defaultdict(int))   # SF_ID -> {POS_ID: filas} de los libros con POS_ID
     reglas_pos = defaultdict(int)
     skus_sin_dimension = defaultdict(int)
@@ -714,6 +724,8 @@ def ejecutar(cfg, limite):
                 }
                 if productos and valores["sku"] and not completar_con_dimension(valores, productos):
                     skus_sin_dimension[valores["sku"]] += 1
+                if valores["sku"] in core_bu:   # BU oficial de Isdin Core (DIM_Isdin_Core)
+                    valores["bu"] = core_bu[valores["sku"]]
                 faltante = next((c for c in exigidos if valores[c] in (None, "")), None)
                 if faltante:
                     conteo[f"descartadas_{faltante}"] += 1
@@ -1070,6 +1082,11 @@ def ejecutar_s3(cfg, limite=None):
                 destino[k] = (am, valor)
     del pm_tok, ps_tok, info_tok
 
+    # BU oficial de Isdin Core (DIM_Isdin_Core) por encima de la de cada Affiliate Master.
+    aplicar_dim_isdin_core(cfg, productos)
+    # BU DC (Hoja2): un EAN que no esté en ella toma su BU.
+    bu_dc = {s: c["bu"] for s, c in cargar_dim_bu_dc(cfg)[0].items() if c.get("bu")}
+
     # KAM del cliente = el que más filas tiene en su mes más reciente.
     kam_cli = {}
     for (cli, am), kams in kam_mes.items():
@@ -1110,7 +1127,8 @@ def ejecutar_s3(cfg, limite=None):
     cubo = {
         "v": 1, "generado": generado, "meses": meses,
         "clientes": [[c, val(info_cli[c], "nombre") or c, kam_cli.get(c, (0, "SIN KAM"))[1]] for c in clientes],
-        "skus": [[s, val(info_sku[s], "desc") or s, bu_de(s), ""] for s in skus],
+        # [EAN, descripción, BU, marca (vacía en el sell-out), EAN del sell-in (no aplica), BU DC]
+        "skus": [[s, val(info_sku[s], "desc") or s, bu_de(s), "", None, (bu_dc.get(s) or bu_de(s)).upper()] for s in skus],
         "pdv": [[p, val(info_pdv[p], "desc") or p, i_cli.get(val(info_pdv[p], "cli"), -1), val(info_pdv[p], "ciudad"),
                  val(info_pdv[p], "depto"), val(info_pdv[p], "canal"), val(info_pdv[p], "subcanal"),
                  val(info_pdv[p], "pos")] for p in pdvs],
@@ -1180,6 +1198,10 @@ def ejecutar_s3(cfg, limite=None):
 #                     "inv": [[iCliente, iSku, iMes, und, imp]], "meta"}       cliente × EAN × mes
 #   s3_inv_pdv.json  {"v", "generado", "meses", "pdv": [clave del cubo], "inv": [[iPdv, iMes, und, imp]],
 #                     "meta"}                                                  PDV × mes
+#   s3_inv_pe_NN.json {"v", "generado", "cubo", "meses", "eans": [ean], "filas": {iPdvCubo: [[iEan, iMes, und, imp]]}}
+#                     PDV × EAN × mes (2026-11-18), partido como s3_pdv_NN (índice del PDV en el cubo
+#                     % fragmentos.pdv): inventario por producto con filtro de punto de venta. "cubo" =
+#                     "generado" del s3_cubo.json con el que se armó (los índices son de esa corrida).
 # Las claves son SAP ID, EAN y la clave de PDV del cubo (no índices), para no depender de la corrida.
 
 COLUMNAS_INV_DEF = {
@@ -1211,6 +1233,51 @@ def _filas_hoja(ruta, hoja, columnas, obligatorias):
         for fila in filas:
             if not fila_vacia(fila):
                 yield {c: celda(fila, i) for c, i in col.items()}
+
+
+_DIM_CORE = {}
+
+
+def _cargar_dim_externa(cfg, atributo, nombre):
+    """Lee una tabla de productos de un libro aparte (config `atributo`: ruta, hoja, fila de encabezados,
+    clave y campos) una sola vez por corrida. Devuelve (productos, info); ({}, None) si no está."""
+    if atributo in _DIM_CORE:
+        return _DIM_CORE[atributo]
+    dim = getattr(cfg, atributo, None)
+    res = ({}, None)
+    if dim:
+        ruta = Path(dim["ruta"])
+        if not ruta.is_file():
+            print(f"AVISO: no existe {ruta}; {nombre} no se aplica.")
+        else:
+            with abrir_libro(ruta) as libro:
+                res = cargar_dimension_productos(cfg, libro, dim)
+            print(f"{nombre}: {res[1]['productos']} productos de '{ruta.name}' › '{res[1]['hoja']}'"
+                  + (f" ({len(res[1]['repetidos'])} EAN repetidos: gana la primera fila)" if res[1]["repetidos"] else ""))
+    _DIM_CORE[atributo] = res
+    return res
+
+
+def cargar_dim_isdin_core(cfg):
+    """BU oficial de Isdin Core (2026-11-23): pestaña DIM_Isdin_Core de DATABASE/DIM/Dim_productos.xlsx
+    (config DIM_ISDIN_CORE). Manda sobre la BU de las filas y de la hoja DIM Productos de cada
+    Affiliate Master; un EAN que no esté en ella conserva la que traía. Se lee una sola vez por corrida."""
+    return _cargar_dim_externa(cfg, "DIM_ISDIN_CORE", "BU de Isdin Core")
+
+
+def cargar_dim_bu_dc(cfg):
+    """BU DC (2026-11-26): segunda clasificación de BU, pestaña Hoja2 del mismo Dim_productos.xlsx
+    (config DIM_BU_DC). Va en el cubo como un campo aparte del producto (skus[i][5]); no cambia la BU."""
+    return _cargar_dim_externa(cfg, "DIM_BU_DC", "BU DC")
+
+
+def aplicar_dim_isdin_core(cfg, productos):
+    """Pisa la BU de `productos` con la de DIM_Isdin_Core. Devuelve el diccionario de la dimensión."""
+    core, _ = cargar_dim_isdin_core(cfg)
+    for sku, campos in core.items():
+        if campos.get("bu"):
+            productos.setdefault(sku, {})["bu"] = campos["bu"]
+    return core
 
 
 def cargar_maestro_ean(cfg):
@@ -1271,6 +1338,59 @@ def precios_inventario(cfg):
     return {k: v[1] for k, v in por_cli.items()}, {e: v[1] / v[0] for e, v in suma.items() if v[0]}
 
 
+def escribir_inv_pe(salida, cubo, inv_pe, meses, i_mes, generado):
+    """Fragmentos s3_inv_pe_NN.json (PDV × EAN × mes) con el mismo reparto que s3_pdv_NN."""
+    n = int((cubo.get("fragmentos") or {}).get("pdv") or 32)
+    i_cubo = {p[0]: i for i, p in enumerate(cubo.get("pdv", []))}
+    frags = [{"eans": [], "i": {}, "filas": defaultdict(list)} for _ in range(n)]
+    for (clave, ean, am), v in sorted(inv_pe.items()):
+        ip = i_cubo.get(clave)
+        if ip is None or not v[0]:
+            continue
+        fr = frags[ip % n]
+        ie = fr["i"].get(ean)
+        if ie is None:
+            ie = fr["i"][ean] = len(fr["eans"])
+            fr["eans"].append(ean)
+        fr["filas"][ip].append([ie, i_mes[am], redondear(v[0]), redondear(v[1])])
+    total = 0
+    for k, fr in enumerate(frags):
+        total += escribir_json(salida / f"s3_inv_pe_{k:02d}.json", {
+            "v": 1, "generado": generado, "cubo": cubo.get("generado"), "meses": [texto_mes(am) for am in meses],
+            "eans": fr["eans"], "filas": {str(ip): f for ip, f in fr["filas"].items()}}, ascii=True)
+    return total
+
+
+def escribir_inv_pe_ult(salida, cubo, inv_pe, generado):
+    """s3_inv_pe_ult.json: SOLO la última foto de cada año, PDV × producto (2026-11-23).
+
+    Sell Out PDV muestra siempre la foto del último mes con inventario del año elegido, así que
+    con esto el navegador resuelve el inventario por PDV y producto de CUALQUIER filtro sin pedir
+    los 32 fragmentos s3_inv_pe_NN (~21 MB). Índices del cubo: filas[mes][iPdv] = [iSku, und, imp, ...].
+    """
+    i_pdv = {p[0]: i for i, p in enumerate(cubo.get("pdv", []))}
+    i_sku = {s[0]: i for i, s in enumerate(cubo.get("skus", []))}
+    ult = {}
+    for (clave, ean, am), v in inv_pe.items():
+        if v[0] and clave in i_pdv and ean in i_sku:
+            t = texto_mes(am)
+            if t > ult.get(t[:4], ""):
+                ult[t[:4]] = t
+    meses = set(ult.values())
+    filas = {m: defaultdict(list) for m in meses}
+    for (clave, ean, am), v in sorted(inv_pe.items()):
+        t = texto_mes(am)
+        if t not in meses or not v[0]:
+            continue
+        ip, isk = i_pdv.get(clave), i_sku.get(ean)
+        if ip is None or isk is None:
+            continue
+        filas[t][str(ip)].extend([isk, redondear(v[0]), redondear(v[1])])
+    return escribir_json(salida / "s3_inv_pe_ult.json", {
+        "v": 1, "generado": generado, "cubo": cubo.get("generado"), "meses": sorted(meses),
+        "filas": {m: dict(f) for m, f in filas.items()}}, ascii=True)
+
+
 def ejecutar_inv(cfg):
     fuentes = getattr(cfg, "FUENTES_INVENTARIO", None) or getattr(cfg, "FUENTES_INVENTARIO_PDV", None)
     if not fuentes:
@@ -1298,6 +1418,7 @@ def ejecutar_inv(cfg):
 
     inv = defaultdict(lambda: [0.0, 0.0])        # (sap, ean, aaaamm)
     inv_pdv = defaultdict(lambda: [0.0, 0.0])    # (clave, aaaamm)
+    inv_pe = defaultdict(lambda: [0.0, 0.0])     # (clave, ean, aaaamm)
     info_sku = {}
     conteo, unidades = defaultdict(int), defaultdict(float)
     cache_ean, cache_pdv = {}, {}
@@ -1354,6 +1475,10 @@ def ejecutar_inv(cfg):
                 x[0] += u
                 x[1] += u * precio
                 unidades["con_pdv"] += u
+                if ev:
+                    x = inv_pe[(clave, ev[0], am)]
+                    x[0] += u
+                    x[1] += u * precio
             else:
                 conteo["sin_pdv"] += 1
             unidades["total"] += u
@@ -1385,11 +1510,14 @@ def ejecutar_inv(cfg):
         "v": 2, "generado": generado, "meses": [texto_mes(am) for am in meses], "pdv": claves,
         "inv": [[i_pdv[c], i_mes[am], redondear(v[0]), redondear(v[1])] for (c, am), v in sorted(inv_pdv.items())],
         "meta": meta}, ascii=True)
+    tam3 = escribir_inv_pe(salida, cubo, inv_pe, meses, i_mes, generado)
+    tam4 = escribir_inv_pe_ult(salida, cubo, inv_pe, generado)
     print(f"Inventario listo en {time.perf_counter() - t0:.1f} s: {len(meses)} meses"
           + (f" ({texto_mes(meses[0])} a {texto_mes(meses[-1])})" if meses else "")
           + f", {len(saps)} clientes, {len(eans)} EAN, {len(claves):,} PDV; con EAN el {meta['unidades_con_ean']:.0%}"
           f" y con PDV el {meta['unidades_con_pdv']:.0%} de las unidades; s3_inv.json {tam1 / 1e6:.2f} MB, "
-          f"s3_inv_pdv.json {tam2 / 1e6:.2f} MB.")
+          f"s3_inv_pdv.json {tam2 / 1e6:.2f} MB, s3_inv_pe_NN.json {tam3 / 1e6:.2f} MB en total, "
+          f"s3_inv_pe_ult.json {tam4 / 1e6:.2f} MB.")
     descartadas = {k: v for k, v in conteo.items() if k.startswith("descartadas_")}
     if descartadas:
         print("  Filas descartadas: " + ", ".join(f"{k[12:]}={v:,}" for k, v in sorted(descartadas.items())))

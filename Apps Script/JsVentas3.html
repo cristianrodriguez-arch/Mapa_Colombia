@@ -154,8 +154,9 @@ function vt3Preparar(d){
     frag:d.fragmentos||{pdv:32,sku:16},bus:d.bus||[],demoPs:d.demoPs||null,
     clientes:(d.clientes||[]).map(function(c){return{id:c[0],nombre:c[1]||c[0],kam:c[2]||'SIN KAM'}}),
     // eans: el sell-out identifica el producto por EAN (s[0]); el sell-in por Product ID, con sus EAN en s[4].
-    skus:(d.skus||[]).map(function(s){return{ean:s[0],nombre:s[1]||s[0],bu:(s[2]||'SIN BU').toUpperCase(),marca:s[3]||'',
-      eans:(s[4]||(s[0]?[s[0]]:[])).map(String)}}),
+    // budc (s[5], 2026-11-26): "BU DC" de la pestaña Hoja2 de Dim_productos.xlsx; sin ella, la BU.
+    skus:(d.skus||[]).map(function(s){var bu=(s[2]||'SIN BU').toUpperCase();return{ean:s[0],nombre:s[1]||s[0],bu:bu,marca:s[3]||'',
+      eans:(s[4]||(s[0]?[s[0]]:[])).map(String),budc:(s[5]||bu).toUpperCase()}}),
     pdv:(d.pdv||[]).map(function(p){return{clave:p[0],nombre:p[1]||p[0],cli:p[2],ciudad:p[3]||'',depto:p[4]||'',canal:p[5]||'',subcanal:p[6]||''}}),
     cs:d.cs||[],pm:d.pm||[],errores:(d.meta||{}).errores||{},
     // Canal / Channel 2 de cada fila de pm, pb y ps (5.º elemento): un PDV vende por TIENDA y DIGITAL.

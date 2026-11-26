@@ -341,7 +341,20 @@ t('KPIs y SO/SI: el rango llega hasta el último mes con Sell Out (oct solo con 
   assert.strictEqual(k.sivsoCortesSO[2026], 9);
   let si = 0; k.sivsoData.filas.forEach(f => { if (f.a === 2026 && f.m <= 9) si += k.sivsoSi(f); });
   assert.strictEqual(k.document.els.sivsoKpiSi.innerText, k.sivsoFmt(si));   // sin los 999 de octubre
-  assert.ok(/Sep 2026/.test(k.document.els.sivsoKpiRatioDet.innerText), k.document.els.sivsoKpiRatioDet.innerText);
+  assert.ok(/Sep 2025/.test(k.document.els.sivsoKpiSiDet.innerHTML), k.document.els.sivsoKpiSiDet.innerHTML);
+});
+t('Tarjeta de KPIs: barras año actual vs anterior de Sell In y Sell Out, DDI y variación en verde / rojo', () => {
+  const k = cargar(); k.onSIvsSOCargado({ v: 2, clientes, productos, filas, meta: {} });
+  k.document.getElementById('sivsoAnioFil').value = '2026'; k.renderSIvsSO();
+  const h = k.document.els.sivsoKpiComp.innerHTML;
+  assert.ok(/Sell In/.test(h) && /Sell Out/.test(h) && /DDI/.test(h), 'tres filas: Sell In, Sell Out y DDI');
+  assert.strictEqual((h.match(/class="kv-b ac"/g) || []).length, 2, 'barra del año actual en Sell In y Sell Out');
+  assert.strictEqual((h.match(/class="kv-b py"/g) || []).length, 2, 'barra del año anterior');
+  assert.ok(/class="kv-var (pos|neg)"/.test(h), 'variación con color');
+  const S = k.sivsoSerieMensual(2026); let si = 0, py = 0;
+  k.sivsoMesesKpi(k.sivsoKpiArgs.corte).forEach(m => { si += S.acc[m].si; py += S.acc[m].siPy; });
+  if (py > 0) assert.ok(h.indexOf(k.sivsoPctSigno(si / py - 1)) !== -1, 'ΔPY% del rango');
+  assert.ok(k.document.els.sivsoKpiInv.innerText !== undefined, 'tarjeta de inventario en lugar de la absorción');
 });
 t('Año: deja de ser chips sueltos; sin la caja Año = el más reciente, y elegir otro lo muestra como filtro', () => {
   const k = cargar(); k.onSIvsSOCargado({ v: 2, clientes, productos, filas, meta: {} });
@@ -425,7 +438,7 @@ t('filtro Meses (Desde – Hasta): escribe el filtro de mes con el intervalo y e
   let so = 0; k.sivsoData.filas.forEach(f => { if (f.a === 2026 && f.m >= 3 && f.m <= 5) so += k.sivsoSo(f); });
   assert.strictEqual(k.document.els.sivsoKpiSo.innerText, k.sivsoFmt(so));
   assert.ok(/Meses: Mar–May/.test(k.document.els.sivsoChips.innerHTML), 'chip del intervalo');
-  assert.ok(/Mar–May 2026/.test(k.document.els.sivsoKpiRatioDet.innerText), k.document.els.sivsoKpiRatioDet.innerText);
+  assert.ok(/Mar–May 2025/.test(k.document.els.sivsoKpiSiDet.innerHTML), k.document.els.sivsoKpiSiDet.innerHTML);
   d.value = '1'; h.value = String(k.sivsoCortes[2026]); k.sivsoSetRango();
   assert.deepStrictEqual(Array.from(k.sivsoFiltros.mes), []);              // año completo = sin filtro
 });

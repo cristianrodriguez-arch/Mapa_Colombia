@@ -124,6 +124,26 @@ DIMENSION_PRODUCTOS = {
 }
 
 # ---------------------------------------------------------------------------
+# BU oficial de Isdin Core (2026-11-23)
+# ---------------------------------------------------------------------------
+# Pestaña DIM_Isdin_Core de DATABASE/DIM/Dim_productos.xlsx: "SUB FAMILIA" (DERMA, FOTO,
+# ISDINCEUTICS, PLAT. WATER) es la BU de cada "ISDIN EAN". Manda sobre la BU de las filas y de
+# la hoja DIM Productos de cada Affiliate Master; un EAN que no esté aquí conserva la que traía.
+# None = no se usa. Encabezados en la fila 2.
+DIM_ISDIN_CORE = {
+    "ruta": r"G:\.shortcut-targets-by-id\1vohEa_5vHdECVqfeT9q-rUdcj-IVUAYb\ISDIN\DATABASE\DIM\Dim_productos.xlsx",
+    "hoja": "DIM_Isdin_Core",
+    "fila_encabezados": 2,
+    "clave": ["isdin ean", "ean"],
+    "campos": {"bu": ["sub familia"]},
+}
+
+# BU DC (2026-11-26): segunda clasificación de BU para el filtro "BU DC" de Sell Out PDV, pestaña
+# Hoja2 del mismo Dim_productos.xlsx (misma estructura: "SUB FAMILIA" por "ISDIN EAN", encabezados en
+# la fila 2). No cambia la BU; un EAN que no esté en Hoja2 toma su BU. None = no se usa.
+DIM_BU_DC = dict(DIM_ISDIN_CORE, hoja="Hoja2")
+
+# ---------------------------------------------------------------------------
 # Ventas 3.0 (pestaña de sell-out estilo Zebra BI de la web app)
 # ---------------------------------------------------------------------------
 # Un "3. Affiliate_Master so" por año, del más viejo al más reciente (el BU de
