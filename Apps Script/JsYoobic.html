@@ -41,6 +41,11 @@ function ybNivel(pct){
 var YB_SEM={alto:'#086124',medio:'#f29aa3',bajo:'#e41f33',muybajo:'#8f1220',sin:'#cecece'};
 function ybColorPct(pct){return YB_SEM[ybNivel(pct)]}
 function ybColorTxt(pct){var n=ybNivel(pct);return n==='medio'?'#b3121f':n==='sin'?'var(--muted)':YB_SEM[n]}
+/* Identidad de Yoobic en la pestaña (2026-11-18): barras, columnas y pistas en gris (--yb-graf) y
+   las cifras en la tinta de Yoobic, como su dashboard. El nivel (semáforo) queda en los puntos de
+   las tablas y en el popup del mapa. */
+var YB_GRAF='var(--yb-graf)';
+function ybTxtPs(pct){return pct==null?'var(--muted)':'var(--yb-tinta)'}
 
 /* ── Formatos ── */
 function ybNum(v,dec){if(v==null||!isFinite(v))return'–';
@@ -507,9 +512,9 @@ function ybRenderResumen(lista){
     var v=prom[i],pct=v==null?null:v/p.max;
     h+='<div class="yb-kpi'+(i===0?' yb-kpi-global':'')+(i===ybPilar()&&i>0?' yb-kpi-sel':'')+'">'+
       '<div class="etq" title="'+esc(p.etiqueta)+'">'+esc(p.etiqueta)+'</div>'+
-      '<div class="num"><span style="color:'+(v==null?'var(--muted)':ybColorTxt(pct))+'">'+ybNum(v)+'</span>'+
+      '<div class="num"><span style="color:'+(v==null?'var(--muted)':ybTxtPs(pct))+'">'+ybNum(v)+'</span>'+
       '<span class="de"> / '+p.max+'</span></div>'+
-      '<div class="yb-pista"><span style="width:'+(pct==null?0:Math.min(100,Math.round(pct*100)))+'%;background:'+ybColorPct(pct)+'"></span></div>'+
+      '<div class="yb-pista"><span style="width:'+(pct==null?0:Math.min(100,Math.round(pct*100)))+'%;background:'+YB_GRAF+'"></span></div>'+
       '<div class="det">'+ybPctTxt(pct)+' del máximo</div></div>'});
   h+='<div class="yb-kpi yb-kpi-meta"><div class="etq">Cobertura</div>'+
     '<div class="det"><b>'+FMT.format(Object.keys(tiendas).length)+'</b> PDV evaluados</div>'+
@@ -556,7 +561,7 @@ function ybRenderResumen(lista){
   document.getElementById('ybHintPdv').innerText=FMT.format(filas.length)+' PDV · última encuesta de cada uno · ordenado del peor al mejor '+nomP+' (clic en un encabezado para reordenar)'}
 
 /* Columnas por mes: promedio Global de TODAS las encuestas del mes (evolución),
-   color = nivel, etiqueta directa encima. Debajo, la tabla mes × pilar. */
+   en el gris de Yoobic, etiqueta directa encima. Debajo, la tabla mes × pilar. */
 function ybRenderEvolucion(lista){
   var porMes={};
   lista.forEach(function(m){(porMes[m.mes]=porMes[m.mes]||[]).push(m)});
@@ -573,7 +578,7 @@ function ybRenderEvolucion(lista){
     h+='<div class="yb-col" title="'+esc(em(f.mes))+'\nGlobal '+ybNum(f.g)+' · Disp. '+ybNum(f.d)+' · Lineal '+ybNum(f.l)+
       ' · Vis. perm. '+ybNum(f.p)+' · Vis. campaña '+ybNum(f.t)+'\n'+f.n+' encuestas · '+f.pdv+' PDV">'+
       '<div class="yb-col-val">'+ybNum(f[kk])+'</div>'+
-      '<div class="yb-col-pista"><span style="height:'+(pct==null?0:Math.max(2,Math.round(Math.min(1,pct)*100)))+'%;background:'+ybColorPct(pct)+'"></span></div>'+
+      '<div class="yb-col-pista"><span style="height:'+(pct==null?0:Math.max(2,Math.round(Math.min(1,pct)*100)))+'%;background:'+YB_GRAF+'"></span></div>'+
       '<div class="yb-col-etq">'+esc(em(f.mes))+'</div></div>'});
   c.innerHTML=h+'</div>';
   filas.reverse();
@@ -629,7 +634,7 @@ function ybRolDe(nombre){
    El cruce PDV → tienda es el mismo del mapa: Id cuenta (15) o POS_ID.
    Clic en una porción de la torta = detalle de esos PDV (panel lateral). */
 var ybCobDim='cliente',ybCobUlt=null,ybCobPanel=null;
-var YB_COB_COL={si:'#2b2830',no:'#f29aa3'};
+var YB_COB_COL={si:'#5b5b61',no:'#b4b4ba'};   // grises de las tortas de Yoobic
 function ybSetCobDim(d){ybCobDim=d;ybRenderCobertura()}
 /* La llama recAsignaciones (JsNucleo) cuando los datos del mapa llegan después que Yoobic. */
 function ybCoberturaRefrescar(){
@@ -694,7 +699,7 @@ function ybCalcularCobertura(){
 function ybTorta(si,total,etqSi,etqNo,u){
   if(!total)return'<div class="hint">Sin PDV para medir</div>';
   var no=total-si,cx=130,cy=100,r=72,h='',a0=-Math.PI/2;
-  var partes=[{v:si,c:typeof colorTema==='function'?colorTema(YB_COB_COL.si):YB_COB_COL.si,e:etqSi,ok:1},{v:no,c:YB_COB_COL.no,e:etqNo,ok:0}].filter(function(p){return p.v>0});
+  var partes=[{v:si,c:YB_COB_COL.si,e:etqSi,ok:1},{v:no,c:YB_COB_COL.no,e:etqNo,ok:0}].filter(function(p){return p.v>0});
   partes.forEach(function(p){
     var ang=p.v/total*2*Math.PI,a1=a0+ang,med=a0+ang/2;
     var clic=' class="yb-porcion" tabindex="0" role="button" onclick="ybCobDetalle(\''+u+'\','+p.ok+')"'+
@@ -805,11 +810,8 @@ function ybBarrasDim(id,dim,base,clave,top){
     clase:sel?(sel[d.clave]?'activa':'apagada'):'',
     tit:d.clave+': '+nomP+' '+d.etq+' / '+max+' · '+FMT.format(d.pdvs)+' PDV\n(clic para '+(sel&&sel[d.clave]?'quitarlo del':'añadirlo al')+' filtro)',
     fn:function(){ybAlternar(dim,d.clave)}}}),{topN:top,vacio:'Sin puntajes con los filtros actuales'});
-  // Las barras toman el color del nivel del promedio (no el rojo de marca).
-  // Mismo recorte que pintarBarras (descarta n<=0) para que los índices coincidan.
-  var filas=document.getElementById(id).querySelectorAll('.barra-fila');
-  datos.filter(function(d){return d.n>0}).slice(0,top||datos.length).forEach(function(d,i){var re=filas[i]&&filas[i].querySelector('.barra-relleno');
-    if(re&&!(sel&&!sel[d.clave]))re.style.background=ybColorPct(d.n/max)})}
+  // Las barras van en el gris de Yoobic (CSS de #vistaYoobic .barra-relleno), sin color por nivel.
+}
 
 /* ══════════ Agotados ══════════ */
 var ybVistaAgot='pdv',ybAgotVista=[];
@@ -842,7 +844,7 @@ function ybRenderAgotados(lista){
       '<div class="det">PDV × producto con respuesta "No"</div></div>'+
     '<div class="bloque"><div class="etq">PDV con agotados</div><div class="num">'+FMT.format(pdvCon)+
       '</div><div class="det">de '+FMT.format(base.length)+' '+(ybAlcance==='ultima'?'PDV evaluados':'encuestas')+'</div></div>'+
-    '<div class="bloque"><div class="etq">Disponibilidad</div><div class="num" style="color:'+ybColorTxt((si+no)?si/(si+no):null)+'">'+
+    '<div class="bloque"><div class="etq">Disponibilidad</div><div class="num" style="color:'+ybTxtPs((si+no)?si/(si+no):null)+'">'+
       ybPctTxt((si+no)?si/(si+no):null)+'</div><div class="det">'+FMT.format(si)+' de '+FMT.format(si+no)+' respuestas con stock</div></div>';
   document.getElementById('ybHintAgot').innerText=(ybAlcance==='ultima'?
     'Según la ÚLTIMA encuesta de cada PDV':'Según TODAS las encuestas')+
@@ -883,7 +885,7 @@ function ybRenderAgotados(lista){
         {k:'del',t:'Delegado',tipo:'txt',celda:function(f,th){return'<td data-th="'+esc(th)+'" class="txt">'+esc(f.del)+'</td>'}},
         {k:'fecha',t:'Fecha',tipo:'txt',celda:function(f,th){return'<td data-th="'+esc(th)+'">'+ybFechaTxt(f.fecha)+'</td>'}},
         {k:'n',t:'Agotados',celda:function(f,th){return'<td data-th="'+esc(th)+'" class="yb-rojo"><b>'+FMT.format(f.n)+'</b></td>'}},
-        {k:'pct',t:'Disponib.',celda:function(f,th){return'<td data-th="'+esc(th)+'"><span style="color:'+ybColorTxt(f.pct)+'">'+ybPctTxt(f.pct)+'</span></td>'}},
+        {k:'pct',t:'Disponib.',celda:function(f,th){return'<td data-th="'+esc(th)+'"><span style="color:'+ybTxtPs(f.pct)+'">'+ybPctTxt(f.pct)+'</span></td>'}},
         {k:'lista',t:'Productos agotados',tipo:'txt',v:function(f){return f.lista.length},celda:function(f){
           var ps=f.lista.slice(0,8).map(function(p){return'<span class="yb-pill" title="'+esc(p.grupo)+'">'+esc(p.nombre)+'</span>'}).join('');
           if(f.lista.length>8)ps+='<span class="yb-pill yb-pill-mas">+'+(f.lista.length-8)+'</span>';
@@ -1010,7 +1012,7 @@ function ybRenderDetalle(lista){
       {k:'l',t:'Lineal',celda:function(f,th){return'<td data-th="'+esc(th)+'">'+ybCeldaPuntaje(f.l,P[2].max)+'</td>'}},
       {k:'p',t:'Vis. perm.',celda:function(f,th){return'<td data-th="'+esc(th)+'">'+ybCeldaPuntaje(f.p,P[3].max)+'</td>'}},
       {k:'t',t:'Vis. campaña',celda:function(f,th){return'<td data-th="'+esc(th)+'">'+ybCeldaPuntaje(f.t,P[4].max)+'</td>'}},
-      {k:'disp',t:'% Stock',celda:function(f,th){return'<td data-th="'+esc(th)+'"><span style="color:'+ybColorTxt(f.disp)+'">'+ybPctTxt(f.disp)+'</span></td>'}},
+      {k:'disp',t:'% Stock',celda:function(f,th){return'<td data-th="'+esc(th)+'"><span style="color:'+ybTxtPs(f.disp)+'">'+ybPctTxt(f.disp)+'</span></td>'}},
       {k:'ag',t:'Agotados',celda:function(f,th){return'<td data-th="'+esc(th)+'"'+(f.ag?' class="yb-rojo"':'')+'>'+FMT.format(f.ag)+'</td>'}},
       {k:'tag',t:'Testers agot.',v:function(f){return f.tsin?999:f.tag},celda:function(f,th){
         return'<td data-th="'+esc(th)+'"'+(f.tag||f.tsin?' class="yb-rojo"':'')+'>'+(f.tsin?'Sin testers':FMT.format(f.tag))+'</td>'}},
@@ -1068,7 +1070,7 @@ function ybRenderTesters(lista){
       '<div class="det">PDV × tester con respuesta "NO"</div></div>'+
     '<div class="bloque"><div class="etq">PDV con testers agotados</div><div class="num">'+FMT.format(pdvAg)+'</div>'+
       '<div class="det">de '+FMT.format(base.length)+' '+(ybAlcance==='ultima'?'PDV evaluados':'encuestas')+'</div></div>'+
-    '<div class="bloque"><div class="etq">Disponibilidad de testers</div><div class="num" style="color:'+ybColorTxt(pct)+'">'+ybPctTxt(pct)+'</div>'+
+    '<div class="bloque"><div class="etq">Disponibilidad de testers</div><div class="num" style="color:'+ybTxtPs(pct)+'">'+ybPctTxt(pct)+'</div>'+
       '<div class="det">'+FMT.format(si)+' de '+FMT.format(si+no)+' testers presentes</div></div>'+
     '<div class="bloque"><div class="etq">PDV sin testers</div><div class="num">'+FMT.format(pdvSin)+'</div>'+
       '<div class="det">respondieron "No" en Testers</div></div>';
@@ -1085,7 +1087,7 @@ function ybRenderTesters(lista){
       {k:'tiene',t:'¿Tiene testers?',tipo:'txt',celda:function(f,th){return'<td data-th="'+esc(th)+'"'+(f.sin?' class="yb-rojo"':'')+'>'+esc(f.tiene)+'</td>'}},
       {k:'n',t:'Testers agotados',v:function(f){return f.sin?999:f.n},celda:function(f,th){
         return'<td data-th="'+esc(th)+'" class="yb-rojo"><b>'+(f.sin?'Sin testers':FMT.format(f.n))+'</b></td>'}},
-      {k:'pct',t:'Disponib.',celda:function(f,th){return'<td data-th="'+esc(th)+'"><span style="color:'+ybColorTxt(f.pct)+'">'+ybPctTxt(f.pct)+'</span></td>'}},
+      {k:'pct',t:'Disponib.',celda:function(f,th){return'<td data-th="'+esc(th)+'"><span style="color:'+ybTxtPs(f.pct)+'">'+ybPctTxt(f.pct)+'</span></td>'}},
       {k:'lista',t:'Testers agotados (lista)',tipo:'txt',v:function(f){return f.lista.length},celda:function(f){
         var ps=f.lista.slice(0,8).map(function(x){return'<span class="yb-pill">'+esc(x.nombre)+'</span>'}).join('');
         if(f.lista.length>8)ps+='<span class="yb-pill yb-pill-mas">+'+(f.lista.length-8)+'</span>';
@@ -1160,7 +1162,7 @@ function ybRenderFotos(lista){
         '<div class="yb-foto-pdv">'+esc(t.nombre)+'</div>'+
         '<div class="yb-foto-dir">'+esc(t.dir||t.ciudad)+'</div>'+
         '<div class="yb-foto-tit">'+esc(ybTituloFoto(f))+'</div>'+
-        '<div class="yb-foto-fecha">'+ybFechaTxt(m.fecha)+(m.s[0]!=null?' · Global <b style="color:'+ybColorTxt(m.s[0]/YB_PILARES[0].max)+'">'+ybNum(m.s[0])+'</b>':'')+'</div>'+
+        '<div class="yb-foto-fecha">'+ybFechaTxt(m.fecha)+(m.s[0]!=null?' · Global <b style="color:'+ybTxtPs(m.s[0]/YB_PILARES[0].max)+'">'+ybNum(m.s[0])+'</b>':'')+'</div>'+
       '</div></div>'});
   h+='</div>';
   if(items.length>ybFotosMostrar)h+='<div class="yb-mas"><button class="btn" onclick="ybFotosMostrar+=YB_PAGINA;ybRender()">Ver más ('+
@@ -1220,7 +1222,7 @@ function ybResumenPilares(m,ref){
   return'<div class="yb-mini-pilares">'+YB_PILARES.map(function(p,i){var v=m.s[i];
     var d=(ref&&ref!==m&&v!=null&&ref.s[i]!=null)?v-ref.s[i]:null;
     return'<span class="yb-mini'+(i===0?' g':'')+'" title="'+esc(p.etiqueta)+' (máx. '+p.max+')">'+esc(YB_CORTO[p.k]||p.etiqueta)+
-      ' <b style="color:'+(v==null?'var(--muted)':ybColorTxt(v/p.max))+'">'+ybNum(v)+'</b>'+
+      ' <b style="color:'+(v==null?'var(--muted)':ybTxtPs(v/p.max))+'">'+ybNum(v)+'</b>'+
       (d!=null&&Math.abs(d)>=.05?'<em class="'+(d>0?'sube':'baja')+'">'+(d>0?'▲ +':'▼ ')+ybNum(d)+'</em>':'')+'</span>'}).join('')+'</div>'}
 
 function ybPintarModal(){
@@ -1267,7 +1269,7 @@ function ybPintarModal(){
       return'<button type="button" class="yb-hito'+cls+'" onclick="ybModalHito(\'despues\','+ix+')" '+
         'oncontextmenu="event.preventDefault();ybModalHito(\'antes\','+ix+')" '+
         'title="Clic: poner en Después · clic derecho: poner en Antes">'+(f?ybImg(f.url):'')+
-        '<span>'+ybFechaTxt(m.fecha)+'</span>'+(m.s[0]!=null?'<b style="color:'+ybColorTxt(m.s[0]/YB_PILARES[0].max)+'">'+ybNum(m.s[0])+'</b>':'')+'</button>'}).join('')+'</div>'+
+        '<span>'+ybFechaTxt(m.fecha)+'</span>'+(m.s[0]!=null?'<b style="color:'+ybTxtPs(m.s[0]/YB_PILARES[0].max)+'">'+ybNum(m.s[0])+'</b>':'')+'</button>'}).join('')+'</div>'+
     '<div class="hint">Línea de tiempo de la más antigua a la más reciente · clic = Después · clic derecho = Antes</div>';
   ybAbrirModal(h2)}
 

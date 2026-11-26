@@ -121,6 +121,8 @@ Después de cada corrida, ejecuta `limpiarCache()` en el editor de Apps Script p
 | `OBLIGATORIOS` | Campos sin los cuales la fila se descarta (`fecha`, `pos_id`, `amount`). |
 | `FILTROS` | Solo pasan las filas con esos valores. Hoy: `Affiliate = Colombia`, porque la hoja también trae Panamá, en USD. |
 | `DIMENSION_PRODUCTOS` | Cruza el EAN con la hoja `DIM Productos` para completar la **BU** (`SUB FAMILIA`: DERMA, FOTO, ISDINCEUTICS, PLAT. WATER, OTRO). Solo rellena campos que la venta trae vacíos. |
+| `DIM_BU_DC` | **BU DC** (desde el 2026-11-26): pestaña `Hoja2` del mismo `Dim_productos.xlsx`, para el filtro "BU DC" de Sell Out PDV. No cambia la BU; un EAN que no esté en Hoja2 toma su BU. |
+| `DIM_ISDIN_CORE` | **BU oficial de Isdin Core** (desde el 2026-11-23): pestaña `DIM_Isdin_Core` de `ISDIN/DATABASE/DIM/Dim_productos.xlsx` (`SUB FAMILIA` por `ISDIN EAN`, encabezados en la fila 2). Manda sobre la BU de la venta y de `DIM Productos` en Sell Out PDV, el inventario y el mapa; un EAN que no esté ahí conserva la suya. |
 | `N_FRAGMENTOS` / `N_FRAGMENTOS_SKU` | En cuántos archivos se reparten el detalle por PDV (16) y el índice por producto (8). |
 
 ### Normalización
@@ -164,7 +166,7 @@ Un único proyecto de Apps Script (gestionado con [`clasp`](https://github.com/g
 
 El cruce PDV ↔ ventas se hace por `POS_ID` = `Nº Oficina Farmacia`, con la misma normalización que usa el ETL.
 
-**Pestañas del visor:** **Ventas** (la que abre por defecto), con tres subpestañas: **Sell Out PDV** (réplica del Power BI de sell-out, ETL paso 3, con el inventario de los Consolidados por semestre), **SI vs SO** y **Ventas MTD**; **Mapa** (lo que describe el resto de esta sección); **Perfect Store** (Yoobic); y **Ventas Backup**, la pestaña Ventas anterior (resumen del mes arriba y crecimiento por cliente, BU, producto o punto de venta abajo; ver [Pestaña Ventas: el resumen del mes, dato por dato](#pestaña-ventas-el-resumen-del-mes-dato-por-dato)). En las gráficas de Ventas, el botón **ⓘ** junto al título explica qué muestra cada una.
+**Pestañas del visor:** **Ventas** (la que abre por defecto), con cuatro subpestañas: **Sell Out PDV** (réplica del Power BI de sell-out, ETL paso 3, con el inventario de los Consolidados por semestre), **SI vs SO**, **Ventas MTD** y **Digital** (réplica del Looker "Ventas Digital": Sell Out de tienda contra digital, subcanales, comparación YTD por cliente › BU › EAN y cumplimiento del budget digital; fuente: libro MAESTRA LOOKER, hojas MAESTRA y BUDGET YTG); **Mapa** (lo que describe el resto de esta sección) y **Perfect Store** (Yoobic). La antigua pestaña **Ventas Backup** se retiró el 2026-11-19. En las gráficas de Ventas, el botón **ⓘ** junto al título explica qué muestra cada una.
 
 ### Qué muestra
 

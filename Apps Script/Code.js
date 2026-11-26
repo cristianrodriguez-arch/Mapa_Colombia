@@ -144,7 +144,7 @@ function limpiarCache() {
   var cache = CacheService.getScriptCache(), lista = [];
   try { lista = JSON.parse(cache.get(CLAVE_REGISTRO_DRIVE) || '[]'); } catch (e) { lista = []; }
   ['so_pdv.json', 'so_portafolio.json', 'so_indice.json', 'so_sku_indice.json', 'so_manifiesto.json',
-   's3_cubo.json', 's3_inv.json', 's3_inv_pdv.json']
+   's3_cubo.json', 's3_inv.json', 's3_inv_pdv.json', 's3_inv_pe_ult.json']
     .forEach(function(n) { if (lista.indexOf(n) === -1) lista.push(n); });
   lista.forEach(mtdCacheQuitar_);
   cache.remove(CLAVE_REGISTRO_DRIVE);
@@ -337,7 +337,26 @@ function getDistribucionSkuJson(sku) {
  */
 
 /** Catálogos + cliente×producto×mes + PDV×mes (~3 MB). */
+/**
+ * ¿El ETL dejó un s3_cubo.json nuevo en Drive? (2026-11-23) Compara la fecha de modificación del archivo con
+ * la que se anotó al cachearlo. Antes, tras correr el ETL el visor seguía mostrando el cubo viejo hasta 6 h
+ * (o hasta pulsar «Actualizar»): p. ej. la BU nueva de DIM_Isdin_Core no aparecía al recargar la página.
+ * Cuesta una consulta de metadatos de Drive por apertura.
+ */
+var CLAVE_CUBO_FECHA = 's3_cubo_fecha';
+function cuboCambioEnDrive_() {
+  try {
+    var it = carpetaJson_().getFilesByName('s3_cubo.json');
+    if (!it.hasNext()) return false;
+    var t = String(it.next().getLastUpdated().getTime()), cache = CacheService.getScriptCache();
+    var antes = cache.get(CLAVE_CUBO_FECHA);
+    cache.put(CLAVE_CUBO_FECHA, t, CACHE_SEGUNDOS);
+    return antes !== t;   // sin fecha anotada (caché vencida) también se relee: es barato y seguro
+  } catch (e) { return false; }
+}
+
 function getVentas3Json(forzar) {
+  if (forzar !== true && cuboCambioEnDrive_()) forzar = true;
   if (forzar === true) {
     // "Actualizar": fuera el cubo y también los fragmentos s3_* cacheados (si no, tras
     // correr el ETL el detalle por PDV seguiría saliendo de la corrida anterior).
@@ -416,6 +435,46 @@ function getVentas3DetalleJson(reqJson) {
     });
   }
   return JSON.stringify({ generado: generado || req.generado, ps: ps });
+}
+
+/**
+ * Inventario PDV × EAN × mes SOLO de los PDV pedidos (2026-11-18): columna Inv. de
+ * "Crecimiento por EAN" con filtro de punto de venta. `reqJson` = {pdv:[índices del cubo],
+ * npdv, cubo: generado del cubo}. Lee s3_inv_pe_NN (índice % npdv) y devuelve
+ * {meses, filas:[[iPdv, ean, iMesInv, und, imp]]}, o {error} si el inventario se armó con
+ * otro cubo (los índices de PDV no coincidirían).
+ */
+/** Última foto de inventario de cada año, PDV × producto (s3_inv_pe_ult.json, 2026-11-23): el navegador
+ *  la baja una vez (y la guarda en IndexedDB por corte del cubo) y resuelve cualquier filtro sin volver aquí. */
+function getInventarioPdvEanUltJson(forzar) {
+  if (forzar === true) mtdCacheQuitar_('s3_inv_pe_ult.json');
+  try { return leerArchivoDrive_('s3_inv_pe_ult.json'); }
+  catch (e) { return JSON.stringify({ error: 'Falta s3_inv_pe_ult.json: corre /actualizar-sellout inv.' }); }
+}
+
+function getInventarioPdvEanJson(reqJson) {
+  var req = JSON.parse(reqJson || '{}');
+  var n = Number(req.npdv) || 32, porFrag = {};
+  (req.pdv || []).map(Number).filter(function(i) { return i >= 0; })
+    .forEach(function(i) { (porFrag[i % n] = porFrag[i % n] || []).push(i); });
+  var filas = [], meses = null;
+  for (var f in porFrag) {
+    var nombre = nombreFrag_('s3_inv_pe_', parseInt(f, 10)), datos;
+    try { datos = JSON.parse(leerArchivoDrive_(nombre)); }
+    catch (e) { return JSON.stringify({ error: 'Falta ' + nombre + ': corre /actualizar-sellout inv.' }); }
+    if (req.cubo && datos.cubo !== req.cubo) {   // copia vieja en la caché: se relee de Drive
+      mtdCacheQuitar_(nombre);
+      datos = JSON.parse(leerArchivoDrive_(nombre));
+    }
+    if (req.cubo && datos.cubo !== req.cubo) {
+      return JSON.stringify({ error: 'El inventario por producto se armó con otro corte del Sell Out: corre /actualizar-sellout inv.' });
+    }
+    meses = datos.meses;
+    porFrag[f].forEach(function(i) {
+      (datos.filas[String(i)] || []).forEach(function(t) { filas.push([i, datos.eans[t[0]], t[1], t[2], t[3]]); });
+    });
+  }
+  return JSON.stringify({ meses: meses || [], filas: filas });
 }
 
 /* ---------- Ventas 3.0 · Sell-in + plan (piloto, 2026-10-10) ----------
@@ -1941,6 +2000,157 @@ function verSIvsSO() {
   Logger.log('Primera fila: ' + JSON.stringify(d.filas[0]));
 }
 
+/** Correo del usuario que abre el visor (riel: iniciales y nombre). Solo lo ve el propio usuario. */
+function getUsuarioJson() {
+  var email = '';
+  try { email = Session.getActiveUser().getEmail() || ''; } catch (e) { email = ''; }
+  return JSON.stringify({ email: email });
+}
+
+/* ============================================================
+ * VENTAS DIGITAL — subpestaña "Digital" de Ventas (2026-11-19)
+ * ============================================================
+ * Fuente: libro "MAESTRA LOOKER" (SPREADSHEET_ID_DIG), el mismo del Looker Studio de Ventas Digital:
+ *   'MAESTRA'     una fila por Fecha (mes) × Sold To ID × EAN × Canal × Sub_Canal × Affiliate, con
+ *                 Units y Amount. Canal = DIGITAL (venta digital) o TIENDA (venta en el punto de venta).
+ *                 Es la hoja BD_DASHBOARD de "Sell Out Digital Consolidado.xlsx" (2025 y 2026; se
+ *                 verificó el 2026-11-19: SO DIG ene–sep 2026 = 21.307 M, como el Looker).
+ *   'BUDGET YTG'  Fecha (mes) × Sold To ID × Origin × Amount: el objetivo digital de los meses que
+ *                 faltan del año (oct–dic). BUDGET FY DIG = SO DIG YTD + BUDGET YTG (cuadra con el Looker).
+ * Devuelve un cubo compacto: f = [[iCli, iSku, iMes, iCanal, iAff, und, imp]] y b = [[iCli, 'AAAA-MM', imp]].
+ * Todo el cruce (filtros, meses, árbol cliente › BU › EAN) ocurre en el navegador (JsDigital.html).
+ * Caché 'digital_v1' 30 min; "Actualizar" en la pestaña pasa forzar=true.
+ */
+var SPREADSHEET_ID_DIG = '1w00MD-SFsamZ8hYBFuWAdJxe4lR-AmiVgTeUZv0a55M';
+var HOJA_DIG_MAESTRA   = 'MAESTRA';
+var HOJA_DIG_BUDGET    = 'BUDGET YTG';
+var CACHE_DIG_CLAVE    = 'digital_v1';
+var CACHE_DIG_SEGUNDOS = 1800;   // 30 min
+
+function getDigitalJson(forzar) {
+  return conCache_(CACHE_DIG_CLAVE, CACHE_DIG_SEGUNDOS, function() {
+    var d = digConstruir_(SpreadsheetApp.openById(SPREADSHEET_ID_DIG));
+    return { texto: jsonAscii_(d), cachear: d.f.length > 0 };
+  }, forzar === true);
+}
+
+function limpiarCacheDigital() {
+  mtdCacheQuitar_(CACHE_DIG_CLAVE);
+  Logger.log('Caché de Ventas Digital limpiada.');
+  return 'OK';
+}
+
+/** EAN como texto de dígitos (la hoja lo trae como número o como "8.429.420.070.875"). */
+function digEan_(v) {
+  if (typeof v === 'number') return isFinite(v) ? String(Math.round(v)) : '';
+  var s = String(v == null ? '' : v).trim();
+  return /^[\d.\s]+$/.test(s) ? s.replace(/\D/g, '') : s.toUpperCase();
+}
+
+/** 'AAAA-MM' de una fila: la columna Fecha (fecha, serial o d/mm/aaaa) o, si no, Fecha (año) + índice de mes. */
+function digMes_(row, col, tz) {
+  var f = col.fecha !== null ? mtdFecha_(row[col.fecha], tz) : null;
+  if (!f && col.anio !== null && col.mesI !== null) {
+    var a = parseInt(row[col.anio], 10), m = parseInt(row[col.mesI], 10);
+    if (a > 2000 && m >= 1 && m <= 12) f = { anio: a, mes: m };
+  }
+  if (!f || f.anio < 2000 || f.mes < 1 || f.mes > 12) return null;
+  return f.anio + '-' + (f.mes < 10 ? '0' : '') + f.mes;
+}
+
+/** Arma el cubo de Ventas Digital a partir del libro (separado para poder probarlo con una hoja falsa). */
+function digConstruir_(libro) {
+  var tz = libro.getSpreadsheetTimeZone ? libro.getSpreadsheetTimeZone() : 'America/Bogota';
+  var B = mtdLeerBloque_(mtdHoja_(libro, HOJA_DIG_MAESTRA, true), function(h) {
+    return {
+      fecha:  mtdColEx_(h, ['fecha'], null),
+      anio:   mtdColEx_(h, ['fecha (ano)'], null),
+      mesI:   mtdColEx_(h, ['fecha (indice de meses)'], [[['indice de meses'], []]]),
+      cliId:  mtdColEx_(h, ['sold to id'], [[['sold to'], []]]),
+      cli:    mtdColEx_(h, ['origin', 'cliente'], null),
+      ean:    mtdColEx_(h, ['ean_isdin', 'ean'], [[['ean'], ['desc']]]),
+      desc:   mtdColEx_(h, ['ean_description'], [[['ean', 'desc'], []]]),
+      bu:     mtdColEx_(h, ['bu'], null),
+      marca:  mtdColEx_(h, ['brand', 'marca'], null),
+      canal:  mtdColEx_(h, ['canal'], null),
+      sub:    mtdColEx_(h, ['sub_canal', 'sub canal', 'subcanal'], [[['sub', 'canal'], []]]),
+      aff:    mtdColEx_(h, ['affiliate'], null),
+      und:    mtdColEx_(h, ['units', 'unidades'], null),
+      imp:    mtdColEx_(h, ['amount', 'importe'], null)
+    };
+  });
+  var col = B.col;
+  mtdExigir_(col, ['cli', 'ean', 'canal', 'und', 'imp'], HOJA_DIG_MAESTRA, B.headersRaw);
+  if (col.fecha === null && (col.anio === null || col.mesI === null)) {
+    throw new Error("En la hoja '" + HOJA_DIG_MAESTRA + "' no encontré la columna Fecha.");
+  }
+
+  var cli = [], iCli = {}, sku = [], iSku = {}, cc = [], iCc = {}, aff = [], iAff = {}, mesesSet = {};
+  var acc = {}, filas = 0, sinFecha = 0;
+  function idx(lista, mapa, clave, valor) {
+    if (mapa[clave] === undefined) { mapa[clave] = lista.length; lista.push(valor); }
+    return mapa[clave];
+  }
+  function claveCli(id, nombre) { return id ? String(id).replace(/\.0+$/, '') : 'N:' + mtdNorm_(nombre).toUpperCase(); }
+  B.data.forEach(function(r) {
+    var nombre = mtdTexto_(r, col.cli), id = mtdTexto_(r, col.cliId), ean = digEan_(r[col.ean]);
+    if (!nombre && !id) return;
+    var am = digMes_(r, col, tz);
+    if (!am) { sinFecha++; return; }
+    var kc = claveCli(id, nombre);
+    var ic = idx(cli, iCli, kc, [kc, nombre || kc]);
+    var desc = mtdTexto_(r, col.desc), ks = ean || ('SIN EAN · ' + desc);
+    var is = idx(sku, iSku, ks, [ean, desc || ks, mtdTexto_(r, col.bu) || 'SIN BU', mtdTexto_(r, col.marca) || 'SIN MARCA']);
+    var canal = mtdTexto_(r, col.canal).toUpperCase() || 'TIENDA', sub = mtdTexto_(r, col.sub).toUpperCase() || canal;
+    var ik = idx(cc, iCc, canal + '|' + sub, [canal, sub]);
+    var af = mtdTexto_(r, col.aff) || 'Colombia', ia = idx(aff, iAff, af, af);
+    mesesSet[am] = 1;
+    var k = ic + '|' + is + '|' + am + '|' + ik + '|' + ia, a = acc[k] || (acc[k] = [ic, is, am, ik, ia, 0, 0]);
+    a[5] += mtdNum_(r, col.und);
+    a[6] += mtdNum_(r, col.imp);
+    filas++;
+  });
+  var meses = Object.keys(mesesSet).sort(), iMes = {};
+  meses.forEach(function(m, i) { iMes[m] = i; });
+  var f = Object.keys(acc).map(function(k) {
+    var a = acc[k];
+    return [a[0], a[1], iMes[a[2]], a[3], a[4], Math.round(a[5] * 100) / 100, Math.round(a[6])];
+  });
+
+  // Budget YTG (opcional: si la hoja no está, la tabla Performance lo avisa).
+  var b = [], budgetMeta = { hoja: HOJA_DIG_BUDGET, filas: 0 };
+  var hb = libro.getSheetByName(HOJA_DIG_BUDGET);
+  if (hb) {
+    var BB = mtdLeerBloque_(hb, function(h) {
+      return { fecha: mtdColEx_(h, ['fecha'], null), cliId: mtdColEx_(h, ['sold to id'], [[['sold to'], []]]),
+               cli: mtdColEx_(h, ['origin', 'cliente'], null), imp: mtdColEx_(h, ['amount', 'budget', 'importe'], null),
+               anio: null, mesI: null };
+    });
+    mtdExigir_(BB.col, ['fecha', 'imp'], HOJA_DIG_BUDGET, BB.headersRaw);
+    var accB = {};
+    BB.data.forEach(function(r) {
+      var nombre = mtdTexto_(r, BB.col.cli), id = mtdTexto_(r, BB.col.cliId), am = digMes_(r, BB.col, tz);
+      if ((!nombre && !id) || !am) return;
+      var kc = claveCli(id, nombre), ic = idx(cli, iCli, kc, [kc, nombre || kc]), k = ic + '|' + am;
+      accB[k] = (accB[k] || 0) + mtdNum_(r, BB.col.imp);
+      budgetMeta.filas++;
+    });
+    b = Object.keys(accB).map(function(k) { var p = k.split('|'); return [Number(p[0]), p[1], Math.round(accB[k])]; });
+  } else {
+    budgetMeta.error = "No encontré la hoja '" + HOJA_DIG_BUDGET + "'";
+  }
+  return { v: 1, meses: meses, clientes: cli, skus: sku, canales: cc, affiliates: aff, f: f, b: b,
+           meta: { actualizadoEn: new Date().toISOString(), archivo: SPREADSHEET_ID_DIG, hoja: HOJA_DIG_MAESTRA,
+                   filasLeidas: filas, sinFecha: sinFecha, budget: budgetMeta } };
+}
+
+/** Diagnóstico manual desde el editor. */
+function verDigital() {
+  var d = JSON.parse(getDigitalJson(true));
+  Logger.log('Filas agregadas: ' + d.f.length + ' · meses: ' + d.meses.join(',') + ' · clientes: ' + d.clientes.length +
+             ' · canales: ' + JSON.stringify(d.canales) + ' · budget: ' + JSON.stringify(d.meta.budget));
+}
+
 /* ============================================================
  * YOOBIC — Perfect Store (pestaña "Yoobic" + capas del mapa)
  * ============================================================
@@ -2371,6 +2581,7 @@ function calentarCache() {
     ['Ventas MTD', function() { return getVentasMtdCompletoJson(true); }],
     ['SI vs SO',   function() { return getSIvsSOJson(true); }],
     ['Ventas 3.0 sell-in', function() { return getVentas3SiJson(true); }],
+    ['Ventas Digital', function() { return getDigitalJson(true); }],
     ['Yoobic',     function() { return getYoobicJson(true); }],
     // Las del mapa duran 6 h: solo se llenan si faltan (no se fuerzan cada 15 min).
     ['Puntos',        function() { return getPuntosJson(false); }],

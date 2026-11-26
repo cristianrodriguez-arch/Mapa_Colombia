@@ -107,12 +107,14 @@ t('BU + canal usa PDV × BU (pb) y la tabla de EAN con canal usa el detalle PDV 
   const por = {}; M.filas.forEach(f => { por[f.nombre] = f.ac; });
   assert.deepStrictEqual(por, { 'PROD A': 33, 'PROD B': 20 });
 });
-t('clic en una fila filtra y la tabla de su dimensión la resalta (no desaparecen las demás)', () => {
+t('clic en una fila filtra y la tabla de su dimensión muestra SOLO lo filtrado (2026-11-23)', () => {
   const c = nuevo(); c.soAlternar('cli', 1);
   assert.strictEqual(tot(c).ac, 45);
   const M = c.soFilasDim('cli', c.soSel());
-  assert.strictEqual(M.filas.length, 2);
-  assert.strictEqual(M.filas.filter(f => f.sel).length, 1);
+  assert.deepStrictEqual(plano(M.filas.map(f => f.key)), [1]);
+  c.soSetFiltro('sku', ['0']);
+  assert.deepStrictEqual(plano(c.soFilasDim('sku', c.soSel()).filas.map(f => f.key)), [0], 'filtro de EAN: solo ese producto');
+  c.soSetFiltro('sku', []);
   assert.strictEqual(M.tot.ac, 45);                                          // el total es el de lo elegido
   c.soAlternar('cli', 1); assert.strictEqual(tot(c).ac, 98);
 });
@@ -212,6 +214,56 @@ t('Filtro Canal (canal comercial del cliente, de Ventas MTD): Cadenas / Tiendas 
   assert.strictEqual(tot(c).ac, 45);
   const g = c.soAgregar('cli').g;
   assert.ok(!g[0] && g[1], 'Top Clientes solo muestra Medipiel');
+});
+
+t('Filtro de PDV: Puntos de Venta muestra solo los filtrados y Crecimiento por EAN trae el inventario por producto', () => {
+  const c = cargar(); c.soRecibir(JSON.parse(JSON.stringify(CUBO))); c.soE.unidad = '#'; c.soE.anio = 2026; c.soE.meses = []; c.soE.trim = [];
+  c.soSetFiltro('pdv', ['1']);
+  const M = c.soFilasDim('pdv', c.soSel());
+  assert.deepStrictEqual(plano(M.filas.map(f => f.key)), [1], 'solo el PDV filtrado');
+  c.soInvPeEstado(c.soSel());   // pide el fragmento (en la demo llega al instante)
+  const ie = c.soInvPeEstado(c.soSel());
+  assert.strictEqual(ie.est, 'ok', 'inventario PDV x EAN listo (demo)');
+  const g = c.soInvPorPe(ie, 'sku');
+  assert.deepStrictEqual(Object.keys(g), ['1'], 'el PDV 2 solo tiene el producto B');
+  assert.strictEqual(g[1], 13, 'foto de mar-2026: 10 und x 1,3');
+  c.soSetFiltro('pdv', ['0', '1']);
+  c.soInvPeEstado(c.soSel());
+  assert.strictEqual(c.soInvPorPe(c.soInvPeEstado(c.soSel()), 'tot').T, 9 + 13, 'KPI: suma de los dos PDV');
+});
+
+t('Filtros activos: con mas de 5 valores elegidos queda un solo chip con el conteo', () => {
+  const c = cargar(); c.soRecibir(JSON.parse(JSON.stringify(CUBO)));
+  let items = null; c.mtdPintarChips = (id, it) => { items = it; };
+  c.soSetFiltro('pdv', ['0', '1', '2', '3', '4', '5']); c.soPintarChips();
+  assert.deepStrictEqual(plano(items.map(i => i.etq)), ['PDV: 6 filtrados']);
+  c.soSetFiltro('pdv', ['0', '1']); c.soPintarChips();
+  assert.strictEqual(items.length, 2);
+});
+
+t('Días de cobertura = inventario ÷ (Sell Out promedio de 3 meses ÷ 30); sin venta, sin dato', () => {
+  const c = nuevo();
+  const serie = new Float64Array(c.soD.meses.length); serie[3] = 30; serie[4] = 30; serie[5] = 30;   // ene–mar 2026
+  assert.strictEqual(Math.round(c.soCobertura(60, serie, 5)), 60, '60 und con 30 und/mes = 60 días');
+  assert.strictEqual(c.soCobertura(60, new Float64Array(c.soD.meses.length), 5), null);
+  assert.strictEqual(c.soCobertura(null, serie, 5), null);
+});
+t('Inventario PDV × producto sale de la última foto guardada, sin tope de PDV', () => {
+  const c = nuevo(); c.soSetFiltro('cli', ['0']); c.soSetFiltro('sku', ['1']);
+  c.soInvPeEstado(c.soSel());
+  const ie = c.soInvPeEstado(c.soSel());
+  assert.strictEqual(ie.est, 'ok');
+  assert.strictEqual(c.soInvPorPe(ie, 'tot').T, 13, 'PDV 2 · producto B en mar-2026 (10 × 1,3)');
+});
+
+t('Filtro BU DC (Hoja2 de Dim_productos): filtra productos sin cambiar la BU', () => {
+  const c = nuevo();
+  assert.strictEqual(c.soD.skus[0].budc, c.soD.skus[0].bu, 'sin BU DC en el cubo = la BU');
+  c.soD.skus[1].budc = 'OTRO';
+  assert.deepStrictEqual(plano(c.soOpciones('budc').map(o => o.valor)), [c.soD.skus[0].budc, 'OTRO'].sort());
+  c.soSetFiltro('budc', ['OTRO']);
+  assert.deepStrictEqual(plano(c.soFilasDim('sku', c.soSel()).filas.map(f => f.key)), [1], 'solo el producto de esa BU DC');
+  assert.strictEqual(c.soD.skus[1].bu, 'DERMA', 'la BU no cambia');
 });
 
 console.log('\n' + ok + ' pruebas OK' + (process.exitCode ? ' · HAY FALLAS' : ''));

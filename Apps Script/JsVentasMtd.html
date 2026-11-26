@@ -264,12 +264,12 @@ function mtdCsvProductos(){
    Convive con verVista() de JsPaneles, que conmuta las pestañas internas del
    rail (Tabla/Análisis/Brick): son niveles distintos y no se pisan. */
 var mtdVistaActiva='so';   // 'ventas3' = "Ventas Backup" (la pestaña Ventas anterior, antes "Ventas 3.0")
-var SIVSO_VISTAS=['ventas3','so','mapa','ventasmtd','sivso','yoobic'];
-var VISTA_SUFIJO={ventas3:'Ventas3',so:'SO',mapa:'Mapa',ventasmtd:'VentasMtd',sivso:'SIvsSO',yoobic:'Yoobic'};   // #vista<X> / #btnVista<X>
+var SIVSO_VISTAS=['ventas3','so','mapa','ventasmtd','sivso','yoobic','dig'];
+var VISTA_SUFIJO={ventas3:'Ventas3',so:'SO',mapa:'Mapa',ventasmtd:'VentasMtd',sivso:'SIvsSO',yoobic:'Yoobic',dig:'Digital'};   // #vista<X> / #btnVista<X>
 // Pestaña "Ventas" (2026-10-29): agrupa Sell Out, SI vs SO y Ventas MTD como subpestañas
 // (#ventasSubtabs en la cabecera). El riel la marca activa en cualquiera de las tres y,
 // al volver a ella, abre la última subpestaña usada (localStorage visor.ventasSub).
-var VENTAS_SUB=['so','sivso','ventasmtd'];
+var VENTAS_SUB=['so','sivso','ventasmtd','dig'];
 function ventasSubActual(){
   var v=null;try{v=localStorage.getItem('visor.ventasSub')}catch(e){}
   return VENTAS_SUB.indexOf(v)!==-1?v:'so'}
@@ -311,7 +311,9 @@ function mostrarVistaSuperior(v){
   if(v==='ventas3'&&typeof vt3AlEntrar==='function')vt3AlEntrar();
   if(v==='sivso'&&typeof sivsoAlEntrar==='function')sivsoAlEntrar();
   if(v==='yoobic'&&typeof ybAlEntrar==='function')ybAlEntrar();
-  if(v==='so'&&typeof soAlEntrar==='function')soAlEntrar()}
+  if(v==='so'&&typeof soAlEntrar==='function')soAlEntrar();
+  if(v==='dig'&&typeof dgAlEntrar==='function')dgAlEntrar();
+  if(typeof railMarcar==='function')railMarcar(v)}
 
 /* ── Carga: UNA llamada para toda la pestaña ── */
 function cargarVentasMtd(forzar){

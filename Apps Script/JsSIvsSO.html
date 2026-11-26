@@ -508,7 +508,6 @@ function sivsoRenderKpi(filas,anioAnt,anio,corte){
   filas.forEach(function(f){si+=sivsoSi(f);so+=sivsoSo(f)});
   anioAnt.forEach(function(f){siAnt+=sivsoSi(f);soAnt+=sivsoSo(f)});
   var dSi=mtdDeltaV(si,siAnt),dSo=mtdDeltaV(so,soAnt);
-  var ratio=si>0?so/si:null;
   var etq=sivsoEtqCorte(anio-1,corte);
   function det(d){return d==null?'Sin base en '+etq:
     '<span class="'+(d>=0?'sivso-pos">+':'sivso-neg">')+mtdPctTxt(d)+'</span> vs '+etq}
@@ -517,19 +516,72 @@ function sivsoRenderKpi(filas,anioAnt,anio,corte){
   document.getElementById('sivsoKpiSiDet').innerHTML=det(dSi);
   document.getElementById('sivsoKpiSo').innerText=sivsoFmt(so);
   document.getElementById('sivsoKpiSoDet').innerHTML=det(dSo);
-  document.getElementById('sivsoKpiRatio').innerText=ratio==null?'–':mtdPctEntero(ratio);
-  document.getElementById('sivsoKpiRatioDet').innerText='Sell Out ÷ Sell In · '+sivsoEtqCorte(anio,corte);
-  // Debajo: Sell In contra Sell Out de este año y del anterior (mismos meses), en barras
-  // con una sola escala, y la relación SO/SI de cada año al final de la fila.
-  var comp=document.getElementById('sivsoKpiComp');if(!comp)return;
-  var mx=Math.max(si,so,siAnt,soAnt)||1;
-  function barra(v,cls,etq){var w=Math.max(0,v)/mx*100;
-    return'<div class="kc-b"><i class="'+cls+'" style="width:'+w.toFixed(1)+'%"></i><span>'+etq+' <b>'+sivsoFmtCorta(v)+'</b></span></div>'}
-  function fila(a,vSi,vSo,ant){var r=vSi>0?vSo/vSi:null;
-    return'<div class="kc-fila'+(ant?' ant':'')+'"><span class="kc-anio">'+sivsoEtqCorte(a,corte)+'</span>'+
-      '<div class="kc-barras">'+barra(vSi,ant?'si-py':'si','Sell In')+barra(vSo,ant?'so-py':'so','Sell Out')+'</div>'+
-      '<span class="kc-ratio" title="Sell Out ÷ Sell In">'+(r==null?'–':mtdPctEntero(r))+'<small>SO / SI</small></span></div>'}
-  comp.innerHTML=fila(anio,si,so,false)+(siAnt||soAnt?fila(anio-1,siAnt,soAnt,true):'')}
+  sivsoKpiArgs={anio:anio,corte:corte};
+  sivsoRenderKpiVar()}
+
+/* ══════════ Tarjeta de KPIs · Inventario y variaciones estilo Zebra (2026-11-23) ══════════
+   Tarjeta 3 = INVENTARIO al cierre del último mes con foto del rango (Consolidado inventarios, s3_inv.json)
+   con su variación contra el mes anterior y el DDI de ese mes. Debajo, tres filas de barras horizontales
+   (pedido del usuario: no una serie mes a mes):
+     Sell In · Sell Out   año actual (oscuro) contra el mismo rango del año anterior (claro), con ΔPY y ΔPY%
+     DDI                  último mes del rango (oscuro) contra el mes anterior (claro), con la variación en días
+   Verde = crece, rojo = cae. Sell In y Sell Out comparten escala para compararlos entre sí. */
+var sivsoKpiArgs=null;
+function sivsoMesesKpi(corte){
+  var f=sivsoFiltros.mes||[],out=[];
+  for(var m=1;m<=corte;m++)if(!f.length||f.indexOf(m)!==-1)out.push(m);
+  return out}
+/* Una fila: nombre · barras (actual oscuro, anterior claro) · variación con su pin Zebra. */
+function sivsoKvFila(o){
+  var mx=o.mx||Math.max(o.ac||0,o.py||0)||1,d=o.ac!=null&&o.py!=null?o.ac-o.py:null,
+    p=d!=null&&o.py>0?o.ac/o.py-1:null,pos=d!=null&&d>=0,cls=d==null?'':(pos?'pos':'neg');
+  // La barra deja 96 px para su cifra: así la más larga no se monta sobre la columna de variación.
+  function barra(v,c,etq){var r=v==null?0:Math.max(0,v)/mx;
+    return'<div class="kv-b '+c+'"><span class="kv-a">'+esc(etq)+'</span><span class="kv-pista"><i style="width:calc((100% - 96px) * '+r.toFixed(4)+')"></i>'+
+      '<b>'+(v==null?'–':esc(o.fmt(v)))+'</b></span></div>'}
+  var pw=p==null?0:Math.max(3,Math.min(Math.abs(p),1)*50);
+  return'<div class="kv-p" title="'+esc(o.tip||'')+'"><div class="kv-cab"><b>'+o.tit+'</b><small>'+esc(o.sub)+'</small></div>'+
+    '<div class="kv-barras">'+barra(o.ac,'ac',o.etqAc)+barra(o.py,'py',o.etqPy)+'</div>'+
+    '<div class="kv-var '+cls+'">'+(d==null?'<span class="kv-sin">sin '+esc(o.etqPy)+'</span>':
+      '<b>'+esc(o.fmtD(d))+'</b><span class="kv-pin"><i class="'+cls+'" style="'+(pos?'left:50%':'right:50%')+';width:'+pw.toFixed(1)+'%"></i></span>'+
+      '<small>'+(p==null?'':sivsoPctSigno(p))+'</small>')+'</div></div>'}
+function sivsoRenderKpiVar(){
+  var comp=document.getElementById('sivsoKpiComp'),A=sivsoKpiArgs;if(!comp||!A||!sivsoData)return;
+  var anio=A.anio,meses=sivsoMesesKpi(A.corte),S=sivsoSerieMensual(anio),rango=sivsoEtqCorte(anio,A.corte);
+  var t={si:0,siPy:0,so:0,soPy:0,hSi:false,hSo:false};
+  meses.forEach(function(m){var x=S.acc[m];t.si+=x.si;t.siPy+=x.siPy;t.so+=x.so;t.soPy+=x.soPy;if(x.hSiPy)t.hSi=true;if(x.hSoPy)t.hSo=true});
+  var mx=Math.max(t.si,t.siPy,t.so,t.soPy)||1,h='';
+  ['si','so'].forEach(function(k){
+    var py=t['h'+(k==='si'?'Si':'So')]?t[k+'Py']:null;
+    h+=sivsoKvFila({tit:k==='si'?'Sell In':'Sell Out',sub:rango,ac:t[k],py:py,mx:mx,
+      etqAc:String(anio),etqPy:String(anio-1),fmt:sivsoFmtCorta,fmtD:function(d){return'ΔPY '+sivsoSigno(d)},
+      tip:(k==='si'?'Sell In':'Sell Out')+' '+rango+': '+sivsoFmt(t[k])+' vs '+(py==null?'sin dato':sivsoFmt(py))+' en '+(anio-1)})});
+  // Inventario y DDI: s3_inv.json (carga compartida con Sell Out PDV)
+  var inv=document.getElementById('sivsoKpiInv'),invDet=document.getElementById('sivsoKpiInvDet');
+  var hayCarga=typeof invCargar==='function',iD=typeof invD!=='undefined'?invD:null,iErr=typeof invError!=='undefined'?invError:'';
+  var invOk=hayCarga&&iD&&sivsoInvEans()!=='cargando';
+  if(!invOk){
+    var msg=!hayCarga?'Inventario no disponible':(iErr?'No pude leer el inventario':'Cargando el inventario…');
+    if(hayCarga&&!iD&&!iErr)invCargar(function(){sivsoRenderKpiVar()});
+    if(hayCarga&&iD&&sivsoInvEans()==='cargando'&&!sivsoLanzError)sivsoInvPedirCatalogo();
+    if(inv)inv.innerText=iErr||!hayCarga?'n/d':'…';if(invDet)invDet.innerText=msg;
+    h+='<div class="kv-p"><div class="kv-cab"><b>DDI</b><small>días de inventario</small></div><div class="kv-vacio">'+esc(msg)+'</div></div>';
+    comp.innerHTML=h;return}
+  var I=sivsoSerieInv(anio),ult=0;
+  meses.forEach(function(m){if(I.acc[m].hInv)ult=m});
+  var x=ult?I.acc[ult]:null,pr=ult>1&&I.acc[ult-1].hInv?I.acc[ult-1]:null;
+  if(!x){if(inv)inv.innerText='–';if(invDet)invDet.innerText='Sin foto de inventario en '+rango}
+  else{var dv=pr&&pr.inv>0?x.inv/pr.inv-1:null;
+    if(inv)inv.innerText=sivsoFmt(x.inv);
+    if(invDet)invDet.innerHTML='Cierre de '+SIVSO_MESES[ult-1]+' '+anio+
+      (dv==null?'':' · <span class="'+(dv>=0?'sivso-pos">+':'sivso-neg">')+mtdPctTxt(dv)+'</span> vs '+SIVSO_MESES[ult-2])+
+      (x.ddi!=null?' · DDI '+FMT.format(Math.round(x.ddi))+' días':'')}
+  var dias=function(v){return FMT.format(Math.round(v))+' días'};
+  h+=sivsoKvFila({tit:'DDI',sub:'días de inventario',ac:x&&x.ddi!=null?x.ddi:null,py:pr&&pr.ddi!=null?pr.ddi:null,
+    etqAc:ult?SIVSO_MESES[ult-1]:'–',etqPy:ult>1?SIVSO_MESES[ult-2]:'mes ant.',fmt:dias,
+    fmtD:function(d){return(d>=0?'+':'−')+FMT.format(Math.round(Math.abs(d)))+' días'},
+    tip:'DDI = inventario del mes ÷ (Sell Out de los '+I.nP+' meses que terminan ahí ÷ '+I.nP+') × 30, en unidades'});
+  comp.innerHTML=h}
 
 /* ══════════ Gráfico mensual · carrusel de 5 vistas (SVG a mano) ══════════
    Todas leen el MISMO contexto: sivsoFilas('mes') (todos los filtros menos el

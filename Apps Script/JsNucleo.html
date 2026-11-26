@@ -110,6 +110,11 @@ function fijarRail(exp,recordar){
   var sh=document.getElementById('shell'),b=document.getElementById('btnRail');if(!sh)return;
   sh.classList.toggle('rail-expandido',exp);
   if(b){b.setAttribute('aria-expanded',exp?'true':'false');b.title=exp?'Contraer menú':'Expandir menú'}
+  var mb=document.getElementById('btnRailMarca');
+  if(mb){mb.setAttribute('aria-label',exp?'Contraer menú':'Expandir menú');mb.setAttribute('data-tip',exp?'Contraer menú':'Expandir menú');
+    mb.setAttribute('aria-expanded',exp?'true':'false')}
+  var tip=document.getElementById('railTip');if(tip)tip.classList.remove('ver');
+  if(typeof railPintarFiltros==='function')railPintarFiltros();
   if(recordar&&!railModal())try{localStorage.setItem(RAIL_CLAVE,exp?'exp':'col')}catch(e){}}
 function alternarRail(){
   var sh=document.getElementById('shell');if(!sh)return;
@@ -133,13 +138,15 @@ function pintarBotonTema(){
   if(l)l.textContent=o?'Modo claro':'Modo oscuro';
   if(ic)ic.innerHTML=o?'<path d="M12 7a5 5 0 1 0 0 10 5 5 0 0 0 0-10zM11 1h2v3h-2zm0 19h2v3h-2zM3.5 4.9l1.4-1.4 2.1 2.1-1.4 1.4zm12.6 12.6 1.4-1.4 2.1 2.1-1.4 1.4zM1 11h3v2H1zm19 0h3v2h-3zM3.5 19.1l2.1-2.1 1.4 1.4-2.1 2.1zM16.1 5.6l2.1-2.1 1.4 1.4-2.1 2.1z"/>':
     '<path d="M12 3a9 9 0 1 0 9 9c0-.46-.04-.92-.1-1.36a5.39 5.39 0 0 1-4.4 2.26 5.4 5.4 0 0 1-3.14-9.8c-.44-.06-.9-.1-1.36-.1z"/>'}
-function aplicarTema(t){
+function aplicarTema(t,noGuardar){
   if(t==='oscuro')document.documentElement.setAttribute('data-tema','oscuro');
   else document.documentElement.removeAttribute('data-tema');
-  try{localStorage.setItem(TEMA_CLAVE,t)}catch(e){}
+  if(!noGuardar)try{localStorage.setItem(TEMA_CLAVE,t)}catch(e){}
   pintarBotonTema()}
 function alternarTema(){
-  aplicarTema(temaOscuro()?'claro':'oscuro');
+  // Fundido entre temas con View Transitions (Chrome / Edge); sin soporte o con movimiento reducido, cambio directo.
+  var ir=function(){aplicarTema(temaOscuro()?'claro':'oscuro')};
+  if(document.startViewTransition&&!(window.matchMedia&&matchMedia('(prefers-reduced-motion: reduce)').matches))document.startViewTransition(ir);else ir();
   // Repinta lo que lleva colores calculados en JS (cada función ignora la llamada si su pestaña no tiene datos).
   [['renderSIvsSO','sivsoData'],['soRender','soD'],['ybRender','ybData']].forEach(function(x){
     try{if(typeof window[x[0]]==='function'&&window[x[1]])window[x[0]]()}catch(e){}})}
@@ -147,6 +154,15 @@ function iniciarRail(){
   var exp=false;try{exp=!railModal()&&localStorage.getItem(RAIL_CLAVE)==='exp'}catch(e){}
   fijarRail(exp,false);
   pintarBotonTema();
+  try{if(localStorage.getItem('visor.railSub')==='0')railAlternarSub()}catch(e){}
+  railTips();railVigilarContadores();railUsuario();railMarcar();
+  var kb=document.getElementById('railKbd');if(kb&&/Mac|iPhone|iPad/.test(navigator.platform||''))kb.textContent='⌘K';
+  // Ctrl / ⌘ K abre el buscador desde cualquier parte.
+  document.addEventListener('keydown',function(ev){if((ev.ctrlKey||ev.metaKey)&&(ev.key==='k'||ev.key==='K')){ev.preventDefault();railAbrirBuscar()}});
+  // Sin tema elegido a mano, sigue al sistema (prefers-color-scheme).
+  if(window.matchMedia){var mq=matchMedia('(prefers-color-scheme: dark)'),seguir=function(){var g=null;try{g=localStorage.getItem(TEMA_CLAVE)}catch(e){}
+    if(!g)aplicarTema(mq.matches?'oscuro':'claro',true)};if(mq.addEventListener)mq.addEventListener('change',seguir)}
+  window.addEventListener('resize',function(){railCerrarBuscar()});
   var sh=document.getElementById('shell');
   // Clic en el velo (fuera del cajón) o Escape cierran el riel modal.
   if(sh)sh.addEventListener('click',function(ev){
@@ -185,6 +201,110 @@ function iniciarColapsables(raiz,alAbrir){
         localStorage.setItem('visor.colapsadas',JSON.stringify(g))}catch(e){}
       if(!plegada&&alAbrir)alAbrir(card)};
     card.appendChild(b);fijar(!!guard[clave])})}
+
+/* ══════════════ Riel de vidrio (2026-11-22; DISENO_RIEL_VIDRIO.md) ══════════════
+   Informes de Ventas dentro del menú, rótulo de la franja, "Filtros activos" (lee los contadores
+   que cada vista ya mantiene), buscador Ctrl / ⌘ K, acciones de la franja, tooltips del colapsado
+   y el usuario de Google. */
+var RAIL_NOMBRES={so:'Sell Out PDV',sivso:'SI vs SO',ventasmtd:'Ventas MTD',dig:'Digital',mapa:'Mapa',yoobic:'Perfect Store'};
+var RAIL_COLOR={so:'#d09375',sivso:'#b8a186',ventasmtd:'#8a8a8a',dig:'#ffb48f',mapa:'#a9a9a9',yoobic:'#e6c9a7'};
+var RAIL_CONT={so:'soContador',sivso:'sivsoContador',ventasmtd:'mtdContador',dig:'dgContador',mapa:'contadorFiltros',yoobic:'ybContador'};
+var RAIL_DEST=[['so','Sell Out PDV','Ventas'],['sivso','SI vs SO','Ventas'],['ventasmtd','Ventas MTD','Ventas'],['dig','Digital','Ventas'],
+  ['mapa','Mapa','PDV y bricks'],['yoobic','Perfect Store','Yoobic'],['tema','Cambiar tema','Claro / oscuro']];
+function railVista(){return typeof mtdVistaActiva!=='undefined'?mtdVistaActiva:'so'}
+function railNorm(t){return String(t||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'')}
+/* Lo llama mostrarVistaSuperior en cada cambio de destino. */
+function railMarcar(v){
+  v=v||railVista();
+  document.querySelectorAll('.rail-subitem').forEach(function(b){var on=b.getAttribute('data-vista')===v;
+    b.classList.toggle('activo',on);if(on)b.setAttribute('aria-current','page');else b.removeAttribute('aria-current')});
+  railPintarFiltros()}
+function railAlternarSub(){
+  var s=document.getElementById('railSubVentas'),b=document.getElementById('btnRailSub');if(!s)return;
+  var ab=!s.classList.contains('abierto');s.classList.toggle('abierto',ab);if(b)b.setAttribute('aria-expanded',ab?'true':'false');
+  try{localStorage.setItem('visor.railSub',ab?'1':'0')}catch(e){}}
+/* Filtros activos: informes con filtros puestos (el número es el contador de su barra de filtros). */
+function railPintarFiltros(){
+  var c=document.getElementById('railFiltros');if(!c)return;
+  var exp=(document.getElementById('shell')||{classList:{contains:function(){return false}}}).classList.contains('rail-expandido');
+  var v=railVista(),l=[];
+  Object.keys(RAIL_CONT).forEach(function(k){var e=document.getElementById(RAIL_CONT[k]);
+    var n=e&&!e.hidden?parseInt(e.textContent,10)||0:0;if(n>0)l.push({k:k,n:n})});
+  if(!l.length){c.innerHTML=exp?'<div class="rail-vacio">Sin filtros en ningún informe</div>':'';return}
+  c.innerHTML=l.map(function(x){var nom=RAIL_NOMBRES[x.k],tip=nom+' · '+x.n+(x.n===1?' filtro':' filtros');
+    return exp?'<button type="button" class="rail-filtro'+(x.k===v?' actual':'')+'" onclick="mostrarVistaSuperior(\''+x.k+'\')" title="'+tip+'">'+
+      '<span class="rail-punto" style="background:'+RAIL_COLOR[x.k]+'"></span><span class="rail-lbl">'+nom+'</span><span class="rail-cnt">'+x.n+'</span></button>':
+      '<button type="button" class="rail-filtro-col" onclick="mostrarVistaSuperior(\''+x.k+'\')" data-tip="'+tip+'" aria-label="'+tip+'">'+
+      '<span class="rail-punto" style="background:'+RAIL_COLOR[x.k]+'"></span></button>'}).join('')}
+var railFiltrosT=null;
+function railVigilarContadores(){
+  if(typeof MutationObserver==='undefined')return;
+  var mo=new MutationObserver(function(){clearTimeout(railFiltrosT);railFiltrosT=setTimeout(railPintarFiltros,120)});
+  Object.keys(RAIL_CONT).forEach(function(k){var e=document.getElementById(RAIL_CONT[k]);
+    if(e)mo.observe(e,{attributes:true,attributeFilter:['hidden'],childList:true,characterData:true,subtree:true})})}
+/* Giro del botón Actualizar de la cabecera mientras la vista recarga. */
+function btnGirar(b){if(!b)return;b.classList.add('girando');setTimeout(function(){b.classList.remove('girando')},1200)}
+function railSinMovimiento(){return window.matchMedia&&matchMedia('(prefers-reduced-motion: reduce)').matches}
+/* Tooltips (sobre todo del colapsado: allí los destinos son solo iconos). */
+function railTipTexto(el,txt){
+  var t=document.getElementById('railTip');if(!t||!el||!txt)return;
+  t.textContent=txt;var r=el.getBoundingClientRect();
+  t.style.left=Math.round(r.right+12)+'px';t.style.top=Math.round(r.top+r.height/2-14)+'px';t.classList.add('ver');
+  clearTimeout(t._f);t._f=setTimeout(function(){t.classList.remove('ver')},2200)}
+function railTips(){
+  var nav=document.getElementById('navRail'),t=document.getElementById('railTip');if(!nav||!t)return;
+  function mostrar(ev){var el=ev.target.closest&&ev.target.closest('[data-tip]');if(!el||!nav.contains(el))return;
+    var sh=document.getElementById('shell');if(sh&&sh.classList.contains('rail-expandido')&&!el.classList.contains('rail-filtro-col'))return;
+    railTipTexto(el,el.getAttribute('data-tip'))}
+  function ocultar(){t.classList.remove('ver')}
+  nav.addEventListener('mouseover',mostrar);nav.addEventListener('focusin',mostrar);
+  nav.addEventListener('mouseout',ocultar);nav.addEventListener('focusout',ocultar);
+  nav.addEventListener('scroll',ocultar,true)}
+/* Buscador: salta a cualquier informe (Ctrl / ⌘ K). */
+var railSelI=0,railLista=[];
+function railAbrirBuscar(){
+  var sh=document.getElementById('shell');if(sh&&!sh.classList.contains('rail-expandido'))fijarRail(true,!railModal());
+  setTimeout(function(){var q=document.getElementById('railQ');if(q){q.focus();q.select();railBuscar(q.value)}},railSinMovimiento()?0:260)}
+function railBuscar(q){
+  var res=document.getElementById('railRes'),inp=document.getElementById('railQ');if(!res||!inp)return;
+  var n=railNorm(q).trim();
+  railLista=RAIL_DEST.filter(function(d){return!n||railNorm(d[1]+' '+d[2]).indexOf(n)!==-1});
+  railSelI=0;
+  res.innerHTML=railLista.length?railLista.map(function(d,i){
+    var col=RAIL_COLOR[d[0]]||'var(--rail-badge-bg)';
+    return'<button type="button" role="option" id="railOp'+i+'" aria-selected="'+(i===0)+'" class="'+(i===0?'sel':'')+'" onmousedown="event.preventDefault();railIr('+i+')">'+
+      '<span class="rail-punto" style="background:'+col+'"></span>'+d[1]+'<small>'+d[2]+'</small></button>'}).join(''):
+    '<div class="rail-vacio">Sin resultados para «'+String(q).replace(/[<>&"]/g,'')+'»</div>';
+  var r=inp.getBoundingClientRect();res.style.left=Math.round(r.left)+'px';res.style.top=Math.round(r.bottom+8)+'px';
+  res.style.width=Math.max(240,Math.round(r.width+40))+'px';res.hidden=false;inp.setAttribute('aria-expanded','true')}
+function railMoverSel(d){
+  if(!railLista.length)return;railSelI=(railSelI+d+railLista.length)%railLista.length;
+  document.querySelectorAll('#railRes button').forEach(function(b,i){b.classList.toggle('sel',i===railSelI);b.setAttribute('aria-selected',i===railSelI?'true':'false')});
+  var inp=document.getElementById('railQ');if(inp)inp.setAttribute('aria-activedescendant','railOp'+railSelI)}
+function railTeclaBuscar(ev){
+  if(ev.key==='ArrowDown'){ev.preventDefault();railMoverSel(1)}
+  else if(ev.key==='ArrowUp'){ev.preventDefault();railMoverSel(-1)}
+  else if(ev.key==='Enter'){ev.preventDefault();if(railLista.length)railIr(railSelI)}
+  else if(ev.key==='Escape'){ev.preventDefault();railCerrarBuscar();ev.target.blur()}}
+function railCerrarBuscar(){var res=document.getElementById('railRes');if(res)res.hidden=true;
+  var inp=document.getElementById('railQ');if(inp)inp.setAttribute('aria-expanded','false')}
+function railCerrarBuscarLuego(){setTimeout(railCerrarBuscar,150)}
+function railIr(i){
+  var d=railLista[i];if(!d)return;
+  var inp=document.getElementById('railQ');if(inp){inp.value='';inp.blur()}
+  railCerrarBuscar();
+  if(d[0]==='tema')alternarTema();else mostrarVistaSuperior(d[0])}
+/* Usuario de Google (iniciales, nombre a partir del correo). */
+function railUsuario(){
+  function pintar(email){
+    var nom=email?email.split('@')[0].split(/[._-]+/).filter(String).map(function(p){return p.charAt(0).toUpperCase()+p.slice(1)}).join(' '):'Usuario ISDIN';
+    var ini=nom.split(' ').map(function(p){return p.charAt(0)}).join('').slice(0,2).toUpperCase();
+    var a=document.getElementById('railAvatar'),n=document.getElementById('railNombre'),c=document.getElementById('railCorreo');
+    if(a){a.textContent=ini||'IS';a.setAttribute('data-tip',nom+(email?' · '+email:''))}
+    if(n)n.textContent=nom;if(c)c.textContent=email||'Sesión de Google'}
+  pintar('');
+  if(!esGas())return;
+  google.script.run.withSuccessHandler(function(j){try{pintar(JSON.parse(j).email||'')}catch(e){}}).getUsuarioJson()}
 
 function iniciarInfo(){
   if(typeof MutationObserver==='undefined'||!document.querySelectorAll)return;
